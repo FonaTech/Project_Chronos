@@ -1,4 +1,4 @@
-# Project Chronos
+# Project Chronos (In Experimental)
 
 **一套从架构层原生支持 SSD+DRAM 混合加载推理的 MoE 框架**
 
@@ -185,7 +185,7 @@ $$L_{\text{total}} = L_{\text{CE}} + \lambda_1 L_{\text{balance}} + \lambda_2 \s
 
 ---
 
-## 安装
+## 安装  (Not Ready in PyPI Yet)
 
 ```bash
 pip install project-chronos
