@@ -1,4 +1,4 @@
-# Project Chronos
+# Project Chronos (In Experimental)
 
 **The First MoE Architecture Designed from the Ground Up for SSD+DRAM Hybrid Loading**
 
@@ -202,7 +202,7 @@ The temporal locality term $\lambda_2$ **trains the model to prefer routing stab
 
 ---
 
-## Installation
+## Installation (Not Ready in PyPI Yet)
 
 ```bash
 pip install project-chronos
