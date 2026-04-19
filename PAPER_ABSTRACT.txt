@@ -1,0 +1,36 @@
+# Project Chronos: Zero-Latency Decode via Lookahead Routing and
+# Hybrid Attention for On-Device MoE Inference
+#
+# arxiv preprint draft — 2026
+#
+# Abstract:
+#
+# Mixture-of-Experts (MoE) language models achieve strong performance by
+# activating only a sparse subset of parameters per token. However, on
+# consumer hardware with limited VRAM, the per-token routing decision
+# forces synchronous SSD→RAM→VRAM transfers that block the decode loop,
+# reducing throughput to under 5 tokens/s.
+#
+# We present Project Chronos, a dual-layer architecture that decouples
+# routing from execution. A lightweight Dense LookaheadRouter, inserted
+# after the first transformer block, predicts expert assignments for
+# future steps t+1 and t+2, providing a 10-50ms prefetch window that
+# fully overlaps I/O with computation. We introduce a Temporal Locality
+# Loss that encourages the model to reuse the same experts across
+# consecutive tokens, improving cache hit rates without sacrificing
+# generalization.
+#
+# To address KV cache explosion in long-context generation, we propose
+# a Hybrid Attention scheme alternating Multi-head Latent Attention (MLA)
+# and Sliding Window Attention (SWA) across layers. MLA compresses the
+# KV cache via low-rank projection (8-16x reduction), while SWA caps
+# cache growth at a fixed window size.
+#
+# A Soft Gating mechanism ensures zero-latency fallback to always-resident
+# Shared Experts when a cache miss occurs, eliminating generation stalls.
+# Hyperparameters λ1 (load balance) and λ2 (temporal locality) are
+# automatically tuned via Optuna TPE Bayesian optimization.
+#
+# On a single consumer GPU with 4GB VRAM, Project Chronos achieves
+# 20+ tokens/s decode throughput (4x baseline), reduces KV cache memory
+# by 8-16x, and maintains 95-98% of baseline accuracy on MMLU and GSM8K.

@@ -1,0 +1,9 @@
+include chronos/**/*.py
+include train_chronos.py
+include README.md
+include LICENSE
+include requirements.txt
+exclude **/__pycache__
+exclude **/*.pyc
+exclude expert_cache/
+exclude out/

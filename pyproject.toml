@@ -1,0 +1,56 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "project-chronos"
+version = "0.1.0"
+description = "On-device low-latency lookahead dual-layer MoE inference — Lookahead Routing + Async Prefetch + Hybrid Attention"
+readme = "README.md"
+license = {text = "Apache-2.0"}
+requires-python = ">=3.10"
+keywords = ["llm", "moe", "inference", "lookahead-routing", "hybrid-attention", "edge-ai"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "torch>=2.1.0",
+    "transformers>=4.40.0",
+    "datasets>=2.18.0",
+    "safetensors>=0.4.0",
+    "optuna>=3.6.0",
+    "numpy>=1.24.0",
+    "psutil>=5.9.0",
+    "tqdm>=4.66.0",
+    "gradio>=4.0.0",
+]
+
+[project.optional-dependencies]
+cluster = ["python-louvain>=0.16", "networkx>=3.0"]
+mlx     = ["mlx>=0.12.0"]
+dev     = ["pytest>=7.0", "black>=24.0", "ruff>=0.4.0"]
+
+[project.scripts]
+chronos       = "chronos.cli:main"
+chronos-ui    = "chronos.app:main"
+chronos-train = "train_chronos:main"
+chronos-eval  = "chronos.eval.io_profiler:main"
+chronos-bench = "chronos.eval.benchmark:main"
+chronos-export = "chronos.io.cluster_layout:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["chronos*", "ui*"]
+
+[tool.black]
+line-length = 100
+target-version = ["py310"]
+
+[tool.ruff]
+line-length = 100
+select = ["E", "F", "I"]
