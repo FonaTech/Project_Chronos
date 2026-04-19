@@ -59,8 +59,10 @@ https://github.com/jingyaogong/minimind/blob/master/LICENSE
 
 ## 2. Auto_Fine_Tuning
 
-**Repository**: (local, `/Users/Fona/Downloads/Hybrid_LLM/Auto_Fine_Tuning`)  
-**License**: To be confirmed by repository owner  
+**Repository**: https://github.com/FonaTech/Auto_Fine_Tuning 
+**Author**: FonaTech
+**License**: Apache License, Version 2.0  
+**Copyright**: Copyright Fona and Auto_Fine_Tuning Contributors  
 
 **Files derived**:
 
