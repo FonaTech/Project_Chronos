@@ -22,7 +22,7 @@ The result: **< 5 tokens/s** on hardware that can do 50+ tokens/s for dense mode
 
 ## The Chronos Approach: IO as a First-Class Citizen
 
-Project Chronos is the first MoE architecture where **storage-tier awareness is baked in from the model design level, not added as a runtime patch**.
+Project Chronos is a MoE architecture where **storage-tier awareness is baked in from the model design level, not added as a runtime patch**.
 
 ### Core Principle: Move All IO to Prefill
 
