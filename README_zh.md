@@ -339,7 +339,7 @@ Project_Chronos/
              for Zero-Stall On-Device MoE Inference},
   author = {Fona and Project Chronos Contributors},
   year   = {2026},
-  url    = {[https://github.com/your-org/project-chronos](https://github.com/FonaTech/Project_Chronos_In_Experimental)}
+  url    = {[project-chronos](https://github.com/FonaTech/Project_Chronos_In_Experimental)}
 }
 ```
 
