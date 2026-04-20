@@ -1,0 +1,160 @@
+"""
+ui/presets.py
+
+Default + preset configurations matching minimind's MoE defaults.
+
+Each preset is a complete dict that can be:
+  1. Loaded into the Config tab sliders via the "Load Preset" button.
+  2. Used as the initial value when the user clicks "Reset to MiniMind".
+  3. Persisted to / loaded from JSON via the Save/Load Config buttons.
+
+The single source of truth for the *minimind* preset is what
+``MiniMindConfig(use_moe=True)`` actually produces — we mirror those values
+here so the UI shows the same model the trainer would build.
+"""
+from __future__ import annotations
+
+import json
+import os
+from typing import Dict, List
+
+
+# ── MiniMind MoE — exact defaults from model/model_minimind.py ─────
+# These values match MiniMindConfig(hidden_size=768, num_hidden_layers=8,
+# use_moe=True) field-for-field, with Chronos-specific extensions left at
+# their conservative defaults (no router-anchor by default).
+MINIMIND_MOE_DEFAULTS: Dict = {
+    # MiniMind core
+    "hidden_size":           768,
+    "num_hidden_layers":     8,
+    "num_attention_heads":   8,
+    "num_key_value_heads":   4,
+    "vocab_size":            6400,
+    "intermediate_size":     0,        # 0 = auto: ceil(H·π/64)·64 → 2432
+    "moe_intermediate_size": 0,        # 0 = auto, same value
+    "max_seq_len":           512,      # training sequence length (NOT max_position_embeddings)
+    "tie_word_embeddings":   True,
+
+    # MoE
+    "num_experts":           4,
+    "num_experts_per_tok":   1,
+    "num_shared_experts":    1,        # Chronos extension; minimind has no shared
+
+    # Attention shape (Chronos hybrid)
+    "kv_latent_dim":         64,
+    "rope_dim":              32,
+    "sliding_window_size":   2048,
+    "use_hybrid_attention":  True,
+
+    # Chronos prediction
+    "lookahead_steps":       2,
+
+    # Loss coefficients
+    "lambda_balance":        5e-4,
+    "lambda_temporal":       1e-3,
+    "lambda_lookahead":      0.1,
+    "lambda_router_anchor":  0.0,
+
+    # Hardware
+    "vram_budget_gb":             4.0,
+    "pinned_memory_max_fraction": 0.25,
+    "storage_format":             "safetensors",
+
+    # Training
+    "learning_rate":         5e-4,
+    "batch_size":            16,
+    "accumulation_steps":    8,
+    "epochs":                2,
+    "save_interval":         1000,
+    "save_dir":              "./out",
+    "dtype":                 "fp16",
+}
+
+
+# Order matches ui/tabs/config_tab.py::all_inputs (used by Apply-Preset
+# to push values back into the slider widgets in the right slots).
+CONFIG_INPUT_ORDER: List[str] = [
+    "hidden_size", "num_hidden_layers", "num_experts", "num_experts_per_tok",
+    "num_shared_experts", "lookahead_steps", "kv_latent_dim", "sliding_window_size",
+    "num_attention_heads", "num_key_value_heads", "rope_dim", "moe_intermediate_size",
+    "vocab_size", "dtype", "tie_word_embeddings",
+    "lambda_balance", "lambda_temporal", "lambda_lookahead", "lambda_router_anchor",
+    "vram_budget_gb", "pinned_memory_max_fraction", "use_hybrid_attention", "storage_format",
+    "learning_rate", "batch_size", "accumulation_steps", "max_seq_len",
+    "epochs", "save_interval", "save_dir",
+]
+
+
+# Named presets — keys are user-facing labels (also used in the dropdown).
+PRESETS: Dict[str, Dict] = {
+    "MiniMind-MoE (default)": dict(MINIMIND_MOE_DEFAULTS),
+
+    "Tiny (smoke / CI)": {
+        **MINIMIND_MOE_DEFAULTS,
+        "hidden_size": 128, "num_hidden_layers": 2, "num_experts": 4,
+        "num_attention_heads": 4, "num_key_value_heads": 4,
+        "kv_latent_dim": 16, "rope_dim": 8, "sliding_window_size": 64,
+        "max_seq_len": 64, "batch_size": 2, "accumulation_steps": 1,
+        "epochs": 1, "save_interval": 100,
+    },
+
+    "Small (256H × 4L × 4E)": {
+        **MINIMIND_MOE_DEFAULTS,
+        "hidden_size": 256, "num_hidden_layers": 4, "num_experts": 4,
+        "max_seq_len": 256, "batch_size": 8,
+    },
+
+    "Medium (512H × 8L × 8E)": {
+        **MINIMIND_MOE_DEFAULTS,
+        "hidden_size": 512, "num_experts": 8,
+        "max_seq_len": 1024, "batch_size": 8,
+    },
+
+    "Large (1024H × 16L × 16E)": {
+        **MINIMIND_MOE_DEFAULTS,
+        "hidden_size": 1024, "num_hidden_layers": 16, "num_experts": 16,
+        "num_attention_heads": 16, "num_key_value_heads": 4,
+        "kv_latent_dim": 128, "rope_dim": 64,
+        "max_seq_len": 2048, "batch_size": 4, "accumulation_steps": 16,
+        "vram_budget_gb": 16.0,
+    },
+}
+
+
+def preset_names() -> List[str]:
+    return list(PRESETS.keys())
+
+
+def get_preset(name: str) -> Dict:
+    """Return a deep-ish copy of the named preset (avoids accidental mutation)."""
+    return dict(PRESETS.get(name, MINIMIND_MOE_DEFAULTS))
+
+
+def values_in_input_order(cfg: Dict) -> List:
+    """Return preset values in the same order as Config tab's all_inputs.
+
+    For keys missing from `cfg`, falls back to MINIMIND_MOE_DEFAULTS so
+    a partial preset still yields a complete value list.
+    """
+    out = []
+    for k in CONFIG_INPUT_ORDER:
+        if k in cfg:
+            out.append(cfg[k])
+        else:
+            out.append(MINIMIND_MOE_DEFAULTS.get(k))
+    return out
+
+
+def save_config(cfg: Dict, path: str) -> str:
+    """Write cfg as pretty JSON. Returns the absolute path written."""
+    abs_path = os.path.abspath(path)
+    os.makedirs(os.path.dirname(abs_path) or ".", exist_ok=True)
+    with open(abs_path, "w") as f:
+        json.dump(cfg, f, indent=2, sort_keys=True)
+    return abs_path
+
+
+def load_config(path: str) -> Dict:
+    """Read JSON and return the dict. Raises FileNotFoundError if missing."""
+    with open(os.path.abspath(path)) as f:
+        return json.load(f)
