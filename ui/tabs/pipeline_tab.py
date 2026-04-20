@@ -47,7 +47,10 @@ def build_pipeline_tab():
         for i, (name, script, from_w, default_data, takes_teacher) in enumerate(STAGES):
             with gr.Row():
                 gr.Markdown(f"**{i+1}. {name}**", elem_classes=[])
-                data_box = gr.Textbox(value=_fix(default_data), label=f"{name} data_path", scale=3)
+                # Default to a RELATIVE path so the textbox is portable across
+                # checkouts. Subprocess runs with cwd=repo_root, so the path
+                # resolves against the project directory.
+                data_box = gr.Textbox(value=default_data, label=f"{name} data_path", scale=3)
                 teacher_box = (
                     gr.Textbox(value="", label=f"{name} teacher_path",
                                placeholder=os.path.join("out", "sft_<H>_moe.pth"), scale=2)
@@ -71,7 +74,7 @@ def build_pipeline_tab():
             takes_teacher = row["takes_teacher"]
 
             def run(_save_dir, _steps, _data, _teacher, current_log):
-                cmd = [sys.executable, _fix(script),
+                cmd = [sys.executable, script,    # relative — resolved against cwd
                        "--data_path", _data,
                        "--save_dir", _save_dir,
                        "--steps", str(int(_steps))]
@@ -88,7 +91,8 @@ def build_pipeline_tab():
                 yield "running", "\n".join(lines[-500:])
                 try:
                     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
-                                            stderr=subprocess.STDOUT, text=True, bufsize=1)
+                                            stderr=subprocess.STDOUT, text=True, bufsize=1,
+                                            cwd=_repo_root())
                     for line in proc.stdout:
                         lines.append(f"[{name}] {line.rstrip()}")
                         yield "running", "\n".join(lines[-500:])

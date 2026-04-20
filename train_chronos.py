@@ -52,6 +52,12 @@ def parse_args():
     p.add_argument("--lambda_temporal", type=float, default=1e-3)
     # VRAM budget
     p.add_argument("--vram_budget_gb", type=float, default=4.0)
+    # Pipeline compat: accept but ignore args that other Stage scripts take.
+    # The 6-stage Web UI invokes every stage with the same arg signature.
+    p.add_argument("--steps", type=int, default=None,
+                   help="If set, cap total steps (overrides epochs·len(loader)).")
+    p.add_argument("--from_weight", type=str, default="",
+                   help="Ignored for Stage 1 (pretrain). Present for pipeline parity.")
     return p.parse_args()
 
 
@@ -89,9 +95,34 @@ def main():
            f"λ1={config.lambda_balance} λ2={config.lambda_temporal}")
 
     for epoch in range(args.epochs):
-        trainer.train_epoch(epoch, loader, len(loader))
+        iters = len(loader) if args.steps is None else min(int(args.steps), len(loader))
+        # Monkey-patch the trainer epoch to honor --steps as a hard cap.
+        if args.steps is not None:
+            _orig_step = trainer.train_step
+            step_counter = {"n": 0}
+            def _capped_step(*a, **kw):
+                r = _orig_step(*a, **kw)
+                step_counter["n"] += 1
+                if step_counter["n"] >= int(args.steps):
+                    raise StopIteration
+                return r
+            trainer.train_step = _capped_step
+        try:
+            trainer.train_epoch(epoch, loader, iters)
+        except StopIteration:
+            Logger(f"Reached --steps={args.steps}, stopping.")
+            break
 
     Logger("Training complete.")
+    # Always save a final checkpoint at the conventional path so that
+    # downstream stages (sft/dpo/orpo/grpo/distill) can pick it up via
+    # --from_weight chronos.
+    import os
+    os.makedirs(args.save_dir, exist_ok=True)
+    ckp = os.path.join(args.save_dir, f"chronos_{config.hidden_size}_moe.pth")
+    state = trainer.model.state_dict()
+    torch.save({k: v.half().cpu() for k, v in state.items()}, ckp)
+    Logger(f"Saved → {ckp}")
 
 
 if __name__ == "__main__":

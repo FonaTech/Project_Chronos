@@ -133,15 +133,33 @@ def get_preset(name: str) -> Dict:
 def values_in_input_order(cfg: Dict) -> List:
     """Return preset values in the same order as Config tab's all_inputs.
 
-    For keys missing from `cfg`, falls back to MINIMIND_MOE_DEFAULTS so
-    a partial preset still yields a complete value list.
+    For keys missing from `cfg`, falls back to MINIMIND_MOE_DEFAULTS. If a
+    value is ``None`` (missing in both), it is replaced by a safe-default
+    per field type so Gradio's slider/number widgets don't reject it.
     """
+    # Hardcoded fallbacks for fields whose MiniMind default is None or absent.
+    # Values chosen to match the slider minima where applicable.
+    SAFE = {
+        "hidden_size": 768, "num_hidden_layers": 8,
+        "num_experts": 4, "num_experts_per_tok": 1, "num_shared_experts": 1,
+        "lookahead_steps": 2, "kv_latent_dim": 64, "sliding_window_size": 2048,
+        "num_attention_heads": 8, "num_key_value_heads": 4, "rope_dim": 32,
+        "moe_intermediate_size": 0, "vocab_size": 6400,
+        "dtype": "fp16", "tie_word_embeddings": True,
+        "lambda_balance": 5e-4, "lambda_temporal": 1e-3,
+        "lambda_lookahead": 0.1, "lambda_router_anchor": 0.0,
+        "vram_budget_gb": 4.0, "pinned_memory_max_fraction": 0.25,
+        "use_hybrid_attention": True, "storage_format": "safetensors",
+        "learning_rate": 5e-4, "batch_size": 16, "accumulation_steps": 8,
+        "max_seq_len": 512, "epochs": 2, "save_interval": 1000,
+        "save_dir": "./out",
+    }
     out = []
     for k in CONFIG_INPUT_ORDER:
-        if k in cfg:
-            out.append(cfg[k])
-        else:
-            out.append(MINIMIND_MOE_DEFAULTS.get(k))
+        v = cfg.get(k) if k in cfg else MINIMIND_MOE_DEFAULTS.get(k)
+        if v is None:
+            v = SAFE.get(k, 0)
+        out.append(v)
     return out
 
 

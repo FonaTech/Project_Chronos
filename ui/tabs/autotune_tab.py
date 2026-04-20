@@ -176,11 +176,14 @@ def build_autotune_tab(config_state: gr.State, config_inputs: list):
         def apply_best(best):
             """Write best_params back into the Config tab's slider widgets.
             Returns a list of gr.update for every config_input — untouched
-            inputs get gr.update() (no-op)."""
+            inputs get gr.update() (no-op). None values are dropped so
+            Gradio's numeric widgets don't reject them."""
             updates = [gr.update() for _ in config_inputs]
             if not best:
                 return updates
             for k, v in best.items():
+                if v is None:
+                    continue
                 idx = PARAM_TO_CONFIG_IDX.get(k)
                 if idx is not None:
                     updates[idx] = gr.update(value=v)

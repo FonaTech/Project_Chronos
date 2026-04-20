@@ -25,6 +25,9 @@ class TrainSession:
         # Separate metric history for charts
         self._metrics: list[dict] = []   # [{step, total, ce, aux, temporal, tps}]
         self._metric_lock = threading.Lock()
+        # Progress + ETA — set when training kicks off
+        self.total_steps: int = 0
+        self.t_start: float = 0.0
 
     def is_running(self):
         return self._thread is not None and self._thread.is_alive()
@@ -37,6 +40,8 @@ class TrainSession:
         self.step = 0
         self.loss = None
         self._metrics.clear()
+        self.total_steps = 0
+        self.t_start = time.monotonic()
         self._thread = threading.Thread(
             target=self._run, args=(cfg, mode), daemon=True
         )
@@ -105,6 +110,10 @@ class TrainSession:
                 "use_moe":                   True,
             }
             # Optional overrides: only forward when the user actually set them.
+            # For the "auto" sentinel fields (0 = let MiniMindConfig derive
+            # it), we skip forwarding when value is 0 so ceil(H·π/64)·64
+            # takes effect instead of Linear(H, 0) crashing MPS init.
+            AUTO_SENTINEL_KEYS = {"intermediate_size", "moe_intermediate_size"}
             for opt_key, cfg_key in [
                 ("num_attention_heads",   "num_attention_heads"),
                 ("num_key_value_heads",   "num_key_value_heads"),
@@ -119,8 +128,14 @@ class TrainSession:
                 ("storage_format",        "storage_format"),
                 ("tie_word_embeddings",   "tie_word_embeddings"),
             ]:
-                if cfg_key in cfg and cfg[cfg_key] not in (None, ""):
-                    model_cfg_kwargs[opt_key] = cfg[cfg_key]
+                if cfg_key not in cfg:
+                    continue
+                val = cfg[cfg_key]
+                if val in (None, ""):
+                    continue
+                if opt_key in AUTO_SENTINEL_KEYS and val == 0:
+                    continue
+                model_cfg_kwargs[opt_key] = val
             model_cfg = ChronosConfig(**model_cfg_kwargs)
             model = ChronosForCausalLM(model_cfg)
             params_m = sum(p.numel() for p in model.parameters()) / 1e6
@@ -174,6 +189,11 @@ class TrainSession:
             model.train()
             global_step = 0
             step_t = time.monotonic()
+            # Steps remaining for ETA / progress bar
+            try:
+                self.total_steps = max(1, len(loader) * epochs)
+            except Exception:
+                self.total_steps = 0
 
             for epoch in range(epochs):
                 if self._stop.is_set():
@@ -272,16 +292,29 @@ class TrainSession:
 _session = TrainSession()
 
 
-def _make_loss_chart(metrics: list[dict]):
-    """Build matplotlib figure from metrics history."""
+def _fmt_eta(seconds: float) -> str:
+    if seconds is None or seconds < 0 or seconds != seconds:
+        return "—"
+    if seconds < 60:
+        return f"{seconds:.0f}s"
+    if seconds < 3600:
+        return f"{seconds/60:.1f}min"
+    return f"{seconds/3600:.1f}h"
+
+
+def _make_loss_chart(metrics: list[dict], total_steps: int = 0, t_start: float = 0.0):
+    """Build matplotlib figure: loss curves + throughput + progress/ETA."""
     try:
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
-        import matplotlib.ticker as ticker
+
+        # Close any prior figures held by this thread to avoid the
+        # "More than 20 figures opened" warning Gradio's Plot component triggers.
+        plt.close("all")
 
         if not metrics:
-            fig, ax = plt.subplots(figsize=(7, 3))
+            fig, ax = plt.subplots(figsize=(10, 3))
             ax.text(0.5, 0.5, "No data yet", ha="center", va="center",
                     transform=ax.transAxes, fontsize=13, color="#888")
             ax.set_axis_off()
@@ -289,10 +322,18 @@ def _make_loss_chart(metrics: list[dict]):
             return fig
 
         steps = [m["step"] for m in metrics]
-        fig, axes = plt.subplots(1, 2, figsize=(10, 3.5))
+        cur_step = steps[-1]
+        elapsed = max(0.0, time.monotonic() - t_start) if t_start else 0.0
+        # ETA from average step rate so far (not last point — smoother).
+        rate = cur_step / elapsed if elapsed > 0 else 0.0
+        remaining = (total_steps - cur_step) / rate if rate > 0 and total_steps else float("nan")
+        progress_pct = min(100.0, 100.0 * cur_step / total_steps) if total_steps else 0.0
+
+        fig, axes = plt.subplots(1, 3, figsize=(13, 3.5),
+                                 gridspec_kw={"width_ratios": [4, 3, 3]})
         fig.patch.set_facecolor("#1a1a2e")
 
-        # Left: loss curves
+        # ── Left: loss curves
         ax = axes[0]
         ax.set_facecolor("#16213e")
         ax.plot(steps, [m["total"] for m in metrics],    color="#e94560", lw=1.5, label="total")
@@ -306,7 +347,7 @@ def _make_loss_chart(metrics: list[dict]):
             spine.set_edgecolor("#333")
         ax.legend(fontsize=8, facecolor="#16213e", labelcolor="white")
 
-        # Right: steps/s throughput
+        # ── Middle: throughput
         ax2 = axes[1]
         ax2.set_facecolor("#16213e")
         ax2.plot(steps, [m["tps"] for m in metrics], color="#00b4d8", lw=1.5)
@@ -316,6 +357,33 @@ def _make_loss_chart(metrics: list[dict]):
         ax2.tick_params(colors="#aaa")
         for spine in ax2.spines.values():
             spine.set_edgecolor("#333")
+
+        # ── Right: progress bar + numeric panel
+        ax3 = axes[2]
+        ax3.set_facecolor("#16213e")
+        # Horizontal bar
+        bar_y = 0.65
+        ax3.barh([bar_y], [100], height=0.18, color="#2a2a44", edgecolor="#444")
+        ax3.barh([bar_y], [progress_pct], height=0.18, color="#39d98a")
+        ax3.set_xlim(0, 100); ax3.set_ylim(0, 1)
+        ax3.set_xticks([0, 25, 50, 75, 100])
+        ax3.set_yticks([])
+        ax3.tick_params(colors="#aaa")
+        for spine in ax3.spines.values():
+            spine.set_edgecolor("#333")
+
+        # Big text overlay
+        ax3.text(50, 0.92, f"Progress  {progress_pct:5.1f}%",
+                 ha="center", va="center", color="white", fontsize=12, weight="bold")
+        eta_str = _fmt_eta(remaining)
+        elapsed_str = _fmt_eta(elapsed)
+        ax3.text(50, 0.42, f"step {cur_step:,} / {total_steps or '?':,}",
+                 ha="center", va="center", color="#cfd8e3", fontsize=11)
+        ax3.text(50, 0.25, f"elapsed {elapsed_str}    ETA {eta_str}",
+                 ha="center", va="center", color="#9aa6b2", fontsize=10)
+        ax3.text(50, 0.10, f"~{rate:.2f} steps/s avg",
+                 ha="center", va="center", color="#9aa6b2", fontsize=9)
+        ax3.set_title("Progress & ETA", color="white", fontsize=11)
 
         plt.tight_layout(pad=1.5)
         return fig
@@ -422,7 +490,7 @@ def build_train_tab(config_state: gr.State, cfg_save_dir: gr.Textbox):
                 combined = "\n".join(lines[-500:])
 
             metrics = _session.get_metrics()
-            fig = _make_loss_chart(metrics)
+            fig = _make_loss_chart(metrics, _session.total_steps, _session.t_start)
 
             # Latest scalar values from last metric entry
             if metrics:

@@ -170,8 +170,12 @@ def build_inference_tab(config_state: gr.State):
                     ("max_position_embeddings", "max_seq_len"),
                     ("tie_word_embeddings",   "tie_word_embeddings"),
                 ]:
-                    if cfg_key in cfg and cfg[cfg_key] not in (None, "", 0):
-                        model_cfg_kwargs[opt_key] = cfg[cfg_key]
+                    if cfg_key not in cfg:
+                        continue
+                    val = cfg[cfg_key]
+                    if val in (None, "", 0):
+                        continue
+                    model_cfg_kwargs[opt_key] = val
 
                 # If checkpoint sniffing revealed attention dims, adjust heads
                 # to match. We prefer the sniffed q/kv totals when the derived
