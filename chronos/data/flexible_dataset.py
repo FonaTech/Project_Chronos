@@ -1,13 +1,15 @@
 """
 chronos/data/flexible_dataset.py
 
-Robust dataset loader that accepts any JSONL format without requiring a
-specific field name. Tries common text field names in order, then falls
-back to concatenating all string values in the record.
+Streaming JSONL loader with byte-offset indexing. Only the offsets list
+(8 bytes/sample) lives in RAM — records are parsed on demand via
+seek()+readline()+json.loads() inside __getitem__. This keeps memory
+flat for multi-GB pretrain corpora where the prior "load all into a
+Python list" path would OOM.
 
-Supported formats (auto-detected):
+Supported formats (auto-detected from the first record):
   {"text": "..."}                    ← minimind pretrain
-  {"content": "..."}                 ← common HuggingFace datasets
+  {"content": "..."}                 ← common HF datasets
   {"instruction": "...", "output": "..."}  ← Alpaca-style
   {"conversations": [...]}           ← ShareGPT-style (SFT)
   {"prompt": "...", "response": "..."}
@@ -16,6 +18,9 @@ Supported formats (auto-detected):
   any JSON with string values        ← last-resort: join all strings
 """
 import json
+import os
+import threading
+
 import torch
 from torch.utils.data import Dataset
 
@@ -32,18 +37,15 @@ _PAIR_KEYS = (
 
 
 def _extract_text(record: dict) -> str:
-    # 1. Direct text field
     for k in _TEXT_KEYS:
         if k in record and record[k]:
             return str(record[k])
 
-    # 2. Instruction/response pairs
     for k1, k2 in _PAIR_KEYS:
         if k1 in record and k2 in record:
             parts = [str(record[k1]).strip(), str(record[k2]).strip()]
             return "\n".join(p for p in parts if p)
 
-    # 3. ShareGPT conversations
     if "conversations" in record:
         convs = record["conversations"]
         if isinstance(convs, list):
@@ -52,47 +54,53 @@ def _extract_text(record: dict) -> str:
                 for c in convs
             )
 
-    # 4. messages (OpenAI format)
     if "messages" in record:
         msgs = record["messages"]
         if isinstance(msgs, list):
-            return " ".join(
-                str(m.get("content", "")) for m in msgs
-            )
+            return " ".join(str(m.get("content", "")) for m in msgs)
 
-    # 5. Last resort: join all non-empty string values
     parts = [str(v) for v in record.values()
              if isinstance(v, (str, int, float)) and str(v).strip()]
     return " ".join(parts)
 
 
 class FlexibleDataset(Dataset):
-    """
-    Loads any JSONL file regardless of field names.
-    Tokenises with bos/eos, pads to max_length.
-    Returns (input_ids, labels) tensors compatible with minimind's training loop.
-    """
+    """Streaming JSONL dataset. Memory is O(N · 8B) via offset index."""
 
     def __init__(self, data_path: str, tokenizer, max_length: int = 512):
         self.tokenizer = tokenizer
         self.max_length = max_length
-        self.samples = []
+        self.data_path = os.path.abspath(data_path)
 
-        with open(data_path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
+        # Build the offset index by streaming the file once. Each entry
+        # points to the first byte of a non-empty line. We skip blank
+        # lines but do NOT parse JSON yet — that happens lazily.
+        self.offsets: list[int] = []
+        with open(self.data_path, "rb") as f:
+            pos = 0
+            while True:
+                line = f.readline()
                 if not line:
-                    continue
-                try:
-                    self.samples.append(json.loads(line))
-                except json.JSONDecodeError:
-                    continue
+                    break
+                # Record offset only if the line has non-whitespace bytes.
+                # Empty lines and pure-whitespace lines are skipped so
+                # __getitem__ never has to handle them.
+                if line.strip():
+                    self.offsets.append(pos)
+                pos = f.tell()
 
-        if not self.samples:
+        if not self.offsets:
             raise ValueError(f"No valid JSON records found in {data_path}")
 
-        # Detect format by inspecting first record
-        first = self.samples[0]
+        # File handle is opened per-worker in __getitem__; a shared
+        # handle would break under DataLoader num_workers>0 via fork.
+        self._fh = None
+        self._fh_lock = threading.Lock()
+
+        # Peek at the first record to report detected format. This reuses
+        # the same lazy path we use at runtime, so any parse failures
+        # surface here instead of mid-training.
+        first = self._read_record(0)
         detected = _extract_text(first)
         field_hint = (
             next((k for k in _TEXT_KEYS if k in first), None)
@@ -100,15 +108,37 @@ class FlexibleDataset(Dataset):
                      if k1 in first and k2 in first), None)
             or ("conversations" if "conversations" in first else "auto")
         )
-        print(f"[FlexibleDataset] {len(self.samples)} records, "
+        print(f"[FlexibleDataset] {len(self.offsets)} records (streaming), "
               f"detected format: '{field_hint}', "
               f"sample preview: {detected[:80]!r}")
 
+    def _get_fh(self):
+        """Lazy per-process file handle. Reopened after fork (pid changes)."""
+        pid = os.getpid()
+        if self._fh is None or getattr(self._fh, "_chronos_pid", None) != pid:
+            if self._fh is not None:
+                try:
+                    self._fh.close()
+                except Exception:
+                    pass
+            self._fh = open(self.data_path, "rb")
+            self._fh._chronos_pid = pid
+        return self._fh
+
+    def _read_record(self, index: int) -> dict:
+        offset = self.offsets[index]
+        with self._fh_lock:
+            fh = self._get_fh()
+            fh.seek(offset)
+            raw = fh.readline()
+        return json.loads(raw.decode("utf-8"))
+
     def __len__(self):
-        return len(self.samples)
+        return len(self.offsets)
 
     def __getitem__(self, index):
-        text = _extract_text(self.samples[index])
+        record = self._read_record(index)
+        text = _extract_text(record)
         tok = self.tokenizer(
             text,
             add_special_tokens=False,
@@ -126,3 +156,10 @@ class FlexibleDataset(Dataset):
         labels = input_ids.clone()
         labels[input_ids == pad_id] = -100
         return input_ids, labels
+
+    def __del__(self):
+        try:
+            if self._fh is not None:
+                self._fh.close()
+        except Exception:
+            pass

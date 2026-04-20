@@ -290,6 +290,9 @@ def build_config_tab():
                 return [f"❌ Load failed: {e}"] + [gr.update() for _ in all_inputs]
 
         apply_preset_btn.click(fn=apply_preset, inputs=[preset_dd], outputs=all_inputs)
+        # Selecting a preset in the dropdown should sync immediately;
+        # the explicit "Load Preset" button stays as a re-apply affordance.
+        preset_dd.change(fn=apply_preset, inputs=[preset_dd], outputs=all_inputs)
         reset_btn.click(fn=reset_minimind, outputs=all_inputs)
         save_btn.click(fn=do_save, inputs=[config_state, cfg_path], outputs=[save_status])
         load_btn.click(fn=do_load, inputs=[cfg_path], outputs=[save_status] + all_inputs)

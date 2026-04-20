@@ -145,11 +145,45 @@ class TrainSession:
                       f"vocab={model_cfg.vocab_size})")
 
             save_dir = cfg.get("save_dir", "./out")
-            ckp_path = os.path.join(save_dir, f"chronos_{model_cfg.hidden_size}_moe.pth")
-            if os.path.exists(ckp_path):
-                weights = torch.load(ckp_path, map_location="cpu")
+            # Output checkpoint path differs per stage so SFT doesn't
+            # clobber the pretrain weights, DPO doesn't clobber SFT, etc.
+            STAGE_PREFIX = {
+                "pretrain": "chronos", "sft": "sft",
+                "rl": "rl", "orpo": "orpo",
+            }
+            out_prefix = STAGE_PREFIX.get(mode, "chronos")
+            ckp_path = os.path.join(save_dir, f"{out_prefix}_{model_cfg.hidden_size}_moe.pth")
+
+            # Init-weight resolution:
+            #   - pretrain: optionally resume from its own checkpoint if present
+            #   - sft/rl/orpo: REQUIRE an upstream weight (init_weight from UI,
+            #     or fall back to the previous-stage default in save_dir).
+            init_weight = (cfg.get("init_weight") or "").strip()
+            if mode == "pretrain":
+                resume_path = init_weight or ckp_path
+                if os.path.exists(resume_path):
+                    weights = torch.load(resume_path, map_location="cpu")
+                    model.load_state_dict(weights, strict=False)
+                    self._put(f"Resumed from {resume_path}")
+                else:
+                    self._put("Pretraining from random init")
+            else:
+                STAGE_DEFAULT_INIT = {
+                    "sft":  f"chronos_{model_cfg.hidden_size}_moe.pth",
+                    "rl":   f"sft_{model_cfg.hidden_size}_moe.pth",
+                    "orpo": f"sft_{model_cfg.hidden_size}_moe.pth",
+                }
+                load_path = init_weight or os.path.join(save_dir, STAGE_DEFAULT_INIT[mode])
+                if not os.path.exists(load_path):
+                    raise FileNotFoundError(
+                        f"[{mode.upper()}] requires an upstream checkpoint to initialize from. "
+                        f"Tried: {load_path}\n"
+                        f"Set 'init_weight' in the Train tab to point at a valid .pth, "
+                        f"or run the prior stage first (Pretrain → SFT → DPO/ORPO/GRPO)."
+                    )
+                weights = torch.load(load_path, map_location="cpu")
                 model.load_state_dict(weights, strict=False)
-                self._put(f"Resumed from {ckp_path}")
+                self._put(f"[{mode.upper()}] Initialized from {load_path}")
 
             device = "cuda" if torch.cuda.is_available() else (
                 "mps" if torch.backends.mps.is_available() else "cpu"
@@ -428,6 +462,14 @@ def build_train_tab(config_state: gr.State, cfg_save_dir: gr.Textbox):
             )
             register_translatable(status_box, "train.status")
 
+        # ── Init-weight: required for SFT/RL/ORPO, optional for pretrain ──
+        with gr.Row():
+            init_weight = gr.Textbox(
+                label="init_weight (.pth) — required for SFT / RL / ORPO; optional resume for pretrain",
+                placeholder="./out/chronos_768_moe.pth   (auto-falls-back to prior stage)",
+                scale=4,
+            )
+
         with gr.Row():
             start_btn = gr.Button(t("train.start"), variant="primary")
             stop_btn  = gr.Button(t("train.stop"),  variant="stop")
@@ -462,11 +504,12 @@ def build_train_tab(config_state: gr.State, cfg_save_dir: gr.Textbox):
 
         # ── Callbacks ─────────────────────────────────────────────
 
-        def start_training(cfg, train_mode, dpath):
+        def start_training(cfg, train_mode, dpath, iw):
             if _session.is_running():
                 return "already running", 0, 0.0, 0.0, 0.0, 0.0, "Already running.\n", None
             cfg = dict(cfg) if cfg else {}
             cfg["data_path"] = dpath or cfg.get("data_path", "")
+            cfg["init_weight"] = iw or ""
             _session.start(cfg, train_mode)
             return "running", 0, 0.0, 0.0, 0.0, 0.0, "Starting...\n", None
 
@@ -514,7 +557,7 @@ def build_train_tab(config_state: gr.State, cfg_save_dir: gr.Textbox):
 
         start_btn.click(
             fn=start_training,
-            inputs=[config_state, mode, data_path],
+            inputs=[config_state, mode, data_path, init_weight],
             outputs=[status_box, step_box, loss_box, ce_box, aux_box, tps_box, log_box, chart],
         )
         stop_btn.click(fn=stop_training, outputs=[status_box])
