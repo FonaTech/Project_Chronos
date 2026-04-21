@@ -12,6 +12,63 @@ import chronos.deps  # auto-bootstrap minimind on sys.path
 from ui.i18n import t, register_translatable
 
 
+def _sniff_checkpoint(path: str) -> dict:
+    import os as _os
+    if not path or not _os.path.exists(path):
+        return {}
+    try:
+        import torch as _t
+        sd = _t.load(path, map_location="cpu")
+        if not isinstance(sd, dict):
+            return {}
+        out = {}
+
+        embed = sd.get("model.embed_tokens.weight")
+        if embed is not None:
+            out["vocab_size"], out["hidden_size"] = int(embed.shape[0]), int(embed.shape[1])
+
+        layer_idxs = set()
+        for k in sd.keys():
+            if k.startswith("model.layers."):
+                try:
+                    layer_idxs.add(int(k.split(".")[2]))
+                except (ValueError, IndexError):
+                    pass
+        if layer_idxs:
+            out["num_hidden_layers"] = max(layer_idxs) + 1
+
+        expert_idxs = set()
+        for k in sd.keys():
+            if k.startswith("model.layers.0.mlp.experts."):
+                try:
+                    expert_idxs.add(int(k.split(".")[5]))
+                except (ValueError, IndexError):
+                    pass
+        if expert_idxs:
+            out["num_experts"] = max(expert_idxs) + 1
+
+        gate = sd.get("model.layers.0.mlp.experts.0.gate_proj.weight")
+        if gate is not None:
+            out["moe_intermediate_size"] = int(gate.shape[0])
+
+        qw = sd.get("model.layers.0.self_attn.q_proj.weight")
+        kw = sd.get("model.layers.0.self_attn.k_proj.weight")
+        if qw is not None and kw is not None:
+            out["num_attention_heads_total_dim"] = int(qw.shape[0])
+            out["num_kv_heads_total_dim"] = int(kw.shape[0])
+
+        lookahead_proj = sd.get("model.lookahead_router.proj.2.weight")
+        if lookahead_proj is not None and out.get("num_experts"):
+            total = int(lookahead_proj.shape[0])
+            n_exp = int(out["num_experts"])
+            if n_exp > 0 and total % n_exp == 0:
+                out["lookahead_steps"] = total // n_exp
+
+        return out
+    except Exception:
+        return {}
+
+
 # ── Background trainer thread ─────────────────────────────────────
 
 class TrainSession:
@@ -162,9 +219,24 @@ class TrainSession:
             if mode == "pretrain":
                 resume_path = init_weight or ckp_path
                 if os.path.exists(resume_path):
-                    weights = torch.load(resume_path, map_location="cpu")
-                    model.load_state_dict(weights, strict=False)
-                    self._put(f"Resumed from {resume_path}")
+                    sniffed = _sniff_checkpoint(resume_path)
+                    mismatches = []
+                    for k in [
+                        "hidden_size", "num_hidden_layers", "num_experts",
+                        "moe_intermediate_size", "vocab_size", "lookahead_steps",
+                    ]:
+                        if k in sniffed and k in model_cfg_kwargs and int(sniffed[k]) != int(model_cfg_kwargs[k]):
+                            mismatches.append(f"{k}: ckpt={sniffed[k]} != ui={model_cfg_kwargs[k]}")
+
+                    if mismatches:
+                        self._put(
+                            "Resume checkpoint exists but does not match current UI config; "
+                            "starting fresh instead.\n  " + "\n  ".join(mismatches)
+                        )
+                    else:
+                        weights = torch.load(resume_path, map_location="cpu")
+                        model.load_state_dict(weights, strict=False)
+                        self._put(f"Resumed from {resume_path}")
                 else:
                     self._put("Pretraining from random init")
             else:
@@ -181,6 +253,22 @@ class TrainSession:
                         f"Set 'init_weight' in the Train tab to point at a valid .pth, "
                         f"or run the prior stage first (Pretrain → SFT → DPO/ORPO/GRPO)."
                     )
+
+                sniffed = _sniff_checkpoint(load_path)
+                mismatch_hints = []
+                for k in [
+                    "hidden_size", "num_hidden_layers", "num_experts",
+                    "moe_intermediate_size", "vocab_size", "lookahead_steps",
+                ]:
+                    if k in sniffed and k in model_cfg_kwargs and int(sniffed[k]) != int(model_cfg_kwargs[k]):
+                        mismatch_hints.append(f"{k}: ckpt={sniffed[k]} != ui={model_cfg_kwargs[k]}")
+                if mismatch_hints:
+                    raise RuntimeError(
+                        f"[{mode.upper()}] init checkpoint topology does not match current UI config:\n  "
+                        + "\n  ".join(mismatch_hints)
+                        + "\nLoad the matching preset/config first, or switch init_weight to the correct checkpoint."
+                    )
+
                 weights = torch.load(load_path, map_location="cpu")
                 model.load_state_dict(weights, strict=False)
                 self._put(f"[{mode.upper()}] Initialized from {load_path}")
