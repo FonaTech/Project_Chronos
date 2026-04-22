@@ -13,7 +13,10 @@ from model.model_minimind import MiniMindConfig
 from trainer.trainer_utils import (
     get_lr, Logger, is_main_process, lm_checkpoint, setup_seed,
 )
-from dataset.lm_dataset import PretrainDataset, SFTDataset
+from chronos.data.flexible_dataset import (
+    FlexibleDataset as PretrainDataset,
+    StreamingSFTDataset as SFTDataset,
+)
 
 from chronos.model.config import ChronosConfig
 from chronos.model.model_chronos import ChronosForCausalLM

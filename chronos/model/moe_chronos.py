@@ -42,8 +42,17 @@ class ChronosMOEFeedForward(nn.Module):
             for _ in range(config.num_shared_experts)
         ])
         self.aux_loss = torch.zeros(1)
-        # Stores routing probs for temporal loss computation in trainer
+        # Stores routing probs for downstream loss / metrics.
+        # We keep TWO refs:
+        #   last_router_probs       — detached, safe for logging / cluster
+        #                              layout / inference engine prefetch
+        #                              (consumers that must NOT change grad).
+        #   last_router_probs_grad  — live tensor with autograd attached,
+        #                              consumed by chronos_loss_term so the
+        #                              λ_temporal / λ_lookahead penalties
+        #                              actually shape the gate.
         self.last_router_probs: torch.Tensor = None
+        self.last_router_probs_grad: torch.Tensor = None
 
     def _shared_expert_output(self, x_flat: torch.Tensor) -> torch.Tensor:
         """Average output of all shared experts."""
@@ -68,7 +77,12 @@ class ChronosMOEFeedForward(nn.Module):
         B, S, H = x.shape
         x_flat = x.view(-1, H)                                   # [N, H]
         scores = F.softmax(self.gate(x_flat), dim=-1)            # [N, E]
-        self.last_router_probs = scores.view(B, S, self.num_experts).detach()
+        scores_bse = scores.view(B, S, self.num_experts)
+        # Live (with-grad) view drives the temporal / lookahead losses.
+        self.last_router_probs_grad = scores_bse
+        # Detached view for read-only consumers (logging, cluster layout,
+        # inference-engine prefetch). Same tensor data, no autograd edge.
+        self.last_router_probs = scores_bse.detach()
 
         topk_weight, topk_idx = torch.topk(
             scores, k=self.num_experts_per_tok, dim=-1, sorted=False

@@ -29,7 +29,7 @@ from torch.utils.data import DataLoader
 import chronos.deps  # ensure minimind on sys.path
 
 from trainer.trainer_utils import get_lr, Logger, is_main_process  # type: ignore
-from dataset.lm_dataset import SFTDataset  # type: ignore
+from chronos.data.flexible_dataset import StreamingSFTDataset
 
 from chronos.model.config import ChronosConfig
 from chronos.model.model_chronos import ChronosForCausalLM
@@ -180,5 +180,5 @@ class ChronosSFTTrainer:
 
 
 def build_sft_loader(data_path, tokenizer, max_seq_len, batch_size):
-    ds = SFTDataset(data_path, tokenizer, max_length=max_seq_len)
+    ds = StreamingSFTDataset(data_path, tokenizer, max_length=max_seq_len)
     return DataLoader(ds, batch_size=batch_size, shuffle=False, num_workers=0)

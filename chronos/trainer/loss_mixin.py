@@ -32,8 +32,15 @@ from chronos.model.temporal_loss import (
 )
 
 
-def collect_router_probs(model) -> Optional[torch.Tensor]:
-    """Stack `last_router_probs` from every ChronosMOEFeedForward layer.
+def collect_router_probs(model, *, with_grad: bool = False) -> Optional[torch.Tensor]:
+    """Stack router probs from every ChronosMOEFeedForward layer.
+
+    Args:
+        with_grad: when True, returns the live tensor that still has an
+                   autograd edge back to the gate (used by training loss
+                   terms that need to shape the gate). When False, returns
+                   the detached tensor (safe for logging / cluster layout
+                   / KL anchor reference / lookahead teacher).
 
     Returns: ``[B, S, L, E]`` or ``None`` if no MoE layers fired in the
     last forward pass (e.g. before the first forward).
@@ -42,7 +49,7 @@ def collect_router_probs(model) -> Optional[torch.Tensor]:
     for layer in model.model.layers:
         mlp = getattr(layer, "mlp", None)
         if isinstance(mlp, ChronosMOEFeedForward):
-            p = mlp.last_router_probs
+            p = mlp.last_router_probs_grad if with_grad else mlp.last_router_probs
             if p is not None:
                 probs.append(p)
     if not probs:
@@ -77,7 +84,7 @@ def chronos_loss_term(
         if lambda_balance > 0.0:
             loss = loss + lambda_balance * aux_loss
 
-    router_4d = collect_router_probs(model)
+    router_4d = collect_router_probs(model, with_grad=True)
     if router_4d is not None and router_4d.shape[1] > 1:
         router_mean = router_4d.mean(dim=2)  # [B, S, E]
         lambda_temporal = float(getattr(config, "lambda_temporal", 0.0))
@@ -91,6 +98,8 @@ def chronos_loss_term(
             and lambda_lookahead > 0.0
             and lookahead_steps > 0
         ):
+            # Teacher must be detached: lookahead targets are stop-grad'd
+            # by construction (we predict the *future* router state).
             teacher = router_mean.detach()
             la = lookahead_supervision_loss(lookahead_probs, teacher, lookahead_steps)
             loss = loss + lambda_lookahead * la

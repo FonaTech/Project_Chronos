@@ -22,7 +22,7 @@ from torch.utils.data import DataLoader
 
 import chronos.deps  # noqa
 from trainer.trainer_utils import get_lr, Logger, is_main_process  # type: ignore
-from dataset.lm_dataset import DPODataset  # type: ignore
+from chronos.data.flexible_dataset import StreamingDPODataset as DPODataset
 
 from chronos.model.config import ChronosConfig
 from chronos.model.model_chronos import ChronosForCausalLM

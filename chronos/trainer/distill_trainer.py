@@ -23,7 +23,7 @@ from torch.utils.data import DataLoader
 
 import chronos.deps  # noqa: F401
 from trainer.trainer_utils import get_lr, Logger  # type: ignore
-from dataset.lm_dataset import SFTDataset  # type: ignore
+from chronos.data.flexible_dataset import StreamingSFTDataset as SFTDataset
 
 from chronos.model.config import ChronosConfig
 from chronos.model.model_chronos import ChronosForCausalLM

@@ -293,18 +293,17 @@ class TrainSession:
                 loader = self._synthetic_loader(model_cfg.vocab_size, max_seq_len, batch_size, n=50)
             else:
                 tokenizer = self._load_tokenizer()
-                try:
-                    if mode == "pretrain":
-                        from dataset.lm_dataset import PretrainDataset
-                        ds = PretrainDataset(data_path, tokenizer, max_length=max_seq_len)
-                    else:
-                        from dataset.lm_dataset import SFTDataset
-                        ds = SFTDataset(data_path, tokenizer, max_length=max_seq_len)
-                    _ = ds[0]
-                except (KeyError, Exception) as e:
-                    self._put(f"Dataset load failed ({e}), falling back to FlexibleDataset")
-                    from chronos.data.flexible_dataset import FlexibleDataset
+                # Streaming JSONL — O(N · 8B) RSS regardless of corpus size.
+                # Avoids the HuggingFace `load_dataset('json', ...)` Arrow
+                # mmap path which kept blowing up to 100s of GB resident
+                # under continuous random access on macOS.
+                from chronos.data.flexible_dataset import (
+                    FlexibleDataset, StreamingSFTDataset,
+                )
+                if mode == "pretrain":
                     ds = FlexibleDataset(data_path, tokenizer, max_length=max_seq_len)
+                else:
+                    ds = StreamingSFTDataset(data_path, tokenizer, max_length=max_seq_len)
                 loader = DataLoader(ds, batch_size=batch_size, shuffle=True,
                                     num_workers=0, pin_memory=False)
 
@@ -332,17 +331,27 @@ class TrainSession:
 
                     aux_val = out.aux_loss.item() if hasattr(out, "aux_loss") else 0.0
 
-                    if moe_layers and moe_layers[0].last_router_probs is not None:
-                        probs = torch.stack(
-                            [l.last_router_probs for l in moe_layers], dim=2
-                        ).mean(dim=2)
+                    # Use the shared loss helper so λ_temporal / λ_lookahead
+                    # actually flow gradient back to the gate. The previous
+                    # path passed the detached `last_router_probs` into
+                    # total_loss, which made the regularizers inert (the
+                    # gate received only CE gradient, so router-locality was
+                    # never learned even after thousands of steps).
+                    from chronos.trainer.loss_mixin import (
+                        chronos_loss_term, collect_router_probs,
+                    )
+                    loss = chronos_loss_term(
+                        model, out.loss, lp, model_cfg, aux_loss=out.aux_loss,
+                    )
+                    # Logging-only: detached probs are fine here.
+                    router_4d_det = collect_router_probs(model, with_grad=False)
+                    if router_4d_det is not None and router_4d_det.shape[1] > 1:
                         from chronos.model.temporal_loss import temporal_locality_loss
-                        temp_val = temporal_locality_loss(probs).item()
-                        loss = total_loss(out.loss, out.aux_loss, probs,
-                                          model_cfg.lambda_balance, model_cfg.lambda_temporal)
+                        temp_val = temporal_locality_loss(
+                            router_4d_det.mean(dim=2)
+                        ).item()
                     else:
                         temp_val = 0.0
-                        loss = out.loss + out.aux_loss
 
                     (loss / accum).backward()
                     global_step += 1
