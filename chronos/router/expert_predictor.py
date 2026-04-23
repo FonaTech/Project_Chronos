@@ -15,9 +15,12 @@ The ExpertPredictor is stateless — it takes an IntentVector and returns
 an ExpertSet. No weights, no training needed.
 """
 from dataclasses import dataclass, field
-from typing import List, Optional, Set
+from typing import List, Optional, Set, TYPE_CHECKING
 
 import torch
+
+if TYPE_CHECKING:
+    from chronos.router.intent_classifier import IntentVector
 
 
 @dataclass

@@ -42,9 +42,12 @@ Usage (without IntentClassifier — fallback mode):
 """
 import time
 import threading
-from typing import List, Optional, Set
+from typing import List, Optional, Set, TYPE_CHECKING
 
 import torch
+
+if TYPE_CHECKING:
+    from chronos.router.expert_predictor import ExpertSet
 
 
 class PrefillScheduler:
