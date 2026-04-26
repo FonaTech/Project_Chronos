@@ -223,10 +223,12 @@ def build_config_tab():
 
                 with gr.Row():
                     epochs        = gr.Slider(1, 1000,    value=D["epochs"],         step=1,   label=t("config.epochs"))
+                    max_steps     = gr.Number(value=int(D.get("max_steps", 0) or 0), precision=0, label=t("train.max_steps"))
                     save_interval = gr.Slider(10, 100000, value=D["save_interval"],  step=10,  label=t("config.save_interval"))
                     log_interval  = gr.Slider(1, 1000,    value=D.get("log_interval", 10), step=1, label="log_interval")
                     save_dir      = gr.Textbox(label=t("config.save_dir"),           value=D["save_dir"])
                     register_translatable(epochs,        "config.epochs")
+                    register_translatable(max_steps,     "train.max_steps")
                     register_translatable(save_interval, "config.save_interval")
                     register_translatable(save_dir,      "config.save_dir")
 
@@ -318,7 +320,7 @@ def build_config_tab():
             fallback_mask_prob,
             vram_budget, pinned_frac, use_hybrid_attn, storage_format,
             learning_rate, batch_size, accum_steps, max_seq_len,
-            epochs, save_interval, log_interval, save_dir,
+            epochs, max_steps, save_interval, log_interval, save_dir,
             weight_decay, grad_clip,
             cpu_threads, cpu_budget_percent, num_workers,
             reward_spec, max_gen_len, num_generations, temperature,
@@ -332,7 +334,7 @@ def build_config_tab():
              vs, dt, tie,
              lb, lt, ll, llt, lra, fmp,
              vb, pf, ha, sf,
-             lr, bs, ac, msl, ep, si, li, sd,
+             lr, bs, ac, msl, ep, max_st, si, li, sd,
              wd, gc, ct, cbp, nw,
              reward, mgl, ng, temp, beta, alpha, lor) = vals
             cfg = {
@@ -353,7 +355,8 @@ def build_config_tab():
                 "storage_format": str(sf),
                 "learning_rate": float(lr), "batch_size": int(bs),
                 "accumulation_steps": int(ac), "max_seq_len": int(msl),
-                "epochs": int(ep), "save_interval": int(si),
+                "epochs": int(ep), "max_steps": max(0, int(max_st or 0)),
+                "save_interval": int(si),
                 "weight_decay": float(wd),
                 "grad_clip": float(gc),
                 "log_interval": int(li),

@@ -42,6 +42,7 @@ INFERENCE_CHART_METRICS = (
     ("cache_hit_rate", "Cache hit rate", "ratio"),
     ("resident_hit_rate", "Resident hit rate", "ratio"),
     ("prediction_hit_rate", "Prediction hit rate", "ratio"),
+    ("cold_miss_predict_hit_rate", "Cold miss predict hit", "ratio"),
     ("fallback_weight_rate", "Fallback weight", "ratio"),
     ("on_demand_loads", "On-demand loads", "count"),
     ("on_demand_load_time_s", "On-demand load time", "s"),
@@ -51,6 +52,7 @@ INFERENCE_SWEEP_CHART_METRICS = (
     ("response_time_s", "Response time", "s"),
     ("cache_hit_rate", "Cache hit rate", "ratio"),
     ("prediction_hit_rate", "Prediction hit rate", "ratio"),
+    ("cold_miss_predict_hit_rate", "Cold miss predict hit", "ratio"),
     ("fallback_weight_rate", "Fallback weight", "ratio"),
     ("rss_delta_gb", "RSS delta", "GB"),
     ("prefill_rss_delta_gb", "Prefill RSS delta", "GB"),
@@ -411,6 +413,78 @@ def _encode_prompt(tokenizer, prompt_val: str, raw_prompt: bool = False) -> tupl
         )
         enc = tokenizer(rendered, add_special_tokens=False, return_attention_mask=True)
     return list(enc["input_ids"]), list(enc.get("attention_mask") or [1] * len(enc["input_ids"]))
+
+
+def _decode_generation_diagnostics(tokenizer, tokens: list[int], stats: dict | None = None) -> dict:
+    tokens = [int(t) for t in (tokens or [])]
+    stats = stats or {}
+    special_ids = {
+        "eos": getattr(tokenizer, "eos_token_id", None),
+        "pad": getattr(tokenizer, "pad_token_id", None),
+        "unk": getattr(tokenizer, "unk_token_id", None),
+        "bos": getattr(tokenizer, "bos_token_id", None),
+    }
+    raw_text = tokenizer.decode(tokens, skip_special_tokens=False) if tokens else ""
+    clean_text = tokenizer.decode(tokens, skip_special_tokens=True) if tokens else ""
+    first_token_id = tokens[0] if tokens else None
+    first_token_kind = ""
+    for name, token_id in special_ids.items():
+        if token_id is not None and first_token_id == int(token_id):
+            first_token_kind = name
+            break
+    special_count = 0
+    special_id_values = {int(v) for v in special_ids.values() if v is not None}
+    for token in tokens:
+        if int(token) in special_id_values:
+            special_count += 1
+    first_topk = stats.get("first_token_topk", [])
+    warning = ""
+    if tokens and not clean_text.strip():
+        warning = "Generated tokens decode to an empty clean string because they are all special/filtered tokens."
+    elif first_token_kind in {"eos", "pad"}:
+        warning = f"First generated token is {first_token_kind.upper()}, so generation may stop or decode to empty text."
+    return {
+        "generated_token_ids": tokens,
+        "token_count": len(tokens),
+        "raw_decode": raw_text,
+        "clean_decode": clean_text,
+        "first_token_id": first_token_id,
+        "first_token_kind": first_token_kind,
+        "special_token_count": special_count,
+        "special_token_ratio": round(special_count / max(len(tokens), 1), 6),
+        "all_special_or_filtered": bool(tokens and not clean_text.strip()),
+        "first_token_topk": first_topk,
+        "first_token_special_probs": stats.get("first_token_special_probs", {}),
+        "warning": warning,
+    }
+
+
+def _stage_warning_from_checkpoint(sniffed: dict, model_path_val: str) -> str:
+    stage = str((sniffed or {}).get("stage") or "").strip().lower()
+    if stage == "chronos":
+        return (
+            f"`{model_path_val}` is a pretrain (`stage=chronos`) checkpoint. "
+            "It is not SFT/chat-aligned yet, so chat prompts can produce repetition or low-quality text."
+        )
+    return ""
+
+
+def _checkpoint_sidecar_metadata(model_path_val: str) -> dict:
+    if not model_path_val:
+        return {}
+    try:
+        import json
+        import os
+        from chronos.model.checkpoint import checkpoint_config_path
+
+        path = checkpoint_config_path(model_path_val)
+        if not path or not os.path.exists(path):
+            return {}
+        with open(path, encoding="utf-8") as f:
+            meta = json.load(f)
+        return dict(meta) if isinstance(meta, dict) else {}
+    except Exception:
+        return {}
 
 
 def _format_offload_stats(stats: dict) -> str:
@@ -1042,6 +1116,12 @@ def _format_inference_stats(rows: list[dict], diff: dict | None = None) -> str:
     def fmt_hits(row: dict) -> str:
         return f"{fmt_int(row, 'cache_hits')}/{fmt_int(row, 'cache_misses')}"
 
+    def fmt_bool(row: dict, key: str) -> str:
+        value = row.get(key)
+        if value in (None, ""):
+            return ""
+        return "True" if bool(value) else "False"
+
     metric_rows = [
         ("Backend", lambda r: str(r.get("backend", ""))),
         ("Policy", lambda r: str(r.get("miss_policy", "full"))),
@@ -1066,6 +1146,7 @@ def _format_inference_stats(rows: list[dict], diff: dict | None = None) -> str:
         ("MLX decode", lambda r: fmt_num(r, "mlx_active_after_decode_gb", " GB")),
         ("Resident hit", lambda r: fmt_pct(r, "resident_hit_rate", "cache_hit_rate")),
         ("Predict hit", lambda r: fmt_pct(r, "prediction_hit_rate")),
+        ("Cold miss predict hit", lambda r: fmt_pct(r, "cold_miss_predict_hit_rate")),
         ("Fallback weight", lambda r: fmt_pct(r, "fallback_weight_rate")),
         ("On-demand loads", lambda r: fmt_int(r, "on_demand_loads")),
         ("Prefetch drops", lambda r: fmt_int(r, "prefetch_queue_drops")),
@@ -1076,10 +1157,14 @@ def _format_inference_stats(rows: list[dict], diff: dict | None = None) -> str:
         ("Async misses", lambda r: fmt_int(r, "async_cold_miss_prefetches")),
         ("Sync SSD loads", lambda r: fmt_int(r, "sync_ssd_loads")),
         ("Expert hits/misses", fmt_hits),
+        ("All-resident fast path", lambda r: fmt_bool(r, "all_resident_fast_path")),
         ("Load budget", lambda r: str(r.get("load_budget", "all"))),
         ("VRAM experts", lambda r: str(r.get("vram_experts", ""))),
         ("RAM experts", lambda r: str(r.get("ram_experts", ""))),
         ("Cluster aware", lambda r: str(r.get("cluster_aware", False))),
+        ("First token", lambda r: str(r.get("first_token_id", ""))),
+        ("First token kind", lambda r: str(r.get("first_token_kind", ""))),
+        ("Special token ratio", lambda r: fmt_pct(r, "special_token_ratio")),
     ]
 
     lines = [
@@ -1098,7 +1183,27 @@ def _format_inference_stats(rows: list[dict], diff: dict | None = None) -> str:
             f"common_prefix_chars=`{diff.get('common_prefix_chars')}`, "
             f"len_lazy=`{diff.get('len_lazy')}`, len_full_dram=`{diff.get('len_full_dram')}`"
         )
+    warnings = [str(row.get("decode_warning", "")).strip() for row in rows if row.get("decode_warning")]
+    if warnings:
+        lines.append("")
+        lines.append("Decode warnings:")
+        for warning in dict.fromkeys(warnings):
+            lines.append(f"- {warning}")
     return "\n".join(lines)
+
+
+def _format_inference_notices(raw: dict) -> str:
+    notices = []
+    checkpoint_warning = (raw or {}).get("checkpoint_warning")
+    if checkpoint_warning:
+        notices.append(f"Checkpoint notice: {checkpoint_warning}")
+    for row in (raw or {}).get("rows", []):
+        warning = row.get("decode_warning")
+        if warning:
+            notices.append(f"{row.get('mode', 'run')}: {warning}")
+    if not notices:
+        return ""
+    return "\n\n".join(f"> {notice}" for notice in dict.fromkeys(notices)) + "\n\n"
 
 
 def _row_from_stats(mode: str, backend: str, tokens: list[int], elapsed: float,
@@ -1156,6 +1261,12 @@ def _row_from_stats(mode: str, backend: str, tokens: list[int], elapsed: float,
         "cache_hit_rate": stats.get("cache_hit_rate", 1.0 if mode == "full_dram" else 0),
         "resident_hit_rate": stats.get("resident_hit_rate", stats.get("cache_hit_rate", 1.0 if mode == "full_dram" else 0)),
         "prediction_hit_rate": stats.get("prediction_hit_rate", 0.0),
+        "prediction_hits": stats.get("prediction_hits", 0),
+        "prediction_total": stats.get("prediction_total", 0),
+        "cold_miss_predict_hit_rate": stats.get("cold_miss_predict_hit_rate", 0.0),
+        "cold_prediction_hits": stats.get("cold_prediction_hits", 0),
+        "cold_prediction_total": stats.get("cold_prediction_total", 0),
+        "all_resident_fast_path": stats.get("all_resident_fast_path", mode == "full_dram"),
         "on_demand_loads": stats.get("on_demand_loads", 0),
         "on_demand_load_time_s": stats.get("on_demand_load_time_s", 0.0),
         "async_cold_miss_prefetches": stats.get("async_cold_miss_prefetches", 0),
@@ -1206,6 +1317,21 @@ def _row_from_stats(mode: str, backend: str, tokens: list[int], elapsed: float,
     }
 
 
+def _attach_decode_diagnostics(row: dict, diagnostics: dict) -> dict:
+    row["generated_token_ids"] = diagnostics.get("generated_token_ids", [])
+    row["raw_decode"] = diagnostics.get("raw_decode", "")
+    row["clean_decode"] = diagnostics.get("clean_decode", "")
+    row["first_token_id"] = diagnostics.get("first_token_id")
+    row["first_token_kind"] = diagnostics.get("first_token_kind", "")
+    row["special_token_count"] = diagnostics.get("special_token_count", 0)
+    row["special_token_ratio"] = diagnostics.get("special_token_ratio", 0.0)
+    row["all_special_or_filtered"] = diagnostics.get("all_special_or_filtered", False)
+    row["first_token_topk"] = diagnostics.get("first_token_topk", [])
+    row["first_token_special_probs"] = diagnostics.get("first_token_special_probs", {})
+    row["decode_warning"] = diagnostics.get("warning", "")
+    return row
+
+
 def _build_model_cfg(cfg, model_path_val):
     from chronos.model.config import ChronosConfig
     from chronos.model.checkpoint import config_dict_for_checkpoint, sniff_checkpoint_config
@@ -1225,6 +1351,12 @@ def _build_model_cfg(cfg, model_path_val):
     except Exception:
         ckpt_cfg, cfg_sources = {}, []
     sniffed = ckpt_cfg or (sniff_checkpoint_config(model_path_val) if model_path_val else {})
+    sidecar_meta = _checkpoint_sidecar_metadata(model_path_val)
+    if sidecar_meta:
+        sniffed = dict(sniffed)
+        for meta_key in ("stage", "checkpoint_format", "checkpoint_config_version"):
+            if sidecar_meta.get(meta_key) not in (None, ""):
+                sniffed[meta_key] = sidecar_meta[meta_key]
     sniff_note = ""
     if sniffed:
         summary = ", ".join(
@@ -1325,6 +1457,8 @@ def _run_inference_modes(cfg, selected_backend, selected_mode, model_path_val,
         "backend": backend,
         "backend_note": backend_note.strip(),
         "checkpoint_note": sniff_note.strip(),
+        "checkpoint_stage": str(sniffed.get("stage", "") or ""),
+        "checkpoint_warning": _stage_warning_from_checkpoint(sniffed, model_path_val),
         "backend_diagnostics": backend_diag,
         "expert_budget_policy": {
             "source": "checkpoint num_experts_per_tok",
@@ -1375,11 +1509,13 @@ def _run_inference_modes(cfg, selected_backend, selected_mode, model_path_val,
                 )
             lazy_elapsed = time.monotonic() - t0
             lazy_mem = _memory_snapshot_gb()
-            lazy_text = tokenizer.decode(lazy_tokens, skip_special_tokens=True)
+            lazy_diag = _decode_generation_diagnostics(tokenizer, lazy_tokens, lazy_stats)
+            lazy_text = lazy_diag["clean_decode"]
             row = _row_from_stats(
                 "lazy_offload", backend, lazy_tokens, lazy_elapsed,
                 lazy_mem - mem0, lazy_stats,
             )
+            _attach_decode_diagnostics(row, lazy_diag)
             if len(ratio_values) > 1:
                 row["mode"] = f"lazy_offload_{ratio:g}x"
             row["ram_load_ratio"] = round(float(ratio), 3)
@@ -1420,11 +1556,14 @@ def _run_inference_modes(cfg, selected_backend, selected_mode, model_path_val,
             )
         full_elapsed = time.monotonic() - t1
         full_mem = _memory_snapshot_gb()
-        full_text = tokenizer.decode(full_tokens, skip_special_tokens=True)
-        rows.append(_row_from_stats(
+        full_diag = _decode_generation_diagnostics(tokenizer, full_tokens, full_stats)
+        full_text = full_diag["clean_decode"]
+        row = _row_from_stats(
             "full_dram", backend, full_tokens, full_elapsed,
             full_mem - mem1, full_stats,
-        ))
+        )
+        _attach_decode_diagnostics(row, full_diag)
+        rows.append(row)
         outputs["full_dram"] = full_text
 
     diff = _text_diff_summary(representative_lazy_text, full_text) if mode == "compare" else None
@@ -1432,6 +1571,19 @@ def _run_inference_modes(cfg, selected_backend, selected_mode, model_path_val,
         raw["output_diff"] = diff
     raw["rows"] = rows
     raw["outputs"] = outputs
+    raw["decode_diagnostics"] = {
+        row["mode"]: {
+            "generated_token_ids": row.get("generated_token_ids", []),
+            "raw_decode": row.get("raw_decode", ""),
+            "clean_decode": row.get("clean_decode", ""),
+            "first_token_id": row.get("first_token_id"),
+            "first_token_kind": row.get("first_token_kind", ""),
+            "special_token_ratio": row.get("special_token_ratio", 0.0),
+            "all_special_or_filtered": row.get("all_special_or_filtered", False),
+            "warning": row.get("decode_warning", ""),
+        }
+        for row in rows
+    }
     raw["chart"] = _rows_to_chart_records(rows)
     if mode == "offload":
         outputs["single"] = representative_lazy_text
@@ -1780,7 +1932,7 @@ def build_inference_tab(config_state: gr.State):
             diff = raw.get("output_diff")
             mode = _normalize_inference_mode(raw.get("mode"))
             outputs = raw.get("outputs", {})
-            table_md = _format_inference_stats(rows, diff)
+            table_md = _format_inference_notices(raw) + _format_inference_stats(rows, diff)
             chart_df = _rows_to_chart_df(rows)
             if mode == "compare":
                 return (

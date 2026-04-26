@@ -19,7 +19,7 @@ class ChronosConfig(MiniMindConfig):
         self.lookahead_steps: int = kwargs.pop("lookahead_steps", 2)
         self.num_shared_experts: int = kwargs.pop("num_shared_experts", 1)
         self.lambda_balance: float = kwargs.pop("lambda_balance", 5e-4)
-        self.lambda_temporal: float = kwargs.pop("lambda_temporal", 1e-3)
+        self.lambda_temporal: float = kwargs.pop("lambda_temporal", 3e-3)
         self.vram_budget_gb: float = kwargs.pop("vram_budget_gb", 4.0)
         self.prefetch_depth: int = kwargs.pop("prefetch_depth", 2)
         # Hybrid attention params
@@ -42,7 +42,9 @@ class ChronosConfig(MiniMindConfig):
         # Auxiliary hit-rate loss for the lookahead head. The soft CE above
         # learns distribution shape; this term directly rewards future top-k
         # expert-set recall, which is what offload prefetch needs.
-        self.lambda_lookahead_topk: float = kwargs.pop("lambda_lookahead_topk", 0.05)
+        self.lambda_lookahead_topk: float = kwargs.pop("lambda_lookahead_topk", 0.15)
+        self.lambda_lookahead_union: float = kwargs.pop("lambda_lookahead_union", 0.05)
+        self.lambda_router_locality: float = kwargs.pop("lambda_router_locality", 0.02)
         # M4: weight on the router KL anchor (alignment stages only).
         # Prevents SFT/DPO/ORPO/GRPO gradients from drifting routing away
         # from the pretrained distribution that the cluster layout was
@@ -52,7 +54,7 @@ class ChronosConfig(MiniMindConfig):
         # Optional training-time miss simulation. When >0, MoE layers randomly
         # route selected experts through the shared fallback while still adding
         # the shared residual, matching the SSD/DRAM offload inference formula.
-        self.fallback_mask_prob: float = kwargs.pop("fallback_mask_prob", 0.0)
+        self.fallback_mask_prob: float = kwargs.pop("fallback_mask_prob", 0.08)
         # Runtime offload policy. "on_demand" is the predictive low-latency
         # path: cold SSD misses are queued for RAM and covered by shared
         # fallback this token. "sync_on_demand" is the diagnostic path that
@@ -60,6 +62,7 @@ class ChronosConfig(MiniMindConfig):
         # "fallback_diagnostic" keeps the pure shared-fallback stress path.
         self.offload_miss_policy_default: str = kwargs.pop("offload_miss_policy_default", "on_demand")
         self.recommended_resident_experts: int | None = kwargs.pop("recommended_resident_experts", None)
+        self.offload_working_set_experts: int | None = kwargs.pop("offload_working_set_experts", None)
         # M7: regularization defaults. MiniMindConfig defaults dropout=0.0
         # and weight_decay isn't even a config field — both major causes
         # of overfitting on small corpora. Override here.

@@ -36,6 +36,12 @@ def main():
     p.add_argument("--cpu_threads", default="auto")
     p.add_argument("--cpu_budget_percent", default=100, type=float)
     add_topology_args(p, defaults=False)
+    p.add_argument("--lambda_temporal", type=float, default=None)
+    p.add_argument("--lambda_lookahead", type=float, default=None)
+    p.add_argument("--lambda_lookahead_topk", type=float, default=None)
+    p.add_argument("--lambda_lookahead_union", type=float, default=None)
+    p.add_argument("--lambda_router_locality", type=float, default=None)
+    p.add_argument("--fallback_mask_prob", type=float, default=0.04)
     p.add_argument("--lambda_router_anchor", type=float, default=0.01,
                    help="SFT default: weak anchor.")
     args = p.parse_args()
@@ -88,9 +94,11 @@ def main():
         print("[SFT] Router anchor reference captured.")
 
     iters = len(loader) if args.steps is None else min(args.steps, len(loader))
+    global_step = 0
     for epoch in range(args.epochs):
-        trainer.train_epoch(epoch, loader, iters, max_steps=args.steps)
-        if args.steps is not None:
+        trainer.train_epoch(epoch, loader, iters, start_step=global_step, max_steps=args.steps)
+        global_step += iters
+        if args.steps is not None and global_step >= int(args.steps):
             break
     trainer._save(epoch=args.epochs - 1, step=iters)
     print(f"[SFT] Done. Checkpoint: {args.save_dir}/sft_{cfg.hidden_size}_moe.pth")

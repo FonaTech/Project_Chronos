@@ -47,7 +47,11 @@ class ChronosMLXInferenceEngine:
         self.last_stats: dict = {}
         self._last_predicted: set[int] = set()
         self._stats_lock = threading.Lock()
-        self._runtime_stats = {
+        self._runtime_stats = self._new_runtime_stats()
+
+    @staticmethod
+    def _new_runtime_stats(all_resident_fast_path: bool = False) -> dict:
+        return {
             "resident_hits": 0,
             "resident_misses": 0,
             "resident_vram_hits": 0,
@@ -60,6 +64,9 @@ class ChronosMLXInferenceEngine:
             "prefetch_wait_time_s": 0.0,
             "sync_ssd_loads": 0,
             "on_demand_load_time_s": 0.0,
+            "cold_prediction_hits": 0,
+            "cold_prediction_total": 0,
+            "all_resident_fast_path": bool(all_resident_fast_path),
         }
 
     def setup(self, warm_expert_ids: Optional[List[int]] = None):
@@ -90,6 +97,9 @@ class ChronosMLXInferenceEngine:
             if not was_hot and not was_warm:
                 with self._stats_lock:
                     self._runtime_stats["sync_ssd_loads"] += 1
+                    self._runtime_stats["cold_prediction_total"] += 1
+                    if eid in self._last_predicted:
+                        self._runtime_stats["cold_prediction_hits"] += 1
             ok = self.store.promote_to_vram(eid)
             elapsed = time.monotonic() - t0
             with self._stats_lock:
@@ -129,6 +139,14 @@ class ChronosMLXInferenceEngine:
                 moe.runtime_on_demand_loader = loader
                 moe.runtime_touch_expert = touch
 
+    def _clear_runtime_hooks(self):
+        for layer in self.model.layers:
+            moe = getattr(layer, "mlp", None)
+            if isinstance(moe, ChronosMLXMOE):
+                moe.runtime_miss_policy = "sync_on_demand"
+                moe.runtime_on_demand_loader = None
+                moe.runtime_touch_expert = None
+
     # ── Prefetch background thread ────────────────────────────────
 
     def _prefetch_loop(self):
@@ -149,36 +167,62 @@ class ChronosMLXInferenceEngine:
             with self._stats_lock:
                 self._runtime_stats["prefetch_queue_drops"] += 1
 
-    def _prefetch_and_promote_window(self, expert_ids: List[int], timeout_s: float = 0.012) -> None:
-        if not expert_ids or self.store.storage_format == "full_dram":
+    def _prefetch_and_promote_window(
+        self,
+        prefetch_ids: List[int],
+        promote_ids: Optional[List[int]] = None,
+        timeout_s: float = 0.012,
+    ) -> None:
+        if not prefetch_ids or self.store.storage_format == "full_dram":
             return
+        promote_ids = list(dict.fromkeys(int(eid) for eid in (promote_ids or prefetch_ids)))
         pending = []
-        for eid in dict.fromkeys(int(eid) for eid in expert_ids):
+        for eid in dict.fromkeys(int(eid) for eid in prefetch_ids):
             with self.store._lock:
                 if eid in self.store._hot_lru:
                     continue
                 if eid in self.store._warm and self.store._layer_states_complete(self.store._warm.get(eid)):
-                    pending.append(eid)
                     continue
             pending.append(eid)
-        if not pending:
-            return
-        self._schedule_prefetch(pending)
+        if pending:
+            self._schedule_prefetch(pending)
         deadline = time.monotonic() + max(0.0, float(timeout_s))
         while time.monotonic() < deadline:
-            self._promote_ready(pending)
+            self._promote_ready(promote_ids)
             with self.store._lock:
                 ready = all(
                     eid in self.store._hot_lru
                     or (eid in self.store._warm and self.store._layer_states_complete(self.store._warm.get(eid)))
-                    for eid in pending
+                    for eid in promote_ids
                 )
             if ready:
                 break
             time.sleep(0.001)
-        self._promote_ready(pending)
+        self._promote_ready(promote_ids)
         with self._stats_lock:
             self._runtime_stats["prefetch_wait_time_s"] += max(0.0, time.monotonic() - (deadline - max(0.0, float(timeout_s))))
+
+    def _all_resident_fast_path_enabled(self) -> bool:
+        if self.store.storage_format == "full_dram":
+            return True
+        num_experts = int(getattr(self.config, "num_experts", 0) or 0)
+        if num_experts <= 0:
+            return False
+        if int(getattr(self.store, "_capacity", 0) or 0) < num_experts:
+            return False
+        if int(getattr(self.store, "_warm_capacity", 0) or 0) < num_experts:
+            return False
+        return len(self.store.hot_expert_ids()) >= num_experts
+
+    def _protect_prediction_window(self, expert_ids: List[int]) -> None:
+        capacity = max(
+            1,
+            int(getattr(self.store, "_warm_capacity", 1) or 1),
+            int(getattr(self.store, "_capacity", 1) or 1),
+        )
+        hot_ids = sorted(self.store.hot_expert_ids())
+        protected = list(dict.fromkeys([int(eid) for eid in expert_ids] + hot_ids))[:capacity]
+        self.store.set_protected_experts(protected)
 
     def stop(self):
         self._stop.set()
@@ -210,23 +254,15 @@ class ChronosMLXInferenceEngine:
         setup_mem = self._memory_snapshot()
         self._last_predicted = set()
         with self._stats_lock:
-            self._runtime_stats = {
-                "resident_hits": 0,
-                "resident_misses": 0,
-                "resident_vram_hits": 0,
-                "resident_ram_hits": 0,
-                "selection_hits": 0,
-                "selection_misses": 0,
-                "prediction_hits": 0,
-                "prediction_total": 0,
-                "prefetch_queue_drops": 0,
-                "prefetch_wait_time_s": 0.0,
-                "sync_ssd_loads": 0,
-                "on_demand_load_time_s": 0.0,
-            }
-        self._install_runtime_hooks()
+            all_resident_fast_path = self._all_resident_fast_path_enabled()
+            self._runtime_stats = self._new_runtime_stats(all_resident_fast_path)
+        if all_resident_fast_path:
+            self._clear_runtime_hooks()
+            self.store.set_protected_experts([])
+        else:
+            self._install_runtime_hooks()
         # ── Prefill phase: front-load expert IO ───────────────────────────
-        if scheduler is not None:
+        if scheduler is not None and not all_resident_fast_path:
             import torch, numpy as np
             ids_np = np.array(input_ids.tolist(), dtype=np.int64)
             ids_pt = torch.from_numpy(ids_np)
@@ -235,7 +271,7 @@ class ChronosMLXInferenceEngine:
 
         # Prefill forward
         prefill_t0 = time.monotonic()
-        if self.store.storage_format == "full_dram":
+        if all_resident_fast_path:
             prefill_masks = None
         else:
             prefill_masks = self._build_avail_masks(None)
@@ -248,21 +284,41 @@ class ChronosMLXInferenceEngine:
         next_token = self._sample(logits[:, -1, :], temperature, top_p)
         activated_ids: List[int] = []
         tokens = 1
-        if scheduler is None and lookahead_probs is not None:
-            future_ids = self._predict_future_experts(lookahead_probs)
+        if not all_resident_fast_path and scheduler is None and lookahead_probs is not None:
+            future_ids = self._predict_future_experts(
+                lookahead_probs,
+                capacity=int(getattr(self.store, "_warm_capacity", self.config.num_experts) or self.config.num_experts),
+            )
+            immediate_ids = self._predict_future_experts(
+                lookahead_probs,
+                capacity=int(getattr(self.store, "_capacity", 1) or 1),
+                max_steps=1,
+            )
             self._last_predicted = set(int(eid) for eid in future_ids)
-            self._prefetch_and_promote_window(future_ids, timeout_s=0.025)
+            self._protect_prediction_window(future_ids)
+            self._prefetch_and_promote_window(future_ids, promote_ids=immediate_ids, timeout_s=0.025)
         yield int(next_token.item())
 
         for _ in range(max_new_tokens - 1):
-            if scheduler is not None:
+            if all_resident_fast_path:
+                avail_masks = None
+            elif scheduler is not None:
                 avail_masks = self._build_avail_masks(next_token)
             else:
                 # LookaheadRouter-driven prefetch
                 if lookahead_probs is not None:
-                    future_ids = self._predict_future_experts(lookahead_probs)
+                    future_ids = self._predict_future_experts(
+                        lookahead_probs,
+                        capacity=int(getattr(self.store, "_warm_capacity", self.config.num_experts) or self.config.num_experts),
+                    )
+                    immediate_ids = self._predict_future_experts(
+                        lookahead_probs,
+                        capacity=int(getattr(self.store, "_capacity", 1) or 1),
+                        max_steps=1,
+                    )
                     self._last_predicted = set(int(eid) for eid in future_ids)
-                    self._prefetch_and_promote_window(future_ids)
+                    self._protect_prediction_window(future_ids)
+                    self._prefetch_and_promote_window(future_ids, promote_ids=immediate_ids)
                 avail_masks = self._build_avail_masks(next_token)
 
             token_in = next_token.reshape(1, 1)
@@ -298,22 +354,39 @@ class ChronosMLXInferenceEngine:
             **self.store.stats(),
         }
 
-    def _predict_future_experts(self, lookahead_probs: mx.array) -> List[int]:
+    def _predict_future_experts(
+        self,
+        lookahead_probs: mx.array,
+        capacity: Optional[int] = None,
+        max_steps: Optional[int] = None,
+    ) -> List[int]:
         """Extract bounded top-k expert IDs for future steps."""
         # lookahead_probs: [B, S, K+1, E] — take last token, steps 1..K
         future = lookahead_probs[0, -1, 1:, :]         # [K, E]
+        if max_steps is not None:
+            future = future[:max(0, int(max_steps))]
+        if future.shape[0] <= 0:
+            return []
+        num_experts = int(getattr(self.config, "num_experts", future.shape[-1]) or future.shape[-1])
         top_k = max(1, min(
             int(getattr(self.config, "num_experts_per_tok", 1) or 1),
-            int(getattr(self.config, "num_experts", future.shape[-1]) or future.shape[-1]),
+            num_experts,
         ))
-        ids: list[int] = []
-        for k in range(future.shape[0]):
-            step = future[k]
-            if top_k == 1:
-                ids.append(int(mx.argmax(step).item()))
-            else:
-                ids.extend(int(v) for v in mx.argpartition(-step, kth=top_k - 1, axis=-1)[:top_k].tolist())
-        return list(dict.fromkeys(ids))
+        budget = num_experts if capacity is None else max(1, min(num_experts, int(capacity)))
+        scores = mx.zeros((num_experts,), dtype=mx.float32)
+        for offset in range(future.shape[0]):
+            step = future[offset].astype(mx.float32)
+            if top_k >= num_experts:
+                scores = scores + step / float(offset + 1)
+                continue
+            step_ids = mx.argpartition(-step, kth=top_k - 1, axis=-1)[:top_k]
+            step_vals = mx.take(step, step_ids) / float(offset + 1)
+            one_hot = (step_ids[:, None] == mx.arange(num_experts)).astype(mx.float32)
+            scores = scores + (one_hot * step_vals[:, None]).sum(axis=0)
+        mx.eval(scores)
+        scored = [(idx, float(value)) for idx, value in enumerate(scores.tolist()) if float(value) > 0.0]
+        scored.sort(key=lambda item: (-item[1], item[0]))
+        return [int(idx) for idx, _value in scored[:budget]]
 
     def _build_avail_masks(self, _token) -> List[set[int]] | None:
         """Promote prefetched experts and return per-layer availability masks."""
@@ -339,9 +412,14 @@ class ChronosMLXInferenceEngine:
             stats = dict(self._runtime_stats)
         total = int(stats.get("selection_hits", 0)) + int(stats.get("selection_misses", 0))
         pred_total = int(stats.get("prediction_total", 0))
+        cold_pred_total = int(stats.get("cold_prediction_total", 0))
+        all_resident_fast_path = bool(stats.get("all_resident_fast_path", False))
+        resident_hit_rate = 1.0 if all_resident_fast_path else (
+            float(stats.get("selection_hits", 0)) / max(total, 1)
+        )
         return {
-            "resident_hit_rate": round(float(stats.get("selection_hits", 0)) / max(total, 1), 4),
-            "cache_hit_rate": round(float(stats.get("selection_hits", 0)) / max(total, 1), 4),
+            "resident_hit_rate": round(resident_hit_rate, 4),
+            "cache_hit_rate": round(resident_hit_rate, 4),
             "cache_hits": int(stats.get("selection_hits", 0)),
             "cache_misses": int(stats.get("selection_misses", 0)),
             "expert_selection_hits": int(stats.get("selection_hits", 0)),
@@ -349,6 +427,10 @@ class ChronosMLXInferenceEngine:
             "prediction_hit_rate": round(float(stats.get("prediction_hits", 0)) / max(pred_total, 1), 4),
             "prediction_hits": int(stats.get("prediction_hits", 0)),
             "prediction_total": pred_total,
+            "cold_miss_predict_hit_rate": round(float(stats.get("cold_prediction_hits", 0)) / max(cold_pred_total, 1), 4),
+            "cold_prediction_hits": int(stats.get("cold_prediction_hits", 0)),
+            "cold_prediction_total": cold_pred_total,
+            "all_resident_fast_path": all_resident_fast_path,
             "resident_vram_hits": int(stats.get("resident_vram_hits", 0)),
             "resident_ram_hits": int(stats.get("resident_ram_hits", 0)),
             "prefetch_queue_drops": int(stats.get("prefetch_queue_drops", 0)),

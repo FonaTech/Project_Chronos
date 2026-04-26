@@ -261,15 +261,17 @@ class ChronosGRPOTrainer:
             "anchor": anc_val,
         }
 
-    def train_epoch(self, epoch, prompts: List[str], iters, max_steps=None):
+    def train_epoch(self, epoch, prompts: List[str], iters, start_step=0, max_steps=None):
         self.model.train()
-        total_steps = self.args.epochs * iters
+        cap = int(max_steps) if max_steps is not None else None
+        total_steps = cap or (self.args.epochs * iters)
         for step, prompt in enumerate(prompts, start=1):
-            if max_steps is not None and step > max_steps:
+            global_step = int(start_step) + step
+            if cap is not None and global_step > cap:
                 break
             if step > iters:
                 break
-            stats = self.train_step(prompt, epoch * iters + step, total_steps)
+            stats = self.train_step(prompt, global_step, total_steps)
             if step % self.args.log_interval == 0 or step == iters:
                 lr = self.optimizer.param_groups[-1]["lr"]
                 Logger(

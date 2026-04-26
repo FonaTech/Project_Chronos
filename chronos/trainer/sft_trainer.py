@@ -160,20 +160,24 @@ class ChronosSFTTrainer:
     def train_epoch(self, epoch, loader, iters, start_step=0, wandb=None, max_steps=None):
         self.model.train()
         start_time = time.time()
-        total_steps = self.args.epochs * iters
+        cap = int(max_steps) if max_steps is not None else None
+        total_steps = cap or (self.args.epochs * iters)
 
-        for step, (input_ids, labels) in enumerate(loader, start=start_step + 1):
-            if max_steps is not None and step > max_steps:
+        for local_step, (input_ids, labels) in enumerate(loader, start=1):
+            if local_step > iters:
+                break
+            step = int(start_step) + local_step
+            if cap is not None and step > cap:
                 break
             loss, ce, aux, la, anc = self.train_step(
-                input_ids, labels, epoch * iters + step, total_steps,
+                input_ids, labels, step, total_steps,
             )
-            if step % self.args.log_interval == 0 or step == iters:
+            if local_step % self.args.log_interval == 0 or local_step == iters:
                 elapsed = time.time() - start_time
-                eta = elapsed / max(step - start_step, 1) * (iters - step) // 60
+                eta = elapsed / max(local_step, 1) * (iters - local_step) // 60
                 lr = self.optimizer.param_groups[-1]['lr']
                 Logger(
-                    f'[SFT] Epoch[{epoch+1}/{self.args.epochs}]({step}/{iters}) '
+                    f'[SFT] Epoch[{epoch+1}/{self.args.epochs}]({local_step}/{iters}) '
                     f'loss:{loss:.4f} ce:{ce:.4f} aux:{aux:.4f} '
                     f'la:{la:.4f} anchor:{anc:.4f} lr:{lr:.2e} eta:{eta:.1f}min'
                 )
@@ -183,7 +187,7 @@ class ChronosSFTTrainer:
                         "sft_lookahead": la, "sft_anchor": anc, "lr": lr,
                     })
 
-            if (step % self.args.save_interval == 0 or step == iters) and is_main_process():
+            if (step % self.args.save_interval == 0 or local_step == iters) and is_main_process():
                 self._save(epoch, step)
 
     def _save(self, epoch, step):

@@ -30,6 +30,9 @@ from chronos.model.temporal_loss import (
     temporal_locality_loss,
     lookahead_supervision_loss,
     lookahead_topk_hit_loss,
+    lookahead_union_loss,
+    router_locality_loss,
+    router_offload_metrics,
 )
 
 
@@ -103,6 +106,12 @@ def chronos_loss_term(
         lambda_temporal = float(getattr(config, "lambda_temporal", 0.0))
         if lambda_temporal > 0.0:
             loss = loss + lambda_temporal * temporal_locality_loss(router_mean)
+        lambda_router_locality = float(getattr(config, "lambda_router_locality", 0.0))
+        if lambda_router_locality > 0.0:
+            loss = loss + lambda_router_locality * router_locality_loss(
+                router_mean,
+                int(getattr(config, "num_experts_per_tok", 1) or 1),
+            )
 
         lambda_lookahead = float(getattr(config, "lambda_lookahead", 0.0))
         lookahead_steps = int(getattr(config, "lookahead_steps", 0))
@@ -125,7 +134,33 @@ def chronos_loss_term(
                     int(getattr(config, "num_experts_per_tok", 1) or 1),
                 )
                 loss = loss + lambda_lookahead_topk * topk_loss
+            lambda_lookahead_union = float(getattr(config, "lambda_lookahead_union", 0.0))
+            if lambda_lookahead_union > 0.0:
+                union_loss = lookahead_union_loss(
+                    lookahead_probs,
+                    teacher,
+                    lookahead_steps,
+                    int(getattr(config, "num_experts_per_tok", 1) or 1),
+                )
+                loss = loss + lambda_lookahead_union * union_loss
     return loss
+
+
+def collect_offload_training_metrics(
+    model,
+    lookahead_probs: Optional[torch.Tensor],
+    config,
+) -> dict[str, float]:
+    router_4d = collect_router_probs(model, with_grad=False)
+    if router_4d is None:
+        return {}
+    router_mean = router_4d.mean(dim=2)
+    return router_offload_metrics(
+        router_mean,
+        lookahead_probs.detach() if lookahead_probs is not None else None,
+        int(getattr(config, "lookahead_steps", 0) or 0),
+        int(getattr(config, "num_experts_per_tok", 1) or 1),
+    )
 
 
 def router_kl_anchor(

@@ -6,6 +6,8 @@ import glob
 import time
 import threading
 import queue
+import shutil
+import tempfile
 from contextlib import contextmanager
 from types import SimpleNamespace
 
@@ -328,6 +330,30 @@ def _normalize_stage_init_value(current_init_weight: str | None) -> str:
     return current_init
 
 
+def _extract_gradio_file_path(value) -> str:
+    """Return the current path from Gradio File values across versions.
+
+    Gradio's `type="filepath"` normally passes a string, but depending on
+    version/event it may pass a small dict, a FileData-like object, or a one
+    item list. Keep this tolerant so Start can read the latest upload directly
+    instead of relying only on the textbox update event.
+    """
+    if value in (None, ""):
+        return ""
+    if isinstance(value, (list, tuple)):
+        return _extract_gradio_file_path(value[0] if value else "")
+    if isinstance(value, dict):
+        for key in ("path", "name", "orig_name"):
+            if value.get(key):
+                return str(value[key]).strip()
+        return ""
+    for attr in ("path", "name"):
+        candidate = getattr(value, attr, None)
+        if candidate:
+            return str(candidate).strip()
+    return str(value).strip()
+
+
 def _distill_teacher_placeholder(lang: str | None = None) -> str:
     lang = lang or get_current_lang()
     return DISTILL_TEACHER_PLACEHOLDER.get(lang, DISTILL_TEACHER_PLACEHOLDER["en"])
@@ -389,6 +415,9 @@ def _effective_training_config(
     device: str,
     cpu_threads: int,
     workers: int | None = None,
+    total_train_steps: int | None = None,
+    optimizer_update_steps: int | None = None,
+    progress_unit: str = "micro_step",
 ) -> dict:
     keys = [
         "learning_rate",
@@ -413,6 +442,8 @@ def _effective_training_config(
         "lambda_or",
         "reward_spec",
         "teacher_path",
+        "data_path",
+        "data_path_source",
     ]
     out = {
         "mode": mode,
@@ -423,6 +454,12 @@ def _effective_training_config(
     }
     if workers is not None:
         out["effective_num_workers"] = int(workers)
+    if total_train_steps is not None:
+        out["total_train_steps"] = int(total_train_steps)
+    if optimizer_update_steps is not None:
+        out["optimizer_update_steps"] = int(optimizer_update_steps)
+    if total_train_steps is not None or optimizer_update_steps is not None:
+        out["progress_unit"] = progress_unit
     for key in keys:
         if key in cfg:
             out[key] = cfg[key]
@@ -450,10 +487,55 @@ def _format_effective_training_config(summary: dict) -> str:
         "effective_cpu_threads",
         "cpu_budget_percent",
         "effective_num_workers",
+        "total_train_steps",
+        "optimizer_update_steps",
+        "progress_unit",
     ]:
         if key in summary:
             parts.append(f"{key}={summary[key]}")
     return "Effective config: " + ", ".join(parts)
+
+
+def _coerce_max_steps(value) -> int | None:
+    try:
+        steps = int(value or 0)
+    except Exception:
+        return None
+    return steps if steps > 0 else None
+
+
+def _planned_train_steps(data_iter, epochs: int, max_steps=None) -> int:
+    """Return the real UI progress denominator in micro/batch steps.
+
+    Dataset loaders must always see the full corpus. `max_steps` is only a
+    training-loop cap, so it is applied after deriving len(data_iter) * epochs.
+    """
+    cap = _coerce_max_steps(max_steps)
+    planned = 0
+    try:
+        planned = int(len(data_iter)) * max(1, int(epochs or 1))
+    except Exception:
+        planned = 0
+    if cap is not None:
+        return min(planned, cap) if planned > 0 else cap
+    return max(0, planned)
+
+
+def _planned_epoch_iters(data_iter, max_steps=None) -> int:
+    cap = _coerce_max_steps(max_steps)
+    try:
+        n = int(len(data_iter))
+    except Exception:
+        n = 0
+    if cap is not None and n > 0:
+        return max(1, min(cap, n))
+    return max(1, n)
+
+
+def _planned_optimizer_updates(train_steps: int, accumulation_steps: int) -> int:
+    train_steps = max(0, int(train_steps or 0))
+    accum = max(1, int(accumulation_steps or 1))
+    return (train_steps + accum - 1) // accum if train_steps else 0
 
 
 def _prepare_training_run_config(
@@ -461,6 +543,7 @@ def _prepare_training_run_config(
     train_mode: str,
     selected_backend: str | None,
     data_path: str | None,
+    dataset_upload,
     init_weight: str | None,
     max_steps,
     val_ratio,
@@ -474,9 +557,15 @@ def _prepare_training_run_config(
     resolved_backend, resolved_device = resolve_training_device(requested_backend)
     cfg["train_backend"] = requested_backend
     cfg["device"] = resolved_device
-    cfg["data_path"] = data_path or cfg.get("data_path", "")
+    resolved_data_path, data_path_source = _resolve_training_data_path(
+        data_path or cfg.get("data_path", ""),
+        dataset_upload,
+    )
+    cfg["data_path"] = resolved_data_path
+    cfg["data_path_source"] = data_path_source
     cfg["init_weight"] = _normalize_stage_init_value(init_weight)
-    cfg["max_steps"] = int(max_steps or 0)
+    if "max_steps" not in cfg:
+        cfg["max_steps"] = 0
     cfg["val_ratio"] = float(val_ratio or 0.0)
     cfg["teacher_path"] = teacher_path or ""
     cfg["sample_prompt"] = sample_prompt or ""
@@ -491,6 +580,229 @@ def _prepare_training_run_config(
         workers=None,
     )
     return cfg, initial_effective
+
+
+def _gradio_temp_roots() -> list[str]:
+    roots = []
+    for env_key in ("GRADIO_TEMP_DIR", "GRADIO_TEMP"):
+        value = os.environ.get(env_key)
+        if value:
+            roots.append(value)
+    roots.append(os.path.join(tempfile.gettempdir(), "gradio"))
+    out = []
+    seen = set()
+    for root in roots:
+        try:
+            real = os.path.realpath(os.path.abspath(os.path.expanduser(str(root))))
+        except Exception:
+            continue
+        if real not in seen:
+            out.append(real)
+            seen.add(real)
+    return out
+
+
+def _path_in_gradio_temp(path: str | None) -> tuple[bool, str, str]:
+    if not path:
+        return False, "", ""
+    try:
+        real_path = os.path.realpath(os.path.abspath(os.path.expanduser(str(path))))
+    except Exception:
+        return False, "", ""
+    for root in _gradio_temp_roots():
+        try:
+            if os.path.commonpath([real_path, root]) == root and real_path != root:
+                return True, real_path, root
+        except ValueError:
+            continue
+    return False, real_path, ""
+
+
+def _project_root() -> str:
+    return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+def _training_upload_cache_root() -> str:
+    root = os.environ.get("CHRONOS_TRAIN_UPLOAD_CACHE_DIR")
+    if root:
+        return os.path.realpath(os.path.abspath(os.path.expanduser(root)))
+    return os.path.join(_project_root(), ".chronos_uploads", "datasets")
+
+
+def _path_in_training_upload_cache(path: str | None) -> tuple[bool, str, str]:
+    if not path:
+        return False, "", ""
+    try:
+        real_path = os.path.realpath(os.path.abspath(os.path.expanduser(str(path))))
+        root = os.path.realpath(os.path.abspath(_training_upload_cache_root()))
+        return os.path.commonpath([real_path, root]) == root and real_path != root, real_path, root
+    except Exception:
+        return False, "", ""
+
+
+def _stage_gradio_upload_for_training(path: str | None) -> str:
+    """Move Gradio's private temp upload into a stable project cache.
+
+    Training directly from `/private/.../T/gradio` is fragile on macOS: Gradio
+    owns that directory and may rotate or clean files independently of the
+    training thread. Manual paths are returned unchanged.
+    """
+    path = _extract_gradio_file_path(path)
+    inside, real_path, _root = _path_in_gradio_temp(path)
+    if not inside or not os.path.exists(real_path):
+        return path or ""
+    cache_root = _training_upload_cache_root()
+    os.makedirs(cache_root, exist_ok=True)
+    base = os.path.basename(real_path) or "dataset.jsonl"
+    stem, ext = os.path.splitext(base)
+    if not ext:
+        ext = ".jsonl"
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    size = os.path.getsize(real_path)
+    target = os.path.join(cache_root, f"{stamp}_{os.getpid()}_{size}_{stem[:48]}{ext}")
+    shutil.copy2(real_path, target)
+    _cleanup_gradio_temp_dataset(real_path)
+    return target
+
+
+def _resolve_training_data_path(current_path: str | None, upload_value=None) -> tuple[str, str]:
+    """Resolve the dataset path at Start time.
+
+    The upload `change` callback updates the textbox in normal operation, but
+    Gradio's private upload/event state can lag behind Start. Resolve again
+    when Start is clicked so a newly uploaded file wins over the default tiny
+    fixture immediately. If the upload temp file was already moved into the
+    project cache, keep the textbox path.
+    """
+    current = (current_path or "").strip()
+    upload_path = _extract_gradio_file_path(upload_value)
+    if upload_path:
+        staged = _stage_gradio_upload_for_training(upload_path)
+        if staged and os.path.exists(staged):
+            if staged != current:
+                return staged, "upload"
+            return staged, "textbox"
+    if current:
+        return current, "textbox"
+    return "", "empty"
+
+
+def _close_dataset_handles(*objects) -> None:
+    """Close lazy JSONL file handles before deleting Gradio upload temp files."""
+    seen: set[int] = set()
+
+    def visit(obj):
+        if obj is None:
+            return
+        oid = id(obj)
+        if oid in seen:
+            return
+        seen.add(oid)
+        fh = getattr(obj, "_fh", None)
+        if fh is not None:
+            try:
+                fh.close()
+            except Exception:
+                pass
+            try:
+                obj._fh = None
+            except Exception:
+                pass
+        for attr in ("dataset", "datasets"):
+            child = getattr(obj, attr, None)
+            if child is not None:
+                visit(child)
+        if isinstance(obj, (list, tuple, set)):
+            for item in obj:
+                visit(item)
+        elif isinstance(obj, dict):
+            for item in obj.values():
+                visit(item)
+
+    for item in objects:
+        visit(item)
+
+
+def _cleanup_gradio_temp_dataset(path: str | None) -> dict:
+    """Delete a dataset upload copied into Gradio's temp area.
+
+    The guard deliberately refuses to touch any path outside Gradio's temp
+    root, so manual local dataset paths remain untouched.
+    """
+    inside, real_path, root = _path_in_gradio_temp(path)
+    result = {
+        "path": real_path,
+        "root": root,
+        "deleted": False,
+        "removed_dirs": [],
+        "skipped": not inside,
+        "reason": "" if inside else "not_gradio_temp",
+    }
+    if not inside:
+        return result
+    if not os.path.lexists(real_path):
+        result["skipped"] = True
+        result["reason"] = "missing"
+        return result
+    try:
+        if os.path.isdir(real_path) and not os.path.islink(real_path):
+            shutil.rmtree(real_path)
+        else:
+            os.unlink(real_path)
+        result["deleted"] = True
+        result["skipped"] = False
+    except Exception as exc:
+        result["skipped"] = True
+        result["reason"] = f"delete_failed: {exc}"
+        return result
+
+    parent = os.path.dirname(real_path)
+    while parent and parent != root:
+        try:
+            os.rmdir(parent)
+            result["removed_dirs"].append(parent)
+        except OSError:
+            break
+        parent = os.path.dirname(parent)
+    return result
+
+
+def _cleanup_training_dataset_artifact(path: str | None) -> dict:
+    """Clean staged upload artifacts while preserving user-owned paths."""
+    inside, real_path, root = _path_in_training_upload_cache(path)
+    if not inside:
+        return _cleanup_gradio_temp_dataset(path)
+    result = {
+        "path": real_path,
+        "root": root,
+        "deleted": False,
+        "removed_dirs": [],
+        "skipped": False,
+        "reason": "",
+    }
+    if not os.path.lexists(real_path):
+        result["skipped"] = True
+        result["reason"] = "missing"
+        return result
+    try:
+        if os.path.isdir(real_path) and not os.path.islink(real_path):
+            shutil.rmtree(real_path)
+        else:
+            os.unlink(real_path)
+        result["deleted"] = True
+    except Exception as exc:
+        result["skipped"] = True
+        result["reason"] = f"delete_failed: {exc}"
+        return result
+    parent = os.path.dirname(real_path)
+    while parent and parent != root:
+        try:
+            os.rmdir(parent)
+            result["removed_dirs"].append(parent)
+        except OSError:
+            break
+        parent = os.path.dirname(parent)
+    return result
 
 
 @contextmanager
@@ -539,6 +851,24 @@ def _verify_checkpoint_warn(checkpoint_path: str, model_cfg, put_line) -> None:
             put_line(f"[verify warning] {warning}")
     except Exception as exc:
         put_line(f"[verify warning] checkpoint verification failed: {exc}")
+
+
+def _sync_metal_backend(device: str | None) -> None:
+    """Flush pending Metal work before a WebUI training thread exits."""
+    if str(device or "").lower() != "mps":
+        return
+    try:
+        import torch
+
+        if hasattr(torch, "mps"):
+            synchronize = getattr(torch.mps, "synchronize", None)
+            if synchronize is not None:
+                synchronize()
+            empty_cache = getattr(torch.mps, "empty_cache", None)
+            if empty_cache is not None:
+                empty_cache()
+    except Exception:
+        pass
 
 
 # ── Background trainer thread ─────────────────────────────────────
@@ -807,6 +1137,9 @@ class TrainSession:
 
     def _run(self, cfg: dict, mode: str):
         t_start = time.monotonic()
+        data_path_for_cleanup = (cfg.get("data_path") or "").strip()
+        cleanup_after_run = bool(cfg.get("cleanup_gradio_temp_dataset", True))
+        train_ds = val_ds = full_ds = loader = val_loader = None
         try:
             import torch
             from torch.utils.data import DataLoader
@@ -832,8 +1165,12 @@ class TrainSession:
                 "kv_latent_dim":             cfg.get("kv_latent_dim", 64),
                 "sliding_window_size":       cfg.get("sliding_window_size", 2048),
                 "lambda_balance":            cfg.get("lambda_balance", 5e-4),
-                "lambda_temporal":           cfg.get("lambda_temporal", 1e-3),
-                "fallback_mask_prob":         cfg.get("fallback_mask_prob", 0.0),
+                "lambda_temporal":           cfg.get("lambda_temporal", 3e-3),
+                "lambda_lookahead":           cfg.get("lambda_lookahead", 0.1),
+                "lambda_lookahead_topk":      cfg.get("lambda_lookahead_topk", 0.15),
+                "lambda_lookahead_union":     cfg.get("lambda_lookahead_union", 0.05),
+                "lambda_router_locality":     cfg.get("lambda_router_locality", 0.02),
+                "fallback_mask_prob":         cfg.get("fallback_mask_prob", 0.08),
                 "vram_budget_gb":            cfg.get("vram_budget_gb", 4.0),
                 "use_hybrid_attention":      cfg.get("use_hybrid_attention", True),
                 "use_moe":                   True,
@@ -851,8 +1188,6 @@ class TrainSession:
                 ("max_position_embeddings", "max_seq_len"),
                 ("intermediate_size",     "moe_intermediate_size"),
                 ("moe_intermediate_size", "moe_intermediate_size"),
-                ("lambda_lookahead",      "lambda_lookahead"),
-                ("lambda_lookahead_topk", "lambda_lookahead_topk"),
                 ("lambda_router_anchor",  "lambda_router_anchor"),
                 ("pinned_memory_max_fraction", "pinned_memory_max_fraction"),
                 ("storage_format",        "storage_format"),
@@ -893,6 +1228,7 @@ class TrainSession:
                       f"vocab={model_cfg.vocab_size})")
 
             ckp_path = self._stage_checkpoint_path(save_dir, mode, model_cfg.hidden_size)
+            mlx_checkpoint_path = None
 
             # Init-weight resolution:
             #   - pretrain: optionally resume from its own checkpoint if present
@@ -912,6 +1248,7 @@ class TrainSession:
                         weights = load_checkpoint_state_dict(resume_path, map_location="cpu")
                         load_state_dict_controlled(model, weights)
                         self._put(f"Resumed from {resume_path}")
+                        mlx_checkpoint_path = resume_path
                 else:
                     self._put("Pretraining from random init")
             else:
@@ -935,6 +1272,7 @@ class TrainSession:
                 weights = load_checkpoint_state_dict(load_path, map_location="cpu")
                 load_state_dict_controlled(model, weights)
                 self._put(f"[{mode.upper()}] Initialized from {load_path}")
+                mlx_checkpoint_path = load_path
 
             requested_backend = (cfg.get("train_backend") or "auto").strip().lower() or "auto"
             resolved_backend, device = resolve_training_device(requested_backend)
@@ -965,7 +1303,8 @@ class TrainSession:
                 f"NUMEXPR={thread_diag.get('NUMEXPR_NUM_THREADS')}"
             )
 
-            data_path = cfg.get("data_path", "")
+            data_path = data_path_for_cleanup
+            self._put(f"Dataset: {data_path or '<synthetic>'} (source={cfg.get('data_path_source', 'unknown')})")
             max_seq_len = cfg.get("max_seq_len", 512)
             batch_size = cfg.get("batch_size", 4)
             accum = max(1, int(cfg.get("accumulation_steps", 8)))
@@ -973,7 +1312,7 @@ class TrainSession:
             save_interval = cfg.get("save_interval", 500)
             log_interval = max(1, cfg.get("log_interval", 10))
             val_ratio = float(cfg.get("val_ratio", 0.05))
-            max_steps = int(cfg.get("max_steps", 0)) or None  # 0 => no cap
+            max_steps = _coerce_max_steps(cfg.get("max_steps", 0))  # 0 => no cap
             base_lr = float(cfg.get("learning_rate", 5e-4))
             weight_decay = float(cfg.get("weight_decay", 0.01))
             optimizer = None
@@ -1032,6 +1371,28 @@ class TrainSession:
                 )
             else:
                 workers = None
+            if mode in {"grpo"}:
+                tokenizer = self._load_tokenizer()
+                from chronos.trainer.grpo_trainer import load_grpo_prompts
+                prompts = load_grpo_prompts(data_path, max_prompts=None)
+                if not prompts:
+                    raise ValueError(f"[{mode.upper()}] no prompts found in {data_path}")
+            else:
+                prompts = None
+
+            stage_args = self._build_stage_args(cfg, mode, save_dir, model_cfg.hidden_size)
+            stage_args.device = device
+            train_iter_for_steps = prompts if mode == "grpo" else loader
+            planned_total_steps = _planned_train_steps(
+                train_iter_for_steps,
+                stage_args.epochs,
+                stage_args.steps,
+            )
+            planned_optimizer_updates = _planned_optimizer_updates(
+                planned_total_steps,
+                stage_args.accumulation_steps,
+            )
+            self.total_steps = planned_total_steps
             self.effective_config = _effective_training_config(
                 cfg,
                 mode=mode,
@@ -1040,32 +1401,19 @@ class TrainSession:
                 device=device,
                 cpu_threads=cpu_threads,
                 workers=workers,
+                total_train_steps=planned_total_steps,
+                optimizer_update_steps=planned_optimizer_updates,
             )
             self._put(_format_effective_training_config(self.effective_config))
-
-            if mode in {"grpo"}:
-                tokenizer = self._load_tokenizer()
-                from chronos.trainer.grpo_trainer import load_grpo_prompts
-                prompts = load_grpo_prompts(data_path, max_prompts=max_steps)
-                if not prompts:
-                    raise ValueError(f"[{mode.upper()}] no prompts found in {data_path}")
-                planned = max(1, len(prompts) * epochs)
-                self.total_steps = min(planned, max_steps) if (max_steps and planned) else planned
-            else:
-                prompts = None
-
-            stage_args = self._build_stage_args(cfg, mode, save_dir, model_cfg.hidden_size)
-            stage_args.device = device
 
             if resolved_backend == "mlx":
                 from chronos.mlx.training import run_mlx_stage
 
                 self._put("[MLX] Running native MLX trainer; skipping PyTorch model.to()/optimizer path.")
-                try:
-                    planned = max(1, len(prompts if mode == "grpo" else loader) * stage_args.epochs)
-                except Exception:
-                    planned = int(stage_args.steps or max_steps or 0)
-                self.total_steps = min(planned, stage_args.steps) if (stage_args.steps and planned) else max(1, planned or stage_args.steps or 1)
+                if mlx_checkpoint_path:
+                    self._put(f"[MLX {mode.upper()}] Loading checkpoint → {mlx_checkpoint_path}")
+                else:
+                    self._put(f"[MLX {mode.upper()}] Starting from current in-memory random init.")
 
                 def _mlx_progress(event: dict):
                     kind = str(event.get("event", "step"))
@@ -1145,7 +1493,7 @@ class TrainSession:
                 result = run_mlx_stage(
                     stage=mode,
                     config=model_cfg,
-                    checkpoint_path=(resume_path if mode == "pretrain" and os.path.exists(resume_path) else load_path or None),
+                    checkpoint_path=mlx_checkpoint_path,
                     save_dir=save_dir,
                     loader=loader,
                     prompts=prompts,
@@ -1189,14 +1537,6 @@ class TrainSession:
             step_t = time.monotonic()
             best_val = float("inf")
             best_path = ckp_path.replace(".pth", ".best.pth")
-            # Steps remaining for ETA / progress bar — respect max_steps cap.
-            try:
-                planned = max(1, len(loader) * epochs) if loader is not None else 0
-            except Exception:
-                planned = 0
-            if mode != "grpo":
-                self.total_steps = min(planned, max_steps) if (max_steps and planned) else (planned or (max_steps or 0))
-
             if mode in {"sft", "dpo", "orpo", "grpo", "distill"}:
                 tokenizer = self._load_tokenizer()
 
@@ -1226,23 +1566,24 @@ class TrainSession:
                             first_batch = next(iter(loader))
                             trainer.set_calibration_batch(first_batch[0])
                             self._put("[SFT] Router anchor reference captured.")
-                        iters = len(loader) if stage_args.steps is None else min(stage_args.steps, len(loader))
-                        self.total_steps = max(1, stage_args.epochs * iters)
+                        iters = _planned_epoch_iters(loader, stage_args.steps)
+                        stage_global_step = 0
                         for epoch in range(stage_args.epochs):
                             epoch_start = time.monotonic()
                             for step_idx, (ids, labels) in enumerate(loader, start=1):
                                 if self._stop.is_set():
                                     break
-                                if stage_args.steps is not None and step_idx > stage_args.steps:
+                                if step_idx > iters or (stage_args.steps is not None and stage_global_step >= stage_args.steps):
                                     break
-                                result = trainer.train_step(ids, labels, epoch * iters + step_idx, self.total_steps)
+                                stage_global_step += 1
+                                result = trainer.train_step(ids, labels, stage_global_step, self.total_steps)
                                 if step_idx % stage_args.log_interval == 0 or step_idx == iters:
                                     elapsed = max(time.monotonic() - epoch_start, 1e-6)
-                                    self._record_stage_metric(mode, epoch * iters + step_idx, result, tps=step_idx / elapsed)
+                                    self._record_stage_metric(mode, stage_global_step, result, tps=step_idx / elapsed)
                                 if step_idx % stage_args.save_interval == 0:
                                     trainer._save(epoch, step_idx)
                                     self._generate_live_sample(model, device, cfg, mode)
-                            if self._stop.is_set() or stage_args.steps is not None:
+                            if self._stop.is_set() or (stage_args.steps is not None and stage_global_step >= stage_args.steps):
                                 break
                         trainer._save(epoch=stage_args.epochs - 1, step=iters)
                     elif mode == "dpo":
@@ -1254,23 +1595,24 @@ class TrainSession:
                             calib = torch.cat([first["x_chosen"], first["x_rejected"]], dim=0)
                             trainer.set_calibration_batch(calib)
                             self._put("[DPO] Router anchor reference captured.")
-                        iters = len(loader) if stage_args.steps is None else min(stage_args.steps, len(loader))
-                        self.total_steps = max(1, stage_args.epochs * iters)
+                        iters = _planned_epoch_iters(loader, stage_args.steps)
+                        stage_global_step = 0
                         for epoch in range(stage_args.epochs):
                             epoch_start = time.monotonic()
                             for step_idx, batch in enumerate(loader, start=1):
                                 if self._stop.is_set():
                                     break
-                                if stage_args.steps is not None and step_idx > stage_args.steps:
+                                if step_idx > iters or (stage_args.steps is not None and stage_global_step >= stage_args.steps):
                                     break
-                                result = trainer.train_step(batch, epoch * iters + step_idx, self.total_steps)
+                                stage_global_step += 1
+                                result = trainer.train_step(batch, stage_global_step, self.total_steps)
                                 if step_idx % stage_args.log_interval == 0 or step_idx == iters:
                                     elapsed = max(time.monotonic() - epoch_start, 1e-6)
-                                    self._record_stage_metric(mode, epoch * iters + step_idx, result, tps=step_idx / elapsed)
+                                    self._record_stage_metric(mode, stage_global_step, result, tps=step_idx / elapsed)
                                 if step_idx % stage_args.save_interval == 0:
                                     trainer._save(epoch, step_idx)
                                     self._generate_live_sample(model, device, cfg, mode)
-                            if self._stop.is_set() or stage_args.steps is not None:
+                            if self._stop.is_set() or (stage_args.steps is not None and stage_global_step >= stage_args.steps):
                                 break
                         trainer._save(epoch=stage_args.epochs - 1, step=iters)
                     elif mode == "orpo":
@@ -1282,23 +1624,24 @@ class TrainSession:
                             calib = torch.cat([first["x_chosen"], first["x_rejected"]], dim=0)
                             trainer.set_calibration_batch(calib)
                             self._put("[ORPO] Router anchor reference captured.")
-                        iters = len(loader) if stage_args.steps is None else min(stage_args.steps, len(loader))
-                        self.total_steps = max(1, stage_args.epochs * iters)
+                        iters = _planned_epoch_iters(loader, stage_args.steps)
+                        stage_global_step = 0
                         for epoch in range(stage_args.epochs):
                             epoch_start = time.monotonic()
                             for step_idx, batch in enumerate(loader, start=1):
                                 if self._stop.is_set():
                                     break
-                                if stage_args.steps is not None and step_idx > stage_args.steps:
+                                if step_idx > iters or (stage_args.steps is not None and stage_global_step >= stage_args.steps):
                                     break
-                                result = trainer.train_step(batch, epoch * iters + step_idx, self.total_steps)
+                                stage_global_step += 1
+                                result = trainer.train_step(batch, stage_global_step, self.total_steps)
                                 if step_idx % stage_args.log_interval == 0 or step_idx == iters:
                                     elapsed = max(time.monotonic() - epoch_start, 1e-6)
-                                    self._record_stage_metric(mode, epoch * iters + step_idx, result, tps=step_idx / elapsed)
+                                    self._record_stage_metric(mode, stage_global_step, result, tps=step_idx / elapsed)
                                 if step_idx % stage_args.save_interval == 0:
                                     trainer._save(epoch, step_idx)
                                     self._generate_live_sample(model, device, cfg, mode)
-                            if self._stop.is_set() or stage_args.steps is not None:
+                            if self._stop.is_set() or (stage_args.steps is not None and stage_global_step >= stage_args.steps):
                                 break
                         trainer._save(epoch=stage_args.epochs - 1, step=iters)
                     elif mode == "grpo":
@@ -1313,23 +1656,24 @@ class TrainSession:
                             ).input_ids
                             trainer.set_calibration_batch(calib)
                             self._put("[GRPO] Router anchor reference captured.")
-                        iters = len(prompts) if stage_args.steps is None else min(stage_args.steps, len(prompts))
-                        self.total_steps = max(1, stage_args.epochs * iters)
+                        iters = _planned_epoch_iters(prompts, stage_args.steps)
+                        stage_global_step = 0
                         for epoch in range(stage_args.epochs):
                             epoch_start = time.monotonic()
                             for step_idx, prompt in enumerate(prompts, start=1):
                                 if self._stop.is_set():
                                     break
-                                if step_idx > iters:
+                                if step_idx > iters or (stage_args.steps is not None and stage_global_step >= stage_args.steps):
                                     break
-                                result = trainer.train_step(prompt, epoch * iters + step_idx, self.total_steps)
+                                stage_global_step += 1
+                                result = trainer.train_step(prompt, stage_global_step, self.total_steps)
                                 if step_idx % stage_args.log_interval == 0 or step_idx == iters:
                                     elapsed = max(time.monotonic() - epoch_start, 1e-6)
-                                    self._record_stage_metric(mode, epoch * iters + step_idx, result, tps=step_idx / elapsed)
+                                    self._record_stage_metric(mode, stage_global_step, result, tps=step_idx / elapsed)
                                 if step_idx % stage_args.save_interval == 0:
                                     trainer._save(epoch, step_idx)
                                     self._generate_live_sample(model, device, cfg, mode)
-                            if self._stop.is_set() or stage_args.steps is not None:
+                            if self._stop.is_set() or (stage_args.steps is not None and stage_global_step >= stage_args.steps):
                                 break
                         trainer._save(epoch=stage_args.epochs - 1, step=iters)
                     elif mode == "distill":
@@ -1349,23 +1693,24 @@ class TrainSession:
                             first = next(iter(loader))
                             trainer.set_calibration_batch(first[0])
                             self._put("[DISTILL] Router anchor reference captured.")
-                        iters = len(loader) if stage_args.steps is None else min(stage_args.steps, len(loader))
-                        self.total_steps = max(1, stage_args.epochs * iters)
+                        iters = _planned_epoch_iters(loader, stage_args.steps)
+                        stage_global_step = 0
                         for epoch in range(stage_args.epochs):
                             epoch_start = time.monotonic()
                             for step_idx, (ids, labels) in enumerate(loader, start=1):
                                 if self._stop.is_set():
                                     break
-                                if stage_args.steps is not None and step_idx > stage_args.steps:
+                                if step_idx > iters or (stage_args.steps is not None and stage_global_step >= stage_args.steps):
                                     break
-                                result = trainer.train_step(ids, labels, epoch * iters + step_idx, self.total_steps)
+                                stage_global_step += 1
+                                result = trainer.train_step(ids, labels, stage_global_step, self.total_steps)
                                 if step_idx % stage_args.log_interval == 0 or step_idx == iters:
                                     elapsed = max(time.monotonic() - epoch_start, 1e-6)
-                                    self._record_stage_metric(mode, epoch * iters + step_idx, result, tps=step_idx / elapsed)
+                                    self._record_stage_metric(mode, stage_global_step, result, tps=step_idx / elapsed)
                                 if step_idx % stage_args.save_interval == 0:
                                     trainer._save(epoch, step_idx)
                                     self._generate_live_sample(model, device, cfg, mode)
-                            if self._stop.is_set() or stage_args.steps is not None:
+                            if self._stop.is_set() or (stage_args.steps is not None and stage_global_step >= stage_args.steps):
                                 break
                         trainer._save(epoch=stage_args.epochs - 1, step=iters)
                 self._generate_live_sample(model, device, cfg, mode)
@@ -1400,6 +1745,7 @@ class TrainSession:
                         # gate.
                         from chronos.trainer.loss_mixin import (
                             chronos_loss_term, collect_router_probs,
+                            collect_offload_training_metrics,
                         )
                         loss = chronos_loss_term(
                             model, out.loss, lp, model_cfg, aux_loss=out.aux_loss,
@@ -1411,8 +1757,12 @@ class TrainSession:
                             temp_val = temporal_locality_loss(
                                 router_4d_det.mean(dim=2)
                             ).item()
+                            offload_metrics = collect_offload_training_metrics(
+                                model, lp, model_cfg,
+                            )
                         else:
                             temp_val = 0.0
+                            offload_metrics = {}
 
                         step_loss = loss / accum
 
@@ -1422,7 +1772,7 @@ class TrainSession:
                     self.loss = loss.item()
 
                     # LR schedule (warmup → cosine). Refresh every step.
-                    sched_total = self.total_steps or planned or (global_step + 1)
+                    sched_total = self.total_steps or (global_step + 1)
                     apply_lr(optimizer, get_lr(global_step, sched_total, base_lr))
 
                     # Optimizer.step() once per `accum` micro-batches.
@@ -1448,6 +1798,9 @@ class TrainSession:
                             f"Epoch {epoch+1}/{epochs}  Step {global_step}  "
                             f"loss={tot_val:.4f}  ce={ce_val:.4f}  "
                             f"aux={aux_val:.4f}  temporal={temp_val:.4f}  "
+                            f"topk_recall={offload_metrics.get('lookahead_topk_recall', 0.0):.2%}  "
+                            f"union_recall={offload_metrics.get('lookahead_union_recall', 0.0):.2%}  "
+                            f"router_jaccard={offload_metrics.get('router_adjacent_jaccard', 0.0):.2%}  "
                             f"steps/s={tps:.2f}  lr={optimizer.param_groups[0]['lr']:.2e}"
                         )
                         self._put_metric({
@@ -1457,6 +1810,7 @@ class TrainSession:
                             "aux": aux_val,
                             "temporal": temp_val,
                             "tps": tps,
+                            **offload_metrics,
                         })
 
                     if global_step % save_interval == 0:
@@ -1541,6 +1895,20 @@ class TrainSession:
             import traceback
             self._put(f"[ERROR] {e}\n{traceback.format_exc()}")
             self.status = "error"
+        finally:
+            _sync_metal_backend((cfg or {}).get("device"))
+            _close_dataset_handles(loader, val_loader, train_ds, val_ds, full_ds)
+            if cleanup_after_run:
+                cleanup = _cleanup_training_dataset_artifact(data_path_for_cleanup)
+                if cleanup.get("deleted"):
+                    removed_dirs = len(cleanup.get("removed_dirs") or [])
+                    suffix = f"; removed {removed_dirs} empty parent dirs" if removed_dirs else ""
+                    self._put(f"[cleanup] removed staged upload dataset: {cleanup.get('path')}{suffix}")
+                elif cleanup.get("reason") not in {"not_gradio_temp", "missing"}:
+                    self._put(
+                        f"[cleanup] skipped staged upload dataset cleanup for "
+                        f"{cleanup.get('path')}: {cleanup.get('reason')}"
+                    )
 
     def _synthetic_loader(self, vocab_size, seq_len, batch_size, n=50):
         import torch
@@ -1737,7 +2105,7 @@ def build_train_tab(config_state: gr.State, cfg_save_dir: gr.Textbox):
             )
             register_translatable(dataset_upload, "train.dataset_upload")
         dataset_upload.change(
-            fn=lambda fp: fp or "",
+            fn=_stage_gradio_upload_for_training,
             inputs=dataset_upload,
             outputs=data_path,
         )
@@ -1779,9 +2147,10 @@ def build_train_tab(config_state: gr.State, cfg_save_dir: gr.Textbox):
             register_translatable(teacher_path, "pipeline.teacher_path")
 
         with gr.Row():
-            max_steps_in = gr.Number(
-                value=0, precision=0,
+            max_steps_in = gr.Textbox(
+                value="from Config tab",
                 label=t("train.max_steps"), scale=1,
+                interactive=False,
             )
             val_ratio_in = gr.Slider(
                 0.0, 0.5, value=0.05, step=0.01,
@@ -1881,7 +2250,7 @@ def build_train_tab(config_state: gr.State, cfg_save_dir: gr.Textbox):
                 gr.update(label=metric_labels[2]),
             )
 
-        def start_training(cfg, train_mode, selected_backend, dpath, iw, ms, vr, _wd_display, teacher, sp):
+        def start_training(cfg, train_mode, selected_backend, dpath, upload_file, iw, ms, vr, _wd_display, teacher, sp):
             if _session.is_running():
                 return "already running", 0, 0.0, 0.0, 0.0, 0.0, "Already running.\n", None, "", _session.get_effective_config()
             cfg, initial_effective = _prepare_training_run_config(
@@ -1889,6 +2258,7 @@ def build_train_tab(config_state: gr.State, cfg_save_dir: gr.Textbox):
                 train_mode,
                 selected_backend,
                 dpath,
+                upload_file,
                 iw,
                 ms,
                 vr,
@@ -1955,7 +2325,7 @@ def build_train_tab(config_state: gr.State, cfg_save_dir: gr.Textbox):
 
         start_btn.click(
             fn=start_training,
-            inputs=[config_state, mode, train_backend, data_path, init_weight,
+            inputs=[config_state, mode, train_backend, data_path, dataset_upload, init_weight,
                     max_steps_in, val_ratio_in, weight_decay_in,
                     teacher_path, sample_prompt_in],
             outputs=[status_box, step_box, loss_box, ce_box, aux_box, tps_box,

@@ -174,19 +174,21 @@ class ChronosORPOTrainer:
             anc_val,
         )
 
-    def train_epoch(self, epoch, loader, iters, max_steps=None):
+    def train_epoch(self, epoch, loader, iters, start_step=0, max_steps=None):
         self.model.train()
-        total_steps = self.args.epochs * iters
-        for step, batch in enumerate(loader, start=1):
-            if max_steps is not None and step > max_steps:
+        cap = int(max_steps) if max_steps is not None else None
+        total_steps = cap or (self.args.epochs * iters)
+        for local_step, batch in enumerate(loader, start=1):
+            if local_step > iters:
                 break
-            loss, nll, lor, la, anc = self.train_step(
-                batch, epoch * iters + step, total_steps,
-            )
-            if step % self.args.log_interval == 0 or step == iters:
+            step = int(start_step) + local_step
+            if cap is not None and step > cap:
+                break
+            loss, nll, lor, la, anc = self.train_step(batch, step, total_steps)
+            if local_step % self.args.log_interval == 0 or local_step == iters:
                 lr = self.optimizer.param_groups[-1]["lr"]
                 Logger(
-                    f"[ORPO] Epoch[{epoch+1}/{self.args.epochs}]({step}/{iters}) "
+                    f"[ORPO] Epoch[{epoch+1}/{self.args.epochs}]({local_step}/{iters}) "
                     f"loss:{loss:.4f} nll:{nll:.4f} or:{lor:.4f} "
                     f"la:{la:.4f} anchor:{anc:.4f} lr:{lr:.2e}"
                 )

@@ -180,17 +180,21 @@ class ChronosDistillTrainer:
             "anchor": anc_val,
         }
 
-    def train_epoch(self, epoch, loader, iters, max_steps=None):
+    def train_epoch(self, epoch, loader, iters, start_step=0, max_steps=None):
         self.model.train()
-        total_steps = self.args.epochs * iters
-        for step, (ids, labels) in enumerate(loader, start=1):
-            if max_steps is not None and step > max_steps:
+        cap = int(max_steps) if max_steps is not None else None
+        total_steps = cap or (self.args.epochs * iters)
+        for local_step, (ids, labels) in enumerate(loader, start=1):
+            if local_step > iters:
                 break
-            s = self.train_step(ids, labels, epoch * iters + step, total_steps)
-            if step % self.args.log_interval == 0 or step == iters:
+            step = int(start_step) + local_step
+            if cap is not None and step > cap:
+                break
+            s = self.train_step(ids, labels, step, total_steps)
+            if local_step % self.args.log_interval == 0 or local_step == iters:
                 lr = self.optimizer.param_groups[-1]["lr"]
                 Logger(
-                    f"[Distill] Epoch[{epoch+1}/{self.args.epochs}]({step}/{iters}) "
+                    f"[Distill] Epoch[{epoch+1}/{self.args.epochs}]({local_step}/{iters}) "
                     f"loss:{s['loss']:.4f} kd:{s['kd']:.4f} ce:{s['ce']:.4f} "
                     f"la:{s['la']:.4f} anchor:{s['anchor']:.4f} lr:{lr:.2e}"
                 )

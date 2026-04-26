@@ -101,6 +101,19 @@ def _temporal_locality_loss(router_mean: mx.array) -> mx.array:
     return (diff * diff).sum(axis=-1).mean()
 
 
+def _router_locality_loss(router_mean: mx.array, num_experts_per_tok: int) -> mx.array:
+    if router_mean.shape[1] <= 1:
+        return mx.zeros(())
+    B, _S, E = router_mean.shape
+    top_k = max(1, min(int(num_experts_per_tok or 1), E))
+    prev = mx.stop_gradient(router_mean[:, :-1, :])
+    cur = router_mean[:, 1:, :]
+    target_ids = mx.argpartition(-prev, kth=top_k - 1, axis=-1)[:, :, :top_k]
+    target_mask = (target_ids[..., None] == mx.arange(E)).astype(cur.dtype).sum(axis=-2)
+    mass = (cur * target_mask).sum(axis=-1)
+    return (-mx.log(mx.maximum(mass / float(top_k), 1e-9))).mean()
+
+
 def _load_balance_loss(router_4d: mx.array, num_experts_per_tok: int) -> mx.array:
     B, S, L, E = router_4d.shape
     top_k = max(1, min(int(num_experts_per_tok or 1), E))
@@ -171,6 +184,96 @@ def _lookahead_topk_hit_loss(
     return total / max(terms, 1)
 
 
+def _lookahead_union_loss(
+    lookahead_probs: mx.array | None,
+    teacher_router_probs: mx.array | None,
+    lookahead_steps: int,
+    num_experts_per_tok: int,
+) -> mx.array:
+    if lookahead_probs is None:
+        return mx.zeros(())
+    if teacher_router_probs is None:
+        return mx.zeros((), dtype=lookahead_probs.dtype)
+    B, S, Kp1, E = lookahead_probs.shape
+    K = min(int(lookahead_steps or 0), Kp1 - 1)
+    top_k = max(1, min(int(num_experts_per_tok or 1), E))
+    if K <= 0 or S <= K:
+        return mx.zeros((), dtype=lookahead_probs.dtype)
+    teacher = mx.stop_gradient(teacher_router_probs.astype(mx.float32))
+    union_target = mx.zeros((B, S - K, E), dtype=mx.float32)
+    for k in range(1, K + 1):
+        target_ids = mx.argpartition(-teacher[:, k:k + S - K, :], kth=top_k - 1, axis=-1)[:, :, :top_k]
+        target_mask = (target_ids[..., None] == mx.arange(E)).astype(mx.float32).sum(axis=-2)
+        union_target = mx.maximum(union_target, target_mask)
+    pred_union = lookahead_probs[:, :S - K, 1:K + 1, :].astype(mx.float32).max(axis=2)
+    mass = (pred_union * union_target).sum(axis=-1)
+    target_count = mx.maximum(union_target.sum(axis=-1), 1.0)
+    return (-mx.log(mx.maximum(mass / target_count, 1e-9))).mean()
+
+
+def _offload_training_metrics(
+    router_mean: mx.array | None,
+    lookahead_probs: mx.array | None,
+    lookahead_steps: int,
+    num_experts_per_tok: int,
+) -> dict[str, float]:
+    if router_mean is None:
+        return {}
+    B, S, E = router_mean.shape
+    top_k = max(1, min(int(num_experts_per_tok or 1), E))
+    top_ids = mx.argpartition(-router_mean, kth=top_k - 1, axis=-1)[:, :, :top_k]
+    mx.eval(top_ids)
+    import numpy as np
+
+    ids_np = np.array(top_ids)
+    out = {
+        "expert_working_set": float(len(set(int(v) for v in ids_np.reshape(-1)))),
+        "router_adjacent_jaccard": 1.0,
+        "lookahead_topk_recall": 0.0,
+        "lookahead_union_recall": 0.0,
+    }
+    if S > 1:
+        vals = []
+        for b in range(B):
+            for t in range(S - 1):
+                a = set(int(v) for v in ids_np[b, t])
+                c = set(int(v) for v in ids_np[b, t + 1])
+                vals.append(len(a & c) / max(len(a | c), 1))
+        out["router_adjacent_jaccard"] = float(sum(vals) / max(len(vals), 1))
+    if lookahead_probs is not None and lookahead_steps > 0 and S > 1:
+        K = min(int(lookahead_steps), int(lookahead_probs.shape[2]) - 1)
+        pred = lookahead_probs.astype(mx.float32)
+        mx.eval(pred)
+        pred_np = np.array(pred)
+        recalls = []
+        union_recalls = []
+        pred_budget = max(top_k, min(E, top_k * max(1, K)))
+        for k in range(1, K + 1):
+            if S - k <= 0:
+                continue
+            pred_ids = np.argpartition(-pred_np[:, :-k, k, :], kth=top_k - 1, axis=-1)[:, :, :top_k]
+            for b in range(B):
+                for t in range(S - k):
+                    target = set(int(v) for v in ids_np[b, t + k])
+                    got = set(int(v) for v in pred_ids[b, t])
+                    recalls.append(len(target & got) / float(top_k))
+        if K > 0 and S - K > 0:
+            pred_union_ids = np.argpartition(-pred_np[:, :S - K, 1:K + 1, :].max(axis=2),
+                                             kth=pred_budget - 1, axis=-1)[:, :, :pred_budget]
+            for b in range(B):
+                for t in range(S - K):
+                    target = set()
+                    for k in range(1, K + 1):
+                        target.update(int(v) for v in ids_np[b, t + k])
+                    got = set(int(v) for v in pred_union_ids[b, t])
+                    union_recalls.append(len(target & got) / max(len(target), 1))
+        if recalls:
+            out["lookahead_topk_recall"] = float(sum(recalls) / len(recalls))
+        if union_recalls:
+            out["lookahead_union_recall"] = float(sum(union_recalls) / len(union_recalls))
+    return out
+
+
 def _router_kl_anchor(current: mx.array, reference: mx.array | None, lambda_anchor: float) -> mx.array:
     if reference is None or lambda_anchor <= 0.0:
         return mx.zeros((), dtype=current.dtype)
@@ -184,6 +287,7 @@ def _router_kl_anchor(current: mx.array, reference: mx.array | None, lambda_anch
 
 
 def _chronos_regularized_loss(model, base_loss: mx.array, lookahead_probs: mx.array | None, config, router_ref=None) -> mx.array:
+    setattr(model, "_last_lookahead_probs", lookahead_probs)
     loss = base_loss.astype(mx.float32)
     router_4d = _collect_router_probs(model)
     if router_4d is None:
@@ -202,6 +306,12 @@ def _chronos_regularized_loss(model, base_loss: mx.array, lookahead_probs: mx.ar
         lambda_temporal = float(getattr(config, "lambda_temporal", 0.0) or 0.0)
         if lambda_temporal > 0.0:
             loss = loss + lambda_temporal * _temporal_locality_loss(router_mean)
+        lambda_locality = float(getattr(config, "lambda_router_locality", 0.0) or 0.0)
+        if lambda_locality > 0.0:
+            loss = loss + lambda_locality * _router_locality_loss(
+                router_mean,
+                int(getattr(config, "num_experts_per_tok", 1) or 1),
+            )
 
         lookahead_steps = int(getattr(config, "lookahead_steps", 0) or 0)
         lambda_lookahead = float(getattr(config, "lambda_lookahead", 0.0) or 0.0)
@@ -215,6 +325,14 @@ def _chronos_regularized_loss(model, base_loss: mx.array, lookahead_probs: mx.ar
             lambda_topk = float(getattr(config, "lambda_lookahead_topk", 0.0) or 0.0)
             if lambda_topk > 0.0:
                 loss = loss + lambda_topk * _lookahead_topk_hit_loss(
+                    lookahead_probs,
+                    teacher,
+                    lookahead_steps,
+                    int(getattr(config, "num_experts_per_tok", 1) or 1),
+                )
+            lambda_union = float(getattr(config, "lambda_lookahead_union", 0.0) or 0.0)
+            if lambda_union > 0.0:
+                loss = loss + lambda_union * _lookahead_union_loss(
                     lookahead_probs,
                     teacher,
                     lookahead_steps,
@@ -824,6 +942,14 @@ def run_mlx_stage(
                 tps = delta_steps / max(now - last_log_t, 1e-6)
                 last_log_t = now
                 last_log_step = steps
+                router_4d = _collect_router_probs(model)
+                router_mean = router_4d.mean(axis=2) if router_4d is not None else None
+                offload_metrics = _offload_training_metrics(
+                    router_mean,
+                    getattr(model, "_last_lookahead_probs", None),
+                    int(getattr(config, "lookahead_steps", 0) or 0),
+                    int(getattr(config, "num_experts_per_tok", 1) or 1),
+                )
                 _emit({
                     "event": "step",
                     "stage": stage,
@@ -840,6 +966,7 @@ def run_mlx_stage(
                     "dtype": dtype_name,
                     "lr": float(optimizer.learning_rate.item()) if "learning_rate" in optimizer.state else base_lr * lr_scale,
                     "rollbacks": rollback_count,
+                    **offload_metrics,
                 })
             if max_steps is not None and steps >= int(max_steps):
                 break

@@ -72,6 +72,7 @@ class MLXExpertStore:
         self._warm_lru: collections.OrderedDict = collections.OrderedDict()
         self._cluster_manifest: ClusterManifest | None = None
         self._loaded_clusters: set[int] = set()
+        self._protected_experts: set[int] = set()
         self.storage_format = "npy"
         self.attach_cluster_manifest(ssd_dir)
         self._stats = collections.Counter()
@@ -296,18 +297,25 @@ class MLXExpertStore:
         self._warm_lru.move_to_end(expert_id)
         self._evict_warm_locked(protected_expert_id=protected_expert_id)
 
+    def set_protected_experts(self, expert_ids: List[int] | set[int] | tuple[int, ...]):
+        with self._lock:
+            self._protected_experts = {
+                int(eid) for eid in expert_ids
+                if 0 <= int(eid) < int(self.num_experts)
+            }
+
     def _evict_warm_locked(self, protected_expert_id: int | None = None):
         while len(self._warm_lru) > self._warm_capacity:
             evict_id = None
             for candidate in self._warm_lru.keys():
-                if candidate == protected_expert_id:
+                if candidate == protected_expert_id or candidate in self._protected_experts:
                     continue
                 if candidate not in self._hot_lru:
                     evict_id = candidate
                     break
             if evict_id is None:
                 for candidate in self._warm_lru.keys():
-                    if candidate != protected_expert_id:
+                    if candidate != protected_expert_id and candidate not in self._protected_experts:
                         evict_id = candidate
                         break
             if evict_id is None:
@@ -455,9 +463,17 @@ class MLXExpertStore:
                 self._hot_lru.move_to_end(expert_id)
             else:
                 while len(self._hot_lru) >= self._capacity:
-                    evicted, _ = self._hot_lru.popitem(last=False)
-                    if evicted == expert_id:
-                        continue
+                    evicted = None
+                    for candidate in self._hot_lru.keys():
+                        if candidate != expert_id and candidate not in self._protected_experts:
+                            evicted = candidate
+                            break
+                    if evicted is None:
+                        evicted, _ = self._hot_lru.popitem(last=False)
+                        if evicted == expert_id:
+                            continue
+                    else:
+                        self._hot_lru.pop(evicted, None)
                     # Keep warm weights in unified memory, but drop the
                     # executable live module so masked MoE cannot call an
                     # expert outside the hot execution budget.

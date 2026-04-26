@@ -47,10 +47,12 @@ def parse_args():
     add_topology_args(p, defaults=True)
     # Loss coefficients
     p.add_argument("--lambda_balance", type=float, default=5e-4)
-    p.add_argument("--lambda_temporal", type=float, default=1e-3)
+    p.add_argument("--lambda_temporal", type=float, default=3e-3)
     p.add_argument("--lambda_lookahead", type=float, default=0.1)
-    p.add_argument("--lambda_lookahead_topk", type=float, default=0.05)
-    p.add_argument("--fallback_mask_prob", type=float, default=0.0,
+    p.add_argument("--lambda_lookahead_topk", type=float, default=0.15)
+    p.add_argument("--lambda_lookahead_union", type=float, default=0.05)
+    p.add_argument("--lambda_router_locality", type=float, default=0.02)
+    p.add_argument("--fallback_mask_prob", type=float, default=0.08,
                    help="Randomly mask routed experts during training to teach the shared offload fallback.")
     # VRAM budget
     p.add_argument("--vram_budget_gb", type=float, default=4.0)
@@ -114,22 +116,12 @@ def main():
     )
     Logger(f"CPU threads: {threads}  DataLoader workers: {loader.num_workers}")
 
+    iters = len(loader) if args.steps is None else min(int(args.steps), len(loader))
+    global_step = 0
     for epoch in range(args.epochs):
-        iters = len(loader) if args.steps is None else min(int(args.steps), len(loader))
-        # Monkey-patch the trainer epoch to honor --steps as a hard cap.
-        if args.steps is not None:
-            _orig_step = trainer.train_step
-            step_counter = {"n": 0}
-            def _capped_step(*a, **kw):
-                r = _orig_step(*a, **kw)
-                step_counter["n"] += 1
-                if step_counter["n"] >= int(args.steps):
-                    raise StopIteration
-                return r
-            trainer.train_step = _capped_step
-        try:
-            trainer.train_epoch(epoch, loader, iters)
-        except StopIteration:
+        trainer.train_epoch(epoch, loader, iters, start_step=global_step, max_steps=args.steps)
+        global_step += iters
+        if args.steps is not None and global_step >= int(args.steps):
             Logger(f"Reached --steps={args.steps}, stopping.")
             break
 

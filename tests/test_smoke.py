@@ -84,6 +84,46 @@ def test_temporal_loss():
     assert loss.item() > ce.item()
 
 
+def test_offload_training_losses_and_metrics_are_finite():
+    from chronos.model.temporal_loss import (
+        lookahead_union_loss,
+        router_locality_loss,
+        router_offload_metrics,
+    )
+
+    torch.manual_seed(3)
+    router_logits = torch.randn(2, 6, 5, requires_grad=True)
+    router_probs = torch.softmax(router_logits, dim=-1)
+    lookahead_logits = torch.randn(2, 6, 3, 5, requires_grad=True)
+    lookahead_probs = torch.softmax(lookahead_logits, dim=-1)
+
+    locality = router_locality_loss(router_probs, num_experts_per_tok=2)
+    union = lookahead_union_loss(
+        lookahead_probs,
+        router_probs.detach(),
+        lookahead_steps=2,
+        num_experts_per_tok=2,
+    )
+    loss = locality + union
+    assert torch.isfinite(loss)
+    loss.backward()
+    assert router_logits.grad is not None
+    assert lookahead_logits.grad is not None
+    assert torch.isfinite(router_logits.grad).all()
+    assert torch.isfinite(lookahead_logits.grad).all()
+
+    metrics = router_offload_metrics(
+        router_probs.detach(),
+        lookahead_probs.detach(),
+        lookahead_steps=2,
+        num_experts_per_tok=2,
+    )
+    assert metrics["expert_working_set"] >= 1
+    assert 0.0 <= metrics["router_adjacent_jaccard"] <= 1.0
+    assert 0.0 <= metrics["lookahead_topk_recall"] <= 1.0
+    assert 0.0 <= metrics["lookahead_union_recall"] <= 1.0
+
+
 def test_lru_cache():
     from chronos.io.expert_store import LRUCache
     lru = LRUCache(capacity=3)
@@ -1460,6 +1500,66 @@ def test_mlx_on_demand_load_survives_tight_warm_budget(tmp_path):
     assert set(store._warm.keys()) == {3}
 
 
+def test_mlx_lazy_store_protects_predicted_experts_from_eviction(tmp_path):
+    if not _mlx_available():
+        return
+    from chronos.model.config import ChronosConfig
+    from chronos.model.model_chronos import ChronosForCausalLM
+    from chronos.mlx.expert_store import MLXExpertStore
+    from chronos.mlx.model import ChronosMLXModel
+
+    cfg = ChronosConfig(hidden_size=32, num_hidden_layers=1, num_experts=4,
+                        num_experts_per_tok=1, num_shared_experts=1,
+                        num_attention_heads=2, num_key_value_heads=2,
+                        kv_latent_dim=8, rope_dim=4, max_seq_len=16,
+                        vocab_size=128, use_moe=True,
+                        recommended_resident_experts=2,
+                        recommended_ram_experts=2)
+    pt = ChronosForCausalLM(cfg).eval()
+    mlx_model = ChronosMLXModel.from_chronos_pytorch(pt, cfg, include_experts=False)
+    store = MLXExpertStore(mlx_model, cfg, ssd_dir=str(tmp_path / "mlx_protected"))
+    store.offload_all_to_ssd(clusters=[[0], [1], [2], [3]])
+    store.replace_live_experts_with_placeholders()
+    store.prefetch_to_ram([0, 1])
+    assert set(store._warm.keys()) == {0, 1}
+
+    store.set_protected_experts([0])
+    store.prefetch_to_ram([2])
+    assert 0 in store._warm
+    assert len(store._warm) <= 2
+    assert set(store._warm.keys()) == {0, 2}
+
+
+def test_mlx_lazy_inference_all_resident_fast_path(tmp_path):
+    if not _mlx_available():
+        return
+    import mlx.core as mx
+    from chronos.model.config import ChronosConfig
+    from chronos.model.model_chronos import ChronosForCausalLM
+    from chronos.mlx.inference import ChronosMLXInferenceEngine
+    from chronos.mlx.model import ChronosMLXModel
+
+    cfg = ChronosConfig(hidden_size=32, num_hidden_layers=1, num_experts=2,
+                        num_experts_per_tok=1, num_shared_experts=1,
+                        num_attention_heads=2, num_key_value_heads=2,
+                        kv_latent_dim=8, rope_dim=4, max_seq_len=16,
+                        vocab_size=64, use_moe=True,
+                        recommended_resident_experts=2,
+                        recommended_ram_experts=2)
+    pt = ChronosForCausalLM(cfg).eval()
+    mlx_model = ChronosMLXModel.from_chronos_pytorch(pt, cfg)
+    engine = ChronosMLXInferenceEngine(mlx_model, cfg, ssd_dir=str(tmp_path / "mlx_fast"))
+    try:
+        engine.setup(warm_expert_ids=[0, 1])
+        assert engine._all_resident_fast_path_enabled() is True
+        toks = list(engine.generate(mx.array([[1, 2, 3]], dtype=mx.int32), max_new_tokens=2, temperature=0.0))
+        assert len(toks) == 2
+        assert engine.last_stats["all_resident_fast_path"] is True
+        assert engine.last_stats["sync_ssd_loads"] == 0
+    finally:
+        engine.stop()
+
+
 def test_mlx_rope_cache_grows_past_configured_context():
     if not _mlx_available():
         return
@@ -1801,6 +1901,77 @@ def test_ui_train_session_mlx_total_steps_from_loader(tmp_path):
     assert session.total_steps == 50
 
 
+def test_ui_train_session_mlx_topology_mismatch_starts_fresh(tmp_path, monkeypatch):
+    from chronos.model.config import ChronosConfig
+    from chronos.model.model_chronos import ChronosForCausalLM
+    from chronos.model.checkpoint import save_state_dict_with_config
+    from ui.tabs.train_tab import TrainSession
+
+    old_cfg = ChronosConfig(hidden_size=32, num_hidden_layers=1, num_experts=2,
+                            num_experts_per_tok=1, num_shared_experts=1,
+                            num_attention_heads=2, num_key_value_heads=2,
+                            kv_latent_dim=8, rope_dim=4, max_seq_len=8,
+                            vocab_size=64, use_moe=True)
+    ckpt = tmp_path / "chronos_32_moe.pth"
+    save_state_dict_with_config(
+        ChronosForCausalLM(old_cfg),
+        str(ckpt),
+        old_cfg,
+        stage="chronos",
+    )
+
+    captured = {}
+
+    class Result:
+        checkpoint_path = str(tmp_path / "chronos_32_moe.pth")
+        steps = 0
+        total_steps = 0
+        last_loss = 0.0
+        stopped = False
+        checkpoint_saved = False
+        rollbacks = 0
+
+    def fake_run_mlx_stage(**kwargs):
+        captured.update(kwargs)
+        return Result()
+
+    monkeypatch.setattr("chronos.mlx.training.run_mlx_stage", fake_run_mlx_stage)
+    monkeypatch.setattr("ui.tabs.train_tab.resolve_training_device", lambda _requested: ("mlx", "mlx"))
+    monkeypatch.setattr("ui.tabs.train_tab._verify_checkpoint_warn", lambda *args, **kwargs: None)
+
+    session = TrainSession()
+    messages = []
+    session._put = lambda msg: messages.append(str(msg))
+    cfg = {
+        "hidden_size": 32,
+        "num_hidden_layers": 1,
+        "num_experts": 3,
+        "num_experts_per_tok": 1,
+        "num_shared_experts": 1,
+        "num_attention_heads": 2,
+        "num_key_value_heads": 2,
+        "kv_latent_dim": 8,
+        "rope_dim": 4,
+        "moe_intermediate_size": 64,
+        "vocab_size": 64,
+        "max_seq_len": 8,
+        "batch_size": 1,
+        "epochs": 1,
+        "max_steps": 1,
+        "save_dir": str(tmp_path),
+        "train_backend": "mlx",
+        "data_path": "",
+        "num_workers": 0,
+        "learning_rate": 1e-4,
+        "weight_decay": 0.0,
+    }
+
+    session._run(cfg, "pretrain")
+
+    assert captured["checkpoint_path"] is None
+    assert any("starting fresh" in msg for msg in messages)
+
+
 def test_train_effective_cpu_config_uses_full_physical_budget(monkeypatch):
     from ui.tabs.train_tab import TrainSession
 
@@ -1818,6 +1989,46 @@ def test_train_effective_cpu_config_uses_full_physical_budget(monkeypatch):
     assert explicit_cfg["cpu_budget_percent"] == 75.0
 
 
+def test_train_cleanup_removes_only_gradio_temp_dataset(monkeypatch, tmp_path):
+    from ui.tabs.train_tab import (
+        _cleanup_gradio_temp_dataset,
+        _cleanup_training_dataset_artifact,
+        _stage_gradio_upload_for_training,
+    )
+
+    gradio_root = tmp_path / "gradio"
+    upload_dir = gradio_root / "upload_hash"
+    upload_dir.mkdir(parents=True)
+    uploaded = upload_dir / "train.jsonl"
+    uploaded.write_text('{"text":"hello"}\n', encoding="utf-8")
+    cache_root = tmp_path / "chronos_upload_cache"
+    outside = tmp_path / "real_dataset.jsonl"
+    outside.write_text('{"text":"keep"}\n', encoding="utf-8")
+
+    monkeypatch.setenv("GRADIO_TEMP_DIR", str(gradio_root))
+    monkeypatch.setenv("CHRONOS_TRAIN_UPLOAD_CACHE_DIR", str(cache_root))
+
+    kept = _cleanup_gradio_temp_dataset(str(outside))
+    assert kept["skipped"] is True
+    assert kept["reason"] == "not_gradio_temp"
+    assert outside.exists()
+
+    staged = _stage_gradio_upload_for_training(str(uploaded))
+    assert staged.startswith(str(cache_root))
+    assert not uploaded.exists()
+    assert not upload_dir.exists()
+    assert os.path.exists(staged)
+    assert gradio_root.exists()
+
+    removed = _cleanup_training_dataset_artifact(staged)
+    assert removed["deleted"] is True
+    assert not os.path.exists(staged)
+    assert outside.exists()
+
+    manual = _stage_gradio_upload_for_training(str(outside))
+    assert manual == str(outside)
+
+
 def test_train_start_merge_preserves_config_weight_decay(monkeypatch, tmp_path):
     from ui.tabs import train_tab
 
@@ -1827,6 +2038,7 @@ def test_train_start_merge_preserves_config_weight_decay(monkeypatch, tmp_path):
         "pretrain",
         "cpu",
         "",
+        None,
         "",
         1,
         0.05,
@@ -1839,12 +2051,107 @@ def test_train_start_merge_preserves_config_weight_decay(monkeypatch, tmp_path):
     assert effective["cpu_budget_percent"] == 100.0
 
 
+def test_train_start_prefers_latest_uploaded_dataset(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    from ui.tabs import train_tab
+
+    monkeypatch.setattr(train_tab, "resolve_training_device", lambda requested: ("cpu", "cpu"))
+    gradio_root = tmp_path / "gradio"
+    upload_dir = gradio_root / "upload_hash"
+    upload_dir.mkdir(parents=True)
+    uploaded = upload_dir / "pretrain.jsonl"
+    uploaded.write_text('{"text":"uploaded"}\n', encoding="utf-8")
+    cache_root = tmp_path / "chronos_upload_cache"
+    monkeypatch.setenv("GRADIO_TEMP_DIR", str(gradio_root))
+    monkeypatch.setenv("CHRONOS_TRAIN_UPLOAD_CACHE_DIR", str(cache_root))
+
+    cfg, effective = train_tab._prepare_training_run_config(
+        {"cpu_threads": "auto"},
+        "pretrain",
+        "cpu",
+        "./tests/fixtures/tiny_pretrain.jsonl",
+        SimpleNamespace(path=str(uploaded)),
+        "",
+        0,
+        0.05,
+        "",
+        "",
+    )
+
+    assert cfg["data_path"].startswith(str(cache_root))
+    assert cfg["data_path_source"] == "upload"
+    assert effective["data_path"] == cfg["data_path"]
+    assert effective["data_path_source"] == "upload"
+    assert os.path.exists(cfg["data_path"])
+    assert not uploaded.exists()
+
+    cfg2, _effective2 = train_tab._prepare_training_run_config(
+        {"cpu_threads": "auto"},
+        "pretrain",
+        "cpu",
+        cfg["data_path"],
+        {"path": str(uploaded)},
+        "",
+        0,
+        0.05,
+        "",
+        "",
+    )
+    assert cfg2["data_path"] == cfg["data_path"]
+    assert cfg2["data_path_source"] == "textbox"
+
+
 def test_config_input_order_matches_autotune_mapping():
     from ui.presets import CONFIG_INPUT_ORDER
     from ui.tabs.autotune_tab import PARAM_TO_CONFIG_IDX
 
     for idx, key in enumerate(CONFIG_INPUT_ORDER):
         assert PARAM_TO_CONFIG_IDX[key] == idx
+
+
+def test_config_schema_includes_unlimited_max_steps_default():
+    from ui.presets import CONFIG_INPUT_ORDER, get_preset, values_in_input_order
+
+    cfg = get_preset("MiniMind-MoE (default)")
+    assert cfg["max_steps"] == 0
+    idx = CONFIG_INPUT_ORDER.index("max_steps")
+    assert values_in_input_order(cfg)[idx] == 0
+
+
+def test_train_planned_steps_use_full_loader_then_cap():
+    from ui.tabs.train_tab import (
+        _planned_epoch_iters,
+        _planned_optimizer_updates,
+        _planned_train_steps,
+    )
+
+    class Sized:
+        def __len__(self):
+            return 100
+
+    assert _planned_train_steps(Sized(), epochs=2, max_steps=0) == 200
+    assert _planned_train_steps(Sized(), epochs=2, max_steps=50) == 50
+    assert _planned_epoch_iters(Sized(), max_steps=250) == 100
+    assert _planned_epoch_iters(Sized(), max_steps=50) == 50
+    assert _planned_optimizer_updates(50, 8) == 7
+
+
+def test_grpo_loader_does_not_use_steps_as_prompt_cap(tmp_path):
+    import json
+    from chronos.trainer.grpo_trainer import load_grpo_prompts
+
+    path = tmp_path / "grpo.jsonl"
+    path.write_text(
+        "\n".join(
+            json.dumps({"conversations": [{"role": "user", "content": f"p{i}"}]})
+            for i in range(5)
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    assert len(load_grpo_prompts(str(path), max_prompts=None)) == 5
+    assert len(load_grpo_prompts(str(path), max_prompts=2)) == 2
 
 
 def test_mlx_training_six_stage_loss_paths(tmp_path):
@@ -1931,6 +2238,56 @@ def test_inference_prompt_defaults_to_chat_template():
     assert mask == [1, 1, 1]
 
 
+def test_inference_decode_diagnostics_explain_empty_clean_text(tmp_path):
+    import json
+    from ui.tabs.inference_tab import (
+        _checkpoint_sidecar_metadata,
+        _decode_generation_diagnostics,
+        _format_inference_notices,
+        _stage_warning_from_checkpoint,
+    )
+
+    class _Tok:
+        bos_token_id = 1
+        eos_token_id = 2
+        pad_token_id = 0
+        unk_token_id = 0
+
+        def decode(self, ids, skip_special_tokens=True):
+            if skip_special_tokens:
+                return "".join("A" for token in ids if token not in {0, 1, 2})
+            return "".join({0: "<pad>", 1: "<bos>", 2: "<eos>"}.get(token, "A") for token in ids)
+
+    diag = _decode_generation_diagnostics(_Tok(), [2, 0])
+    assert diag["raw_decode"] == "<eos><pad>"
+    assert diag["clean_decode"] == ""
+    assert diag["first_token_kind"] == "eos"
+    assert diag["all_special_or_filtered"] is True
+    assert "special/filtered" in diag["warning"]
+
+    warning = _stage_warning_from_checkpoint({"stage": "chronos"}, "out/chronos_256_moe.pth")
+    assert "stage=chronos" in warning
+    notices = _format_inference_notices({
+        "checkpoint_warning": warning,
+        "rows": [{"mode": "full_dram", "decode_warning": diag["warning"]}],
+    })
+    assert "Checkpoint notice" in notices
+    assert "full_dram" in notices
+
+    ckpt = tmp_path / "chronos_256_moe.pth"
+    ckpt.write_bytes(b"not a real checkpoint")
+    ckpt.with_suffix(".config.json").write_text(
+        json.dumps({
+            "stage": "chronos",
+            "config": {"hidden_size": 256},
+            "checkpoint_format": "chronos_pth",
+        }),
+        encoding="utf-8",
+    )
+    meta = _checkpoint_sidecar_metadata(str(ckpt))
+    assert meta["stage"] == "chronos"
+
+
 def test_streaming_jsonl_dataset_pickles_under_spawn_workers(tmp_path):
     import json
     import multiprocessing as mp
@@ -2015,6 +2372,8 @@ def test_inference_stats_helpers_are_structured():
             "cache_hit_rate": 0.75,
             "resident_hit_rate": 0.75,
             "prediction_hit_rate": 0.5,
+            "cold_miss_predict_hit_rate": 1.0,
+            "all_resident_fast_path": False,
             "on_demand_loads": 1,
             "prefetch_queue_drops": 0,
             "prefetch_wait_time_s": 0.012,
@@ -2026,6 +2385,10 @@ def test_inference_stats_helpers_are_structured():
             "vram_experts": "2/4",
             "ram_experts": "2/8",
             "cluster_aware": True,
+            "first_token_id": 2,
+            "first_token_kind": "eos",
+            "special_token_ratio": 1.0,
+            "decode_warning": "Generated tokens decode to an empty clean string because they are all special/filtered tokens.",
         },
         {
             "mode": "full_dram",
@@ -2058,7 +2421,9 @@ def test_inference_stats_helpers_are_structured():
     assert "1.200 GB" in md and "2.030 GB" in md
     assert "Load budget" in md
     assert "On-demand loads" in md and "Prefetch wait" in md and "Predict hit" in md
+    assert "Cold miss predict hit" in md and "All-resident fast path" in md
     assert "Expert hits/misses" in md
+    assert "First token kind" in md and "Decode warnings" in md
     assert "lazy_offload" in md and "full_dram" in md
     assert set(df.columns) == {"metric", "mode", "x", "value", "normalized_value", "unit"}
     assert set(df["mode"]) == {"lazy_offload", "full_dram"}
@@ -2140,9 +2505,19 @@ def test_generate_api_returns_plain_json_with_chart_records():
     fake_raw = {
         "mode": "offload",
         "backend": "cpu",
+        "checkpoint_warning": "pretrain checkpoint",
         "expert_budget_policy": {"miss_policy": "on_demand"},
-        "rows": [{"mode": "lazy_offload", "tokens": 1, "tokens_per_sec": 1.0}],
+        "rows": [{
+            "mode": "lazy_offload",
+            "tokens": 1,
+            "tokens_per_sec": 1.0,
+            "generated_token_ids": [2],
+            "raw_decode": "<eos>",
+            "clean_decode": "",
+            "decode_warning": "empty clean decode",
+        }],
         "outputs": {"single": "ok"},
+        "decode_diagnostics": {"lazy_offload": {"generated_token_ids": [2], "warning": "empty clean decode"}},
         "chart": [{"metric": "Decode speed", "mode": "lazy_offload", "value": 1.0, "unit": "tokens/s"}],
     }
     with mock.patch("ui.tabs.inference_tab._run_inference_modes", return_value=fake_raw):
@@ -2150,6 +2525,8 @@ def test_generate_api_returns_plain_json_with_chart_records():
 
     assert isinstance(out, dict)
     assert out["outputs"]["single"] == "ok"
+    assert out["decode_diagnostics"]["lazy_offload"]["generated_token_ids"] == [2]
+    assert out["checkpoint_warning"] == "pretrain checkpoint"
     assert isinstance(out["chart"], list)
     assert out["expert_budget_policy"]["miss_policy"] == "on_demand"
 

@@ -67,9 +67,11 @@ def build_pretrain_config(args) -> ChronosConfig:
     kwargs.update({
         "max_position_embeddings": getattr(args, "max_seq_len", 512),
         "lambda_balance": getattr(args, "lambda_balance", 5e-4),
-        "lambda_temporal": getattr(args, "lambda_temporal", 1e-3),
+        "lambda_temporal": getattr(args, "lambda_temporal", 3e-3),
         "lambda_lookahead": getattr(args, "lambda_lookahead", 0.1),
-        "lambda_lookahead_topk": getattr(args, "lambda_lookahead_topk", 0.05),
+        "lambda_lookahead_topk": getattr(args, "lambda_lookahead_topk", 0.15),
+        "lambda_lookahead_union": getattr(args, "lambda_lookahead_union", 0.05),
+        "lambda_router_locality": getattr(args, "lambda_router_locality", 0.02),
         "vram_budget_gb": getattr(args, "vram_budget_gb", 4.0),
         "use_moe": True,
     })
@@ -105,6 +107,17 @@ def build_config_from_upstream(
         )
     overrides = topology_overrides_from_args(args)
     overrides["lambda_router_anchor"] = lambda_router_anchor
+    for key in (
+        "lambda_temporal",
+        "lambda_lookahead",
+        "lambda_lookahead_topk",
+        "lambda_lookahead_union",
+        "lambda_router_locality",
+        "fallback_mask_prob",
+    ):
+        value = getattr(args, key, None)
+        if value is not None:
+            overrides[key] = value
     cfg, sources = chronos_config_from_checkpoint(
         ckpt,
         overrides=overrides,
