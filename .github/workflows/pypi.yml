@@ -4,9 +4,10 @@ on:
   workflow_dispatch:
   release:
     types: [published]
-  push:
-    tags:
-      - "v*"
+
+concurrency:
+  group: pypi-${{ github.event.release.tag_name || github.ref_name }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -59,5 +60,61 @@ jobs:
           name: pypi-dist
           path: dist
 
+      - name: Check whether this version is already on PyPI
+        id: pypi_version
+        shell: bash
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import glob
+          import re
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+          import zipfile
+
+          wheels = glob.glob("dist/*.whl")
+          if not wheels:
+              raise SystemExit("No wheel artifact found in dist/")
+
+          with zipfile.ZipFile(wheels[0]) as zf:
+              metadata_name = next(
+                  name for name in zf.namelist()
+                  if name.endswith(".dist-info/METADATA")
+              )
+              metadata = zf.read(metadata_name).decode("utf-8", errors="replace")
+
+          project = version = ""
+          for line in metadata.splitlines():
+              if line.startswith("Name: "):
+                  project = line.split(":", 1)[1].strip()
+              elif line.startswith("Version: "):
+                  version = line.split(":", 1)[1].strip()
+
+          if not re.fullmatch(r"[A-Za-z0-9_.-]+", project or ""):
+              raise SystemExit(f"Invalid project name from wheel metadata: {project!r}")
+          if not version:
+              raise SystemExit("Missing version in wheel metadata")
+
+          url = f"https://pypi.org/pypi/{urllib.parse.quote(project)}/{urllib.parse.quote(version)}/json"
+          try:
+              with urllib.request.urlopen(url, timeout=20) as response:
+                  exists = response.status == 200
+          except urllib.error.HTTPError as exc:
+              if exc.code == 404:
+                  exists = False
+              else:
+                  raise
+
+          print(f"project={project}")
+          print(f"version={version}")
+          print(f"exists={str(exists).lower()}")
+          PY
+
       - name: Publish to PyPI
+        if: steps.pypi_version.outputs.exists != 'true'
         uses: pypa/gh-action-pypi-publish@release/v1
+
+      - name: Skip existing PyPI version
+        if: steps.pypi_version.outputs.exists == 'true'
+        run: |
+          echo "${{ steps.pypi_version.outputs.project }} ${{ steps.pypi_version.outputs.version }} already exists on PyPI; skipping publish."
