@@ -8,6 +8,12 @@ Commands:
     chronos diagnose  — checkpoint topology + offload/predictive-routing report
     chronos export    — export full checkpoints or expert SSD cluster layout
     chronos mac       — Apple Silicon backend diagnostics
+    chronos migrate   — explicitly migrate a v1 checkpoint to v2
+    chronos serve     — Ollama/OpenAI-compatible server (native runtime; optional /monitor page)
+    chronos tokenizer — train a Chronos tokenizer from selected datasets
+    chronos corpus    — download / clean / dedup / shard training corpora
+    chronos longrun   — time-budgeted resumable MLX training run (alias: run)
+    chronos monitor   — read-only training monitor page + JSON API
 """
 import sys
 import os
@@ -69,6 +75,25 @@ def cmd_mac(args):
     print(json.dumps(mac_backend_diagnostics(configure_threads=configure), indent=2, ensure_ascii=False))
 
 
+def cmd_migrate(args):
+    from chronos.migrate import main
+    main(args)
+
+
+def _module_main(module: str, rest):
+    import importlib
+    raise SystemExit(importlib.import_module(module).main(rest))
+
+
+def _cmd_corpus(rest):
+    """chronos corpus {download|build|shards} ..."""
+    if not rest or rest[0] not in {"download", "build", "shards"}:
+        raise SystemExit("usage: chronos corpus {download|build|shards} [options]")
+    module = {"download": "chronos.data.corpus.sources", "build": "chronos.data.corpus.presets",
+              "shards": "chronos.data.corpus.shards"}[rest[0]]
+    _module_main(module, rest[1:])
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog='chronos',
@@ -82,8 +107,16 @@ def main():
     sub.add_parser('diagnose',  help='Checkpoint/offload diagnostic',    add_help=False)
     sub.add_parser('export',    help='Export checkpoint or expert cluster layout', add_help=False)
     sub.add_parser('mac',       help='Apple Silicon backend diagnostics', add_help=False)
+    sub.add_parser('migrate',   help='Explicitly migrate a v1 checkpoint to v2', add_help=False)
+    sub.add_parser('serve',     help='Ollama/OpenAI-compatible server (native Chronos runtime)', add_help=False)
+    sub.add_parser('tokenizer', help='Train a Chronos tokenizer from selected datasets', add_help=False)
+    sub.add_parser('corpus',    help='Download/clean/dedup/shard training corpora', add_help=False)
+    sub.add_parser('longrun',   help='Time-budgeted resumable MLX training run', aliases=['run'], add_help=False)
+    sub.add_parser('monitor',   help='Read-only training monitor page + JSON API', add_help=False)
+    sub.add_parser('bundle',    help='Out-of-the-box model bundle: build/check/translate/finetune/serve', add_help=False)
 
     known, rest = parser.parse_known_args()
+    longrun = lambda rest: _module_main('chronos.mlx.training.longrun', rest)  # noqa: E731
     dispatch = {
         'train':     cmd_train,
         'eval':      cmd_eval,
@@ -91,6 +124,14 @@ def main():
         'diagnose':  cmd_diagnose,
         'export':    cmd_export,
         'mac':       cmd_mac,
+        'migrate':   cmd_migrate,
+        'serve':     lambda rest: _module_main('chronos.serving.ollama_server', rest),
+        'tokenizer': lambda rest: _module_main('chronos.tokenizer', rest),
+        'corpus':    _cmd_corpus,
+        'longrun':   longrun,
+        'run':       longrun,
+        'monitor':   lambda rest: _module_main('chronos.monitor.server', rest),
+        'bundle':    lambda rest: _module_main('chronos.bundle.cli', rest),
     }
     dispatch[known.command](rest)
 

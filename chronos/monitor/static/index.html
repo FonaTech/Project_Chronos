@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Chronos · Training monitor</title>
+<link rel="stylesheet" href="static/app.css">
+<script src="static/app.js" defer></script>
+</head>
+<body>
+<div class="viz-root" id="root">
+  <header class="bar">
+    <div class="brand">
+      <span class="eyebrow">Project Chronos</span>
+      <h1 id="title">Training monitor</h1>
+    </div>
+    <div class="bar-controls">
+      <label class="field"><span id="run-label">Run</span><select id="run"></select></label>
+      <span class="pill" id="state-pill" role="status" aria-live="polite"></span>
+      <span class="badge" id="auth-badge"></span>
+      <button type="button" id="logout" class="ghost" hidden></button>
+      <button type="button" id="lang" class="ghost" aria-label="Language"></button>
+      <button type="button" id="theme" class="ghost" aria-label="Theme"></button>
+    </div>
+  </header>
+
+  <main>
+    <div id="notices"></div>
+    <section class="progress card" id="progress" aria-label="Progress"></section>
+    <section class="tiles" id="tiles" aria-label="Key figures"></section>
+    <nav class="tabs" id="tabs" role="tablist"></nav>
+    <section id="panel" class="panel" role="tabpanel"></section>
+  </main>
+  <footer class="foot" id="foot"></footer>
+</div>
+
+<div class="login" id="login" hidden>
+  <form class="login-card card" id="login-form">
+    <h2 id="login-title">Sign in</h2>
+    <p class="muted" id="login-hint"></p>
+    <label class="field stack"><span id="key-label">API key</span>
+      <input type="password" id="key" autocomplete="current-password" required></label>
+    <p class="error-text" id="login-error" role="alert"></p>
+    <button type="submit" id="login-submit" class="primary">Sign in</button>
+  </form>
+</div>
+<div class="tooltip" id="tooltip" role="tooltip" hidden></div>
+</body>
+</html>

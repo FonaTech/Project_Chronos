@@ -2,6 +2,32 @@ import torch
 import torch.nn.functional as F
 
 
+def _lookahead_groups(lookahead_probs: torch.Tensor) -> torch.Tensor:
+    """Normalize legacy 4-D and v2 group-aware 5-D predictions."""
+    if lookahead_probs.dim() == 4:
+        return lookahead_probs.unsqueeze(3)
+    if lookahead_probs.dim() == 5:
+        return lookahead_probs
+    raise ValueError(
+        "lookahead_probs must be [B,S,K,E] or [B,S,K,G,E], got "
+        f"{tuple(lookahead_probs.shape)}"
+    )
+
+
+def _teacher_groups(teacher: torch.Tensor, groups: int) -> torch.Tensor:
+    """Map [B,S,E] or [B,S,L,E] teachers onto recurrent groups."""
+    if teacher.dim() == 3:
+        return teacher.unsqueeze(2).expand(-1, -1, groups, -1)
+    if teacher.dim() != 4:
+        raise ValueError(f"teacher router probs have invalid shape {tuple(teacher.shape)}")
+    if teacher.shape[2] == groups:
+        return teacher
+    # Deterministic nearest-layer mapping keeps gradients/metrics stable when
+    # physical layer count differs from recurrent group count.
+    indices = torch.linspace(0, teacher.shape[2] - 1, groups, device=teacher.device).round().long()
+    return teacher.index_select(2, indices)
+
+
 def temporal_locality_loss(expert_probs_seq: torch.Tensor) -> torch.Tensor:
     """
     Penalizes large routing distribution shifts between adjacent time steps.
@@ -68,6 +94,11 @@ def router_offload_metrics(
             union = (prev | cur).sum(dim=-1).float().clamp_min(1.0)
             out["router_adjacent_jaccard"] = float((inter / union).mean().item())
         if lookahead_probs is not None and lookahead_steps > 0 and S > 1:
+            # Operational dashboard metrics are layer-averaged; reduce the
+            # v2 group head only here while all training losses retain the
+            # full [B,S,K,G,E] supervision.
+            if lookahead_probs.dim() == 5:
+                lookahead_probs = lookahead_probs.mean(dim=3)
             K = min(int(lookahead_steps), int(lookahead_probs.shape[2]) - 1)
             recalls = []
             union_recalls = []
@@ -146,19 +177,20 @@ def lookahead_supervision_loss(
         return lookahead_probs.new_zeros(()) if lookahead_probs is not None else \
                teacher_router_probs.new_zeros(())
 
-    B, S, Kp1, E = lookahead_probs.shape
+    lookahead_probs = _lookahead_groups(lookahead_probs)
+    B, S, Kp1, G, E = lookahead_probs.shape
     K = min(lookahead_steps, Kp1 - 1)
     if K <= 0 or S <= 1:
         return lookahead_probs.new_zeros(())
 
-    teacher = teacher_router_probs  # caller is responsible for .detach()
+    teacher = _teacher_groups(teacher_router_probs, G)
     total = lookahead_probs.new_zeros(())
     valid_terms = 0
     for k in range(1, K + 1):
         if S - k <= 0:
             continue
-        teacher_k = teacher[:, k:, :]                  # [B, S-k, E]
-        pred_k = lookahead_probs[:, :-k, k, :]         # [B, S-k, E]
+        teacher_k = teacher[:, k:, :, :]
+        pred_k = lookahead_probs[:, :-k, k, :, :]
         # Soft-target CE: −Σ_e P · log Q
         log_pred = pred_k.clamp_min(1e-9).log()
         ce = -(teacher_k * log_pred).sum(dim=-1)        # [B, S-k]
@@ -188,20 +220,21 @@ def lookahead_topk_hit_loss(
         return lookahead_probs.new_zeros(()) if lookahead_probs is not None else \
                teacher_router_probs.new_zeros(())
 
-    B, S, Kp1, E = lookahead_probs.shape
+    lookahead_probs = _lookahead_groups(lookahead_probs)
+    B, S, Kp1, G, E = lookahead_probs.shape
     K = min(int(lookahead_steps), Kp1 - 1)
     top_k = max(1, min(int(num_experts_per_tok or 1), E))
     if K <= 0 or S <= 1:
         return lookahead_probs.new_zeros(())
 
-    teacher = teacher_router_probs.detach()
+    teacher = _teacher_groups(teacher_router_probs.detach(), G)
     total = lookahead_probs.new_zeros(())
     valid_terms = 0
     for k in range(1, K + 1):
         if S - k <= 0:
             continue
-        teacher_k = teacher[:, k:, :]
-        pred_k = lookahead_probs[:, :-k, k, :]
+        teacher_k = teacher[:, k:, :, :]
+        pred_k = lookahead_probs[:, :-k, k, :, :]
         target_ids = torch.topk(teacher_k, k=top_k, dim=-1).indices
         target_mask = F.one_hot(target_ids, num_classes=E).sum(dim=-2).to(pred_k.dtype)
         hit_mass = (pred_k * target_mask).sum(dim=-1).clamp_min(1e-9)
@@ -224,20 +257,21 @@ def lookahead_union_loss(
     if lookahead_probs is None or teacher_router_probs is None:
         return lookahead_probs.new_zeros(()) if lookahead_probs is not None else \
                teacher_router_probs.new_zeros(())
-    B, S, Kp1, E = lookahead_probs.shape
+    lookahead_probs = _lookahead_groups(lookahead_probs)
+    B, S, Kp1, G, E = lookahead_probs.shape
     K = min(int(lookahead_steps), Kp1 - 1)
     top_k = max(1, min(int(num_experts_per_tok or 1), E))
     if K <= 0 or S <= K:
         return lookahead_probs.new_zeros(())
-    teacher = teacher_router_probs.detach()
-    union_target = torch.zeros(B, S - K, E, dtype=lookahead_probs.dtype, device=lookahead_probs.device)
+    teacher = _teacher_groups(teacher_router_probs.detach(), G)
+    union_target = torch.zeros(B, S - K, G, E, dtype=lookahead_probs.dtype, device=lookahead_probs.device)
     for k in range(1, K + 1):
-        target_ids = torch.topk(teacher[:, k:k + S - K, :], k=top_k, dim=-1).indices
+        target_ids = torch.topk(teacher[:, k:k + S - K, :, :], k=top_k, dim=-1).indices
         union_target = torch.maximum(
             union_target,
             F.one_hot(target_ids, num_classes=E).sum(dim=-2).to(union_target.dtype),
         )
-    pred_union = lookahead_probs[:, :S - K, 1:K + 1, :].amax(dim=2)
+    pred_union = lookahead_probs[:, :S - K, 1:K + 1, :, :].amax(dim=2)
     hit_mass = (pred_union * union_target).sum(dim=-1).clamp_min(1e-9)
     target_count = union_target.sum(dim=-1).clamp_min(1.0)
     return (-torch.log(hit_mass / target_count)).mean()

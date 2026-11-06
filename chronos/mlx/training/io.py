@@ -10,16 +10,17 @@ from chronos.mlx.moe import ChronosMLXMOE
 
 
 def _torch_tensor(arr) -> torch.Tensor:
+    """Exact bridge: the tensor keeps its MLX dtype (BF16 via bit-view)."""
+    from chronos.precision import mx_to_torch
     if isinstance(arr, mx.array):
-        arr = arr.astype(mx.float32)
-        mx.eval(arr)
-    return torch.from_numpy(np.array(arr, dtype=np.float32)).contiguous()
+        return mx_to_torch(arr).contiguous()
+    return torch.from_numpy(np.array(arr)).contiguous()
 
 
 def mlx_state_to_torch(mlx_model, config) -> dict[str, torch.Tensor]:
     sd: dict[str, torch.Tensor] = {}
     sd["model.embed_tokens.weight"] = _torch_tensor(mlx_model.embed_tokens.weight)
-    sd["lm_head.weight"] = _torch_tensor(mlx_model.lm_head.weight)
+    sd["lm_head.weight"] = _torch_tensor(mlx_model.embed_tokens.weight if mlx_model.lm_head is None else mlx_model.lm_head.weight)
     sd["model.norm.weight"] = _torch_tensor(mlx_model.norm.weight)
 
     for i, blk in enumerate(mlx_model.layers):
@@ -55,6 +56,16 @@ def mlx_state_to_torch(mlx_model, config) -> dict[str, torch.Tensor]:
                         getattr(expert, proj).weight
                     )
 
+        else:
+            for proj in ("gate_proj", "up_proj", "down_proj"):
+                sd[f"{prefix}.mlp.{proj}.weight"] = _torch_tensor(getattr(moe, proj).weight)
+
+    controller = mlx_model.recurrent_controller
+    for key in ("loop_embeddings", "group_embeddings", "step_sizes"):
+        sd[f"model.recurrent_controller.{key}"] = _torch_tensor(getattr(controller, key))
+    sd["model.recurrent_controller.halting_norm.weight"] = _torch_tensor(controller.halting_norm.weight)
+    sd["model.recurrent_controller.halting_head.weight"] = _torch_tensor(controller.halting_head.weight)
+    sd["model.recurrent_controller.halting_head.bias"] = _torch_tensor(controller.halting_head.bias)
     proj_layers = mlx_model.lookahead_router.proj.layers
     sd["model.lookahead_router.proj.0.weight"] = _torch_tensor(proj_layers[0].weight)
     sd["model.lookahead_router.proj.2.weight"] = _torch_tensor(proj_layers[2].weight)

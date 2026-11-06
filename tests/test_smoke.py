@@ -644,7 +644,7 @@ def test_device_utils_mps_is_not_cpu_path():
     assert torch_device_type("mlx") == "mlx"
     assert torch_device_type("cuda:0") == "cuda"
     assert resolve_dtype_name("cpu", "auto") == "float32"
-    assert resolve_dtype_name("mps", "auto") == "bfloat16"
+    assert resolve_dtype_name("mps", "auto") == "float32"     # = chronos.precision.resolve_torch
     assert resolve_dtype_name("mlx", "auto") == "bfloat16"
     assert grad_scaler("mps", "float16").is_enabled() is False
     assert grad_scaler("cuda", "float16").is_enabled() in {True, False}
@@ -794,9 +794,13 @@ def test_cuda_inference_path_uses_cuda_device_map():
         def load_state_dict(self, _weights, strict=False):
             return None
 
-        def to(self, device):
+        def to(self, device=None, dtype=None):
+            # place_torch_model() moves device and compute dtype in one call.
             self.devices.append(device)
             return self
+
+        def modules(self):
+            return []
 
         def eval(self):
             self.eval_called = True
@@ -874,8 +878,11 @@ def test_torch_inference_loads_base_only_before_lazy_setup():
             captured["loaded_keys"] = sorted(weights.keys())
             captured["strict"] = strict
 
-        def to(self, _device):
+        def to(self, device=None, dtype=None):
             return self
+
+        def modules(self):
+            return []
 
         def eval(self):
             return self
@@ -941,6 +948,16 @@ def test_param_estimator():
     assert act < tot, "active must be smaller than total for MoE"
     # Sanity: embedding dominates; should be > vocab * hidden
     assert tot >= cfg.vocab_size * cfg.hidden_size
+
+
+def test_param_estimator_recurrent_active_is_unique_and_compute_is_separate():
+    from ui.estimator import ArchConfig, total_params, active_params, compute_params
+    cfg = ArchConfig(hidden_size=64, num_hidden_layers=4, recurrent_enabled=True,
+                     recurrent_groups=2, recurrent_depth=8, num_experts=4,
+                     num_experts_per_tok=1, num_shared_experts=1,
+                     num_attention_heads=4, num_key_value_heads=4, vocab_size=1000)
+    assert active_params(cfg) <= total_params(cfg)
+    assert compute_params(cfg) >= active_params(cfg)
 
 
 def test_metrics_bus():

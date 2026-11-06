@@ -3,11 +3,11 @@ import argparse
 import os
 
 import chronos.deps  # noqa
-from transformers import AutoTokenizer
 
 from chronos.backend import resolve_training_device
 from chronos.model.model_chronos import ChronosForCausalLM
 from chronos.trainer.distill_trainer import ChronosDistillTrainer, build_distill_loader
+from chronos.data.flexible_dataset import dataset_modality_summary
 from chronos.model.checkpoint import (
     chronos_config_from_checkpoint,
     load_checkpoint_state_dict,
@@ -16,6 +16,7 @@ from chronos.model.checkpoint import (
 from chronos.trainer.stage_utils import (
     add_topology_args,
     build_config_from_upstream,
+    load_stage_tokenizer,
     load_required_checkpoint,
 )
 
@@ -63,7 +64,10 @@ def main():
         max_positions=args.max_seq_len,
         lambda_router_anchor=args.lambda_router_anchor,
     )
-    tokenizer = AutoTokenizer.from_pretrained(chronos.deps.get_tokenizer_path())
+    modality_summary = dataset_modality_summary(args.data_path)
+    if cfg.auto_detect_modalities:
+        cfg.modalities = modality_summary["detected_modalities"]
+    tokenizer = load_stage_tokenizer(args, cfg, stu_ckp)
     loader = build_distill_loader(
         args.data_path,
         tokenizer,
@@ -71,6 +75,11 @@ def main():
         args.batch_size,
         device=selected_backend if selected_backend == "mlx" else args.device,
         num_workers=args.num_workers,
+        modalities=cfg.modalities,
+        image_size=cfg.image_size,
+        audio_sample_rate=cfg.audio_sample_rate,
+        max_audio_seconds=cfg.max_audio_seconds,
+        media_error_policy=cfg.media_error_policy,
     )
     if selected_backend == "mlx":
         from chronos.mlx.training import run_mlx_stage
@@ -117,7 +126,13 @@ def main():
 
     if cfg.lambda_router_anchor > 0:
         first = next(iter(loader))
-        trainer.set_calibration_batch(first[0])
+        if isinstance(first, dict):
+            trainer.set_calibration_batch(
+                first["input_ids"], modality_inputs=first.get("modality_inputs"),
+                modality_mask=first.get("modality_mask"),
+            )
+        else:
+            trainer.set_calibration_batch(first[0])
         print("[Distill] Router anchor reference captured.")
 
     iters = len(loader) if args.steps is None else min(args.steps, len(loader))

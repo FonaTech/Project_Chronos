@@ -1,24 +1,8 @@
-"""
-ui/estimator.py
-
-Parameter-count and memory-footprint estimator for the Architecture
-Designer tab. Pure-math functions; no torch dependency.
-
-The numbers match an actual ``ChronosForCausalLM`` state_dict to within
-~1% for standard configs — the mismatch comes from bias terms and RMSNorm
-scale vectors which are tiny relative to the weight matrices we count.
-
-IMPORTANT: MiniMindConfig auto-derives ``intermediate_size`` from
-``hidden_size`` as ``ceil(H·π/64)·64`` unless the user explicitly sets
-it, and ``moe_intermediate_size`` defaults to ``intermediate_size``.
-The estimator replicates that auto-derivation here so the UI preview
-matches what the trainer actually builds. Callers can still override
-either value by passing it into ``ArchConfig`` explicitly.
-"""
+"""Static parameter and memory budgets matching the Chronos physical graph."""
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from typing import Dict, Optional
 
 
@@ -47,6 +31,12 @@ class ArchConfig:
     # hidden_size via the MiniMind rule so the estimate matches the trainer.
     intermediate_size: Optional[int] = None
     moe_intermediate_size: Optional[int] = None
+    head_dim: Optional[int] = None
+    use_moe: bool = True
+    layer_aware_lookahead: bool = False
+    recurrent_latent_refinement: bool = True
+    max_inference_depth: Optional[int] = None
+    image_patch_size: int = 16
     num_experts: int = 4
     num_experts_per_tok: int = 1
     num_shared_experts: int = 1
@@ -58,132 +48,188 @@ class ArchConfig:
     use_hybrid_attention: bool = True
     tie_word_embeddings: bool = True
     dtype: str = "fp16"
+    recurrent_enabled: bool = True
+    # None → derived like the model (layers − prelude − coda); a fixed default
+    # here silently moved layers from the recurrent groups into the coda.
+    recurrent_groups: Optional[int] = None
+    architecture_version: int = 2
+    recurrent_attention_mode: Optional[str] = None
+    recurrent_depth: int = 1
+    prelude_layers: int = 0
+    coda_layers: int = 0
+    min_recurrent_depth: int = 1
+    training_paging: bool = False
+    optimizer_paging: bool = False
+    resident_experts: Optional[int] = None
+    modalities: tuple[str, ...] = ()
+    image_size: int = 224
+    max_image_tokens: int = 196
+    max_audio_tokens: int = 128
 
     def __post_init__(self):
-        auto = _minimind_intermediate(self.hidden_size)
-        if self.intermediate_size is None or self.intermediate_size <= 0:
-            self.intermediate_size = auto
-        if self.moe_intermediate_size is None or self.moe_intermediate_size <= 0:
-            self.moe_intermediate_size = auto
+        from chronos.config_schema import normalize_model_dimensions
+        resolved = normalize_model_dimensions(vars(self))
+        for key in vars(self).keys() & resolved.keys():
+            setattr(self, key, resolved[key])
+
+    @classmethod
+    def from_config(cls, source):
+        raw = dict(source) if isinstance(source, dict) else vars(source)
+        values = {f.name: raw[f.name] for f in fields(cls) if f.name in raw}
+        values["resident_experts"] = raw.get("offload_working_set_experts", raw.get("resident_experts"))
+        return cls(**values)
+
+    @property
+    def attention_mode(self) -> str:
+        from chronos.config_schema import resolve_recurrent_attention_mode
+        return resolve_recurrent_attention_mode(vars(self))
+
+    @property
+    def executed_depth(self):
+        return self.max_inference_depth if self.recurrent_enabled and self.recurrent_depth > 1 else 1
 
 
-def _attn_params(cfg: ArchConfig) -> int:
-    """Params per attention block (MLA/SW hybrid has similar Q/K/V/O sizes)."""
-    h = cfg.hidden_size
-    n_h = cfg.num_attention_heads
-    n_kv = cfg.num_key_value_heads
-    head_dim = h // n_h
-    q = h * (n_h * head_dim)
-    k = h * (n_kv * head_dim)
-    v = h * (n_kv * head_dim)
-    o = (n_h * head_dim) * h
-    if cfg.use_hybrid_attention:
-        # MLA adds latent KV projections; negligible vs full KV projections.
-        q += h * cfg.kv_latent_dim
-        k += cfg.kv_latent_dim * (n_kv * head_dim)
-        v += cfg.kv_latent_dim * (n_kv * head_dim)
-    return q + k + v + o
+def _attn_params(cfg: ArchConfig, layer: int = 0) -> int:
+    h, nh, nk, d = cfg.hidden_size, cfg.num_attention_heads, cfg.num_key_value_heads, cfg.head_dim
+    if cfg.use_hybrid_attention and layer % 2 == 0:
+        latent = cfg.kv_latent_dim
+        return 2*h*nh*d + h*latent + 2*latent*nk*d + d + latent
+    return 2*h*nh*d + 2*h*nk*d + 2*d
 
 
 def _expert_params(cfg: ArchConfig) -> int:
-    """Params per single expert FeedForward (SwiGLU: gate+up+down)."""
-    h = cfg.hidden_size
-    d = cfg.moe_intermediate_size
-    return 3 * h * d
+    return 3 * cfg.hidden_size * cfg.moe_intermediate_size
 
 
-def _per_layer_params(cfg: ArchConfig) -> int:
-    """Attention + routing + all experts + shared experts + 2×RMSNorm."""
-    attn = _attn_params(cfg)
-    router = cfg.hidden_size * cfg.num_experts
-    experts = cfg.num_experts * _expert_params(cfg)
-    shared = cfg.num_shared_experts * _expert_params(cfg)
-    rmsnorm = 2 * cfg.hidden_size  # 2 norms per block
-    return attn + router + experts + shared + rmsnorm
-
-
-def _active_expert_slots(cfg: ArchConfig) -> int:
-    """Experts whose weights are *used* on a given token: top-k + shared."""
-    return cfg.num_experts_per_tok + cfg.num_shared_experts
+def parameter_breakdown(cfg: ArchConfig) -> dict[str, int]:
+    """Unique allocated tensors, including norms/biases; tied weights counted once."""
+    h, layers = cfg.hidden_size, cfg.num_hidden_layers
+    image = 3*h*cfg.image_patch_size**2 + 2*h if "image" in cfg.modalities else 0
+    mid = max(32, h // 2)
+    audio = 400*mid + mid + 5*mid*h + h + 2*h if "audio" in cfg.modalities else 0
+    fusion = 4*h*h + 4*h + 2*h + 1 if cfg.modalities else 0
+    predictor_hidden = max(1, h // 4)
+    # The controller is instantiated even when recurrence is disabled.
+    controller = (cfg.recurrent_depth + cfg.recurrent_groups)*h + 2*h + 1 + cfg.recurrent_groups
+    return {
+        "embedding_and_readout": h*cfg.vocab_size*(1 if cfg.tie_word_embeddings else 2),
+        "attention": sum(_attn_params(cfg, i) for i in range(layers)),
+        "block_and_final_norms": (2*layers + 1)*h,
+        "routers": layers*h*cfg.num_experts if cfg.use_moe else 0,
+        "routed_experts": layers*cfg.num_experts*_expert_params(cfg) if cfg.use_moe else 0,
+        "shared_experts": layers*cfg.num_shared_experts*_expert_params(cfg) if cfg.use_moe else 0,
+        "dense_ffn": layers*3*h*cfg.intermediate_size if not cfg.use_moe else 0,
+        "lookahead": h*predictor_hidden + predictor_hidden*cfg.num_experts*(cfg.lookahead_steps+1)*(
+            cfg.recurrent_groups if cfg.layer_aware_lookahead else 1),
+        "recurrent_controller": controller,
+        "image_encoder": image, "audio_encoder": audio, "modality_fusion": fusion,
+    }
 
 
 def total_params(cfg: ArchConfig) -> int:
-    """Full model parameter count."""
-    embed = cfg.vocab_size * cfg.hidden_size
-    layers = cfg.num_hidden_layers * _per_layer_params(cfg)
-    lookahead = (
-        cfg.hidden_size * (cfg.hidden_size // 4)
-        + (cfg.hidden_size // 4) * cfg.num_experts * (cfg.lookahead_steps + 1)
-    )
-    lm_head = 0 if cfg.tie_word_embeddings else embed
-    return int(embed + layers + lookahead + lm_head + cfg.hidden_size)  # + final norm
+    return sum(parameter_breakdown(cfg).values())
+
+
+def active_param_bounds(cfg: ArchConfig) -> tuple[int, int]:
+    """Route-dependent unique weight budget, assuming all configured media present.
+
+    Embedding/readout tables use the usual full-table parameter convention.
+    Repeated passes can select DIFFERENT experts: report the union bounds,
+    rather than claiming top-k physical experts always cover a recurrent token.
+    """
+    parts = parameter_breakdown(cfg)
+    base = sum(parts.values()) - parts["routed_experts"]
+    if not (cfg.recurrent_enabled and cfg.recurrent_depth > 1):
+        base -= parts["recurrent_controller"]
+    if not cfg.use_moe:
+        return base, base
+    k, e = cfg.num_experts_per_tok, cfg.num_experts
+    low = base + cfg.num_hidden_layers*k*_expert_params(cfg)
+    extra = cfg.recurrent_groups*(min(e, k*cfg.executed_depth)-k)*_expert_params(cfg)
+    return low, low + extra
 
 
 def active_params(cfg: ArchConfig) -> int:
-    """Params touched by one token: embed + L·(attn + norm + (topK+shared)·expert)."""
-    embed = cfg.vocab_size * cfg.hidden_size
-    per_layer_active = (
-        _attn_params(cfg)
-        + 2 * cfg.hidden_size
-        + cfg.hidden_size * cfg.num_experts  # router always active
-        + _active_expert_slots(cfg) * _expert_params(cfg)
-    )
-    lm_head_active = 0 if cfg.tie_word_embeddings else embed
-    return int(embed + cfg.num_hidden_layers * per_layer_active + lm_head_active)
+    """Lower bound when recurrent passes reuse the same top-k experts."""
+    return active_param_bounds(cfg)[0]
 
 
-def kv_cache_bytes(cfg: ArchConfig, seq_len: int = 1024) -> int:
-    """Approximate KV-cache bytes for a given sequence length."""
+def compute_params(cfg: ArchConfig) -> int:
+    """Weight-use count, including repeats; NOT FLOPs or unique storage."""
+    work = active_params(cfg)
+    repeats = cfg.executed_depth - 1
     h = cfg.hidden_size
-    n_h = cfg.num_attention_heads
-    n_kv = cfg.num_key_value_heads
-    head_dim = h // n_h
-    bytes_per = DTYPE_BYTES.get(cfg.dtype, 2)
-    if cfg.use_hybrid_attention:
-        # Half the layers use MLA (compressed), half use sliding window.
-        # MLA cache ≈ kv_latent_dim per position; SW cache capped at window.
-        mla_layers = cfg.num_hidden_layers // 2
-        sw_layers = cfg.num_hidden_layers - mla_layers
-        mla_bytes = mla_layers * seq_len * cfg.kv_latent_dim * bytes_per
-        sw_bytes = sw_layers * min(seq_len, cfg.sliding_window_size) * 2 * n_kv * head_dim * bytes_per
-        return int(mla_bytes + sw_bytes)
-    return int(cfg.num_hidden_layers * seq_len * 2 * n_kv * head_dim * bytes_per)
+    ffn = ((cfg.num_experts_per_tok + cfg.num_shared_experts)*_expert_params(cfg) + h*cfg.num_experts
+           if cfg.use_moe else 3*h*cfg.intermediate_size)
+    mode = cfg.attention_mode
+    for layer in range(cfg.prelude_layers, cfg.prelude_layers + cfg.recurrent_groups):
+        if mode == "first_only":
+            attn = 0                                   # latent-only middle iterations
+        elif mode == "shared_first":                   # fresh Q and output projection, iteration-0 K/V
+            attn = 2*h*cfg.num_attention_heads*cfg.head_dim + h
+        else:                                          # per_iteration recomputes the whole block
+            attn = _attn_params(cfg, layer) + h
+        work += repeats*(ffn + h + attn)
+    return work
+
+
+def kv_cache_bytes(cfg: ArchConfig, seq_len: int = 1024, batch_size: int = 1) -> int:
+    """Persistent cache only; MLA stores c_kv, sliding layers store K and V."""
+    size = 0
+    for layer in range(cfg.num_hidden_layers):
+        if cfg.use_hybrid_attention and layer % 2 == 0:
+            size += seq_len*cfg.kv_latent_dim
+        else:
+            length = min(seq_len, cfg.sliding_window_size) if cfg.use_hybrid_attention else seq_len
+            size += length*2*cfg.num_key_value_heads*cfg.head_dim
+    return int(size*batch_size*DTYPE_BYTES.get(cfg.dtype, 4))
 
 
 def memory_footprint(cfg: ArchConfig, seq_len: int = 1024) -> Dict[str, float]:
-    """Return a dict of byte sizes for display in the UI."""
-    bytes_per = DTYPE_BYTES.get(cfg.dtype, 2)
-    total_b = total_params(cfg) * bytes_per
-    active_b = active_params(cfg) * bytes_per
-    kv_b = kv_cache_bytes(cfg, seq_len=seq_len)
-    cold_b = total_b - active_b
+    """Static budgets, excluding activations, allocator pools and IO staging peaks.
+
+    Inference and Adam training are separate scenarios. On unified memory the
+    same physical allocation must not be added again as both VRAM and RAM.
+    """
+    byte_width = DTYPE_BYTES.get(cfg.dtype, 4)  # auto: conservative FP32 scenario
+    parts = parameter_breakdown(cfg)
+    total = sum(parts.values())
+    base = total - parts["routed_experts"]
+    resident = cfg.resident_experts
+    if resident is None:
+        resident = max(cfg.num_experts_per_tok, cfg.num_experts // 2)
+    resident = max(0, min(cfg.num_experts, int(resident)))
+    resident_params = cfg.num_hidden_layers*resident*_expert_params(cfg) if cfg.use_moe else 0
+    resident_weights = (base + resident_params)*byte_width
+    cold = (parts["routed_experts"] - resident_params)*byte_width
+    kv = kv_cache_bytes(cfg, seq_len)
     return {
-        "total_bytes": total_b,
-        "active_bytes": active_b,
-        "cold_bytes": cold_b,          # candidates for SSD offload
-        "kv_cache_bytes": kv_b,
-        "vram_estimate_bytes": active_b + kv_b,
-        "ssd_estimate_bytes": cold_b,
+        "total_bytes": total*byte_width, "active_bytes": active_params(cfg)*byte_width,
+        "active_params": active_params(cfg), "compute_params": compute_params(cfg),
+        "base_weight_bytes": base*byte_width, "resident_expert_bytes": resident_params*byte_width,
+        "resident_weight_bytes": resident_weights, "resident_experts_per_layer": resident,
+        "cold_bytes": cold, "kv_cache_bytes": kv,
+        "vram_estimate_bytes": resident_weights + kv,
+        "ram_estimate_bytes": resident_params*byte_width,  # example one warm working set
+        "ssd_estimate_bytes": parts["routed_experts"]*byte_width,
+        "optimizer_bytes": total*8, "gradient_bytes": total*byte_width,
+        "training_state_bytes": total*(2*byte_width + 8),
+        "mlx_master_weight_bytes": total*4 if byte_width < 4 else 0,
+        "mlx_accumulated_gradient_bytes": total*4,
+        "mlx_training_state_bytes": total*(byte_width + 4 + 8 + (4 if byte_width < 4 else 0)),
+        "paged_optimizer_bytes": parts["routed_experts"]*8 if cfg.optimizer_paging else 0,
+        "modality_encoder_bytes": (parts["image_encoder"] + parts["audio_encoder"] + parts["modality_fusion"])*byte_width,
     }
 
 
 def estimated_decode_tps(cfg: ArchConfig, hit_rate: float = 0.85,
                          ssd_gbps: float = 3.0, vram_gbps: float = 600.0) -> float:
-    """Order-of-magnitude decode throughput estimator.
-
-    Model: tps ≈ 1 / (t_compute + t_miss).
-      t_compute ≈ active_params · flop_per_param / compute_gflops  (simplified
-                  to a linear-in-active-params term with 1e-10 coefficient
-                  so the output lives in a sensible range for toy models).
-      t_miss    ≈ (1 − hit_rate) · expert_bytes_per_layer · num_layers / ssd_gbps.
-    Conservative; intended as a UI hint, not a benchmark.
-    """
-    bytes_per = DTYPE_BYTES.get(cfg.dtype, 2)
-    active_b = active_params(cfg) * bytes_per
-    t_compute = max(active_b / (vram_gbps * 1e9), 1e-6)
-    expert_b = _expert_params(cfg) * bytes_per
-    t_miss = (1.0 - hit_rate) * expert_b * cfg.num_hidden_layers / (ssd_gbps * 1e9)
-    return 1.0 / (t_compute + t_miss)
+    """Illustrative bandwidth-only model, not a hardware benchmark."""
+    byte_width = DTYPE_BYTES.get(cfg.dtype, 4)
+    compute = compute_params(cfg)*byte_width / max(vram_gbps*1e9, 1)
+    misses = ((1-hit_rate)*_expert_params(cfg)*byte_width*cfg.num_hidden_layers*cfg.num_experts_per_tok
+              / max(ssd_gbps*1e9, 1)) if cfg.use_moe else 0
+    return 1 / max(compute + misses, 1e-6)
 
 
 def fmt_bytes(n: int) -> str:

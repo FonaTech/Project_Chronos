@@ -161,21 +161,23 @@ def build_autotune_tab(config_state: gr.State, config_inputs: list):
                 best = _tuner.result.best_params
             return _tuner.status, _read_log(), best
 
-        def apply_best(best):
+        def apply_best(best, previous):
             """Write best_params back into the Config tab's slider widgets.
             Returns a list of gr.update for every config_input — untouched
             inputs get gr.update() (no-op). None values are dropped so
             Gradio's numeric widgets don't reject them."""
             updates = [gr.update() for _ in config_inputs]
+            cfg = dict(previous or {})
             if not best:
-                return updates
+                return [cfg] + updates
             for k, v in best.items():
                 if v is None:
                     continue
                 idx = PARAM_TO_CONFIG_IDX.get(k)
                 if idx is not None:
                     updates[idx] = gr.update(value=v)
-            return updates
+                    cfg[k] = v
+            return [cfg] + updates
 
         start_btn.click(
             fn=start_tune,
@@ -187,7 +189,7 @@ def build_autotune_tab(config_state: gr.State, config_inputs: list):
         )
         stop_btn.click(fn=stop_tune, outputs=[status_box])
         clear_btn.click(fn=clear_log_file, outputs=[log_box])
-        apply_btn.click(fn=apply_best, inputs=[best_box], outputs=config_inputs)
+        apply_btn.click(fn=apply_best, inputs=[best_box, config_state], outputs=[config_state] + config_inputs)
 
         timer = gr.Timer(value=2.0)
         timer.tick(fn=poll_tune, outputs=[status_box, log_box, best_box])

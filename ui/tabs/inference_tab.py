@@ -1,8 +1,9 @@
 """
 ui/tabs/inference_tab.py — Real-time generation with tokens/s display
 """
-import time
 import math
+import os
+import time
 
 from ui.gradio_compat import gr
 import pandas as pd
@@ -42,10 +43,18 @@ INFERENCE_CHART_METRICS = (
     ("cache_hit_rate", "Cache hit rate", "ratio"),
     ("resident_hit_rate", "Resident hit rate", "ratio"),
     ("prediction_hit_rate", "Prediction hit rate", "ratio"),
+    ("prediction_topk_recall", "Prediction top-k recall", "ratio"),
+    ("resident_vram_hit_rate", "Resident VRAM hit", "ratio"),
+    ("ram_promotion_hit_rate", "RAM promotion hit", "ratio"),
+    ("ssd_cold_miss_rate", "SSD cold miss", "ratio"),
     ("cold_miss_predict_hit_rate", "Cold miss predict hit", "ratio"),
     ("fallback_weight_rate", "Fallback weight", "ratio"),
     ("on_demand_loads", "On-demand loads", "count"),
     ("on_demand_load_time_s", "On-demand load time", "s"),
+    ("average_ponder_steps", "Average recurrent depth", "steps"),
+    ("early_exit_ratio", "Recurrent early exit", "ratio"),
+    ("recurrent_contraction", "Recurrent contraction", "ratio"),
+    ("cluster_recall", "Cluster recall", "ratio"),
 )
 INFERENCE_SWEEP_CHART_METRICS = (
     ("tokens_per_sec", "Decode speed", "tokens/s"),
@@ -248,6 +257,15 @@ def _apply_offload_expert_budget(engine, model_cfg, ram_load_ratio: float | str 
     store = getattr(cache_manager, "expert_store", None)
     if store is None:
         return budget
+    # The hard budget (max_resident_experts / ram_budget_mb) always wins
+    # over the ratio-derived working set.
+    hard_vram = getattr(store, "max_resident_pages", None)
+    hard_ram = getattr(store, "ram_budget_pages", None)
+    if hard_vram is not None:
+        vram_cap = max(1, min(vram_cap, int(hard_vram)))
+    if hard_ram is not None:
+        ram_cap = max(1, min(ram_cap, int(hard_ram)))
+    budget["effective_vram_expert_budget"], budget["effective_ram_expert_budget"] = vram_cap, ram_cap
     store.vram_capacity = vram_cap
     store.ram_capacity = ram_cap
     store.vram_lru.capacity = vram_cap
@@ -263,8 +281,8 @@ def _replace_torch_experts_with_placeholders(model, model_cfg) -> None:
     constructor's random experts alive until model.to(mps/cuda) defeats the
     SSD+DRAM lazy-load design by moving full dummy experts onto the device.
     """
-    import torch
     from chronos.model.moe_chronos import ChronosMOEFeedForward, LazyExpertPlaceholder
+    from chronos.precision import torch_model_dtype
 
     layers = getattr(getattr(model, "model", None), "layers", [])
     hidden = int(getattr(model_cfg, "hidden_size", 0) or 0)
@@ -276,7 +294,9 @@ def _replace_torch_experts_with_placeholders(model, model_cfg) -> None:
         if not isinstance(moe, ChronosMOEFeedForward):
             continue
         for idx in range(len(moe.experts)):
-            moe.experts[idx] = LazyExpertPlaceholder(hidden, intermediate, torch.float16)
+            # Placeholder dtype follows the trunk; place_torch_model() updates
+            # it again when the model is moved to its compute dtype.
+            moe.experts[idx] = LazyExpertPlaceholder(hidden, intermediate, torch_model_dtype(model))
 
 
 def _replace_mlx_experts_with_placeholders(model) -> None:
@@ -297,14 +317,22 @@ def _replace_mlx_experts_with_placeholders(model) -> None:
         pass
 
 
+def _store_torch_dtype(store):
+    """Torch dtype of the MLX store's pages (= the MLX trunk compute dtype)."""
+    import torch
+    name = str(getattr(store, "page_dtype", "float32")).rsplit(".", 1)[-1]
+    return getattr(torch, name)
+
+
 def _populate_mlx_cache_from_state_dict(store, state_dict: dict) -> None:
     import os
     import json
     import torch
-    from safetensors.numpy import save_file as np_save_file
+    from safetensors.torch import save_file as np_save_file  # BF16-capable
     from chronos.io.storage import ClusterManifest, KEY_SEP, MANIFEST_FILENAME
 
     os.makedirs(store.ssd_dir, exist_ok=True)
+    page_dtype = _store_torch_dtype(store)
     manifest_clusters = {}
     expert_to_cluster = {}
     for eid in range(int(store.num_experts)):
@@ -315,7 +343,7 @@ def _populate_mlx_cache_from_state_dict(store, state_dict: dict) -> None:
                 key = prefix + pname
                 if key in state_dict:
                     tensors[f"l{li}_e{eid}{KEY_SEP}{pname}"] = (
-                        state_dict[key].detach().to(dtype=torch.float16, device="cpu").numpy()
+                        state_dict[key].detach().to(dtype=page_dtype, device="cpu").contiguous()
                     )
         if tensors:
             file_name = f"cluster_{eid}.ctsr"
@@ -342,10 +370,11 @@ def _populate_mlx_cache_from_reader(store, reader) -> None:
     import os
     import json
     import torch
-    from safetensors.numpy import save_file as np_save_file
+    from safetensors.torch import save_file as np_save_file  # BF16-capable
     from chronos.io.storage import ClusterManifest, KEY_SEP, MANIFEST_FILENAME
 
     os.makedirs(store.ssd_dir, exist_ok=True)
+    page_dtype = _store_torch_dtype(store)
     keys = set(reader.keys())
     manifest_clusters = {}
     expert_to_cluster = {}
@@ -357,7 +386,7 @@ def _populate_mlx_cache_from_reader(store, reader) -> None:
                 key = prefix + pname
                 if key in keys:
                     tensors[f"l{li}_e{eid}{KEY_SEP}{pname}"] = (
-                        reader.get_tensor(key).detach().to(dtype=torch.float16, device="cpu").numpy()
+                        reader.get_tensor(key).detach().to(dtype=page_dtype, device="cpu").contiguous()
                     )
         if tensors:
             file_name = f"cluster_{eid}.ctsr"
@@ -511,7 +540,8 @@ def _run_torch_inference(backend: str, model_cfg, model_path_val: str, token_ids
                          ram_load_ratio: float | str | None = 1.0,
                          miss_policy: str = "on_demand",
                          cpu_threads: int | str | None = "auto",
-                         cpu_budget_percent: int | float | str | None = 100) -> tuple[list[int], dict]:
+                         cpu_budget_percent: int | float | str | None = 100,
+                         speculative: dict | None = None) -> tuple[list[int], dict]:
     import os
     import importlib
     import gc
@@ -552,7 +582,9 @@ def _run_torch_inference(backend: str, model_cfg, model_path_val: str, token_ids
     base_load_mem = _memory_snapshot_gb()
 
     device_map = {"cuda": "cuda", "xpu": "xpu", "mps": "mps", "cpu": "cpu"}[backend]
-    model = model.to(device_map).eval()
+    from chronos.precision import place_torch_model
+    model, precision = place_torch_model(model, device_map)
+    model = model.eval()
     device_mem = _memory_snapshot_gb()
     input_ids = torch.tensor([token_ids]).to(device_map)
     attn = torch.tensor([attention_mask]).to(device_map)
@@ -604,15 +636,28 @@ def _run_torch_inference(backend: str, model_cfg, model_path_val: str, token_ids
             setup_stats[f"{prefix}_setup_delta_gb"] = _memory_delta(backend_mem_setup, backend_mem0, key)
 
     try:
-        out = engine.generate(
-            input_ids,
-            attention_mask=attn,
-            max_new_tokens=int(max_tok),
-            temperature=float(temp),
-            eos_token_id=eos_token_id,
-            do_sample=do_sample,
-            miss_policy=miss_policy,
-        )
+        if speculative:
+            out = engine.generate_speculative(
+                input_ids,
+                max_new_tokens=int(max_tok),
+                temperature=float(temp),
+                top_p=0.85,
+                top_k=50,
+                do_sample=do_sample,
+                eos_token_id=eos_token_id,
+                miss_policy=miss_policy,
+                **speculative,
+            )
+        else:
+            out = engine.generate(
+                input_ids,
+                attention_mask=attn,
+                max_new_tokens=int(max_tok),
+                temperature=float(temp),
+                eos_token_id=eos_token_id,
+                do_sample=do_sample,
+                miss_policy=miss_policy,
+            )
         stats = dict(getattr(engine, "last_stats", {}))
     finally:
         engine.teardown()
@@ -655,7 +700,8 @@ def _run_torch_full_dram(backend: str, model_cfg, model_path_val: str, token_ids
                          attention_mask: list[int], max_tok: int, temp: float,
                          eos_token_id: int | None, do_sample: bool = True,
                          cpu_threads: int | str | None = "auto",
-                         cpu_budget_percent: int | float | str | None = 100) -> tuple[list[int], dict]:
+                         cpu_budget_percent: int | float | str | None = 100,
+                         speculative: dict | None = None) -> tuple[list[int], dict]:
     import os
     import time as _time
     import gc
@@ -684,7 +730,9 @@ def _run_torch_full_dram(backend: str, model_cfg, model_path_val: str, token_ids
         del weights
         gc.collect()
     weight_load_mem = _memory_snapshot_gb()
-    model = model.to(device_map).eval()
+    from chronos.precision import place_torch_model
+    model, precision = place_torch_model(model, device_map)
+    model = model.eval()
     setup_mem1 = _memory_snapshot_gb()
     backend_mem_setup = _backend_memory_snapshot(backend)
     input_ids = torch.tensor([token_ids], device=device_map)
@@ -700,16 +748,46 @@ def _run_torch_full_dram(backend: str, model_cfg, model_path_val: str, token_ids
     prefill_mem1 = prefill_mem0
     backend_mem_prefill1 = backend_mem_prefill0
     prefill_done_t = prefill_t0
+    spec_stats = None
+    if speculative:
+        from chronos.runtime.speculative import speculative_generate, speculative_supported
+        full_depth = int(getattr(model_cfg, "max_inference_depth", None) or model_cfg.recurrent_depth)
+        use_spec = speculative_supported(model_cfg) and int(speculative["draft_depth"]) < full_depth
+        first = {}
+
+        def _fwd(ids, cache, depth):
+            out = model(ids, past_key_values=cache, use_cache=True, recurrent_depth=depth)
+            if "t" not in first:
+                first["t"] = _time.monotonic()
+            return out
+        gen_out, spec = speculative_generate(
+            model, input_ids, max_new_tokens=int(max_tok),
+            draft_depth=int(speculative["draft_depth"]) if use_spec else full_depth,
+            gamma=int(speculative["gamma"]), gamma_max=int(speculative.get("gamma_max", 8)),
+            adaptive_gamma=bool(speculative.get("adaptive_gamma", True)), do_sample=do_sample,
+            temperature=max(float(temp), 1e-6), top_k=50, top_p=0.85, eos_token_id=eos_token_id,
+            forward_fn=_fwd)
+        input_ids = gen_out
+        tokens_generated = int(gen_out.shape[1] - prompt_len)
+        prefill_done_t = first.get("t", prefill_t0)
+        prefill_time_s = prefill_done_t - prefill_t0
+        prefill_mem1 = _memory_snapshot_gb()
+        backend_mem_prefill1 = _backend_memory_snapshot(backend)
+        spec_stats = spec.as_dict() | {"enabled": use_spec, "full_depth": full_depth,
+                                       "draft_depth": int(speculative["draft_depth"]) if use_spec else full_depth,
+                                       "gamma_final": spec.gamma_history[-1] if spec.gamma_history else int(speculative["gamma"])}
 
     with torch.inference_mode():
-        for step in range(int(max_tok)):
-            past_len = past_key_values[0][0].shape[1] if past_key_values else 0
-            outputs, _ = model(
+        for step in range(0 if speculative else int(max_tok)):
+            from chronos.model.model_chronos import cache_sequence_length
+            past_len = cache_sequence_length(past_key_values) if past_key_values else 0
+            result = model(
                 input_ids[:, past_len:],
                 attention_mask=attn,
                 past_key_values=past_key_values,
                 use_cache=True,
             )
+            outputs = result
             if attn is not None:
                 attn = torch.cat([attn, attn.new_ones(attn.shape[0], 1)], -1)
             next_token = _next_token_from_logits(
@@ -777,6 +855,8 @@ def _run_torch_full_dram(backend: str, model_cfg, model_path_val: str, token_ids
         "cache_misses": 0,
         **cpu_thread_stats,
     }
+    if spec_stats is not None:
+        stats["speculative"] = spec_stats
     for snapshot, suffix in [
         (backend_mem0, "before_setup"),
         (backend_mem_setup, "after_setup"),
@@ -792,7 +872,9 @@ def _run_torch_full_dram(backend: str, model_cfg, model_path_val: str, token_ids
 
 
 def _run_mlx_full_dram(model_cfg, model_path_val: str, token_ids: list[int],
-                       max_tok: int, temp: float, do_sample: bool = True) -> tuple[list[int], dict]:
+                       max_tok: int, temp: float, do_sample: bool = True,
+                       eos_token_id: int | None = None,
+                       speculative: dict | None = None) -> tuple[list[int], dict]:
     import os
     import time as _time
     import gc
@@ -822,7 +904,9 @@ def _run_mlx_full_dram(model_cfg, model_path_val: str, token_ids: list[int],
         weights = {}
         gc.collect()
     weight_load_mem = _memory_snapshot_gb()
-    mlx_model = ChronosMLXModel.from_chronos_pytorch(pt_model, model_cfg)
+    from chronos.precision import resolve_mlx
+    precision = resolve_mlx("auto")
+    mlx_model = ChronosMLXModel.from_chronos_pytorch(pt_model.eval(), model_cfg, dtype=precision.compute)
     del pt_model
     gc.collect()
     setup_mem1 = _memory_snapshot_gb()
@@ -837,6 +921,9 @@ def _run_mlx_full_dram(model_cfg, model_path_val: str, token_ids: list[int],
             max_new_tokens=int(max_tok),
             temperature=float(temp) if do_sample else 0.0,
             top_p=0.85,
+            eos_token_id=eos_token_id,
+            speculative=bool(speculative),
+            **(speculative or {}),
         ))
         run_elapsed = _time.monotonic() - run_t0
         end_mem = _memory_snapshot_gb()
@@ -887,7 +974,9 @@ def _run_mlx_full_dram(model_cfg, model_path_val: str, token_ids: list[int],
 def _run_mlx_lazy_inference(model_cfg, model_path_val: str, token_ids: list[int],
                             max_tok: int, temp: float, do_sample: bool = True,
                             ram_load_ratio: float | str | None = 1.0,
-                            quality_safe: bool = True) -> tuple[list[int], dict]:
+                            quality_safe: bool = True,
+                            eos_token_id: int | None = None,
+                            speculative: dict | None = None) -> tuple[list[int], dict]:
     import os
     import gc
     import torch
@@ -925,7 +1014,10 @@ def _run_mlx_lazy_inference(model_cfg, model_path_val: str, token_ids: list[int]
         )
     _replace_torch_experts_with_placeholders(pt_model, model_cfg)
     model_init_mem = _memory_snapshot_gb()
-    mlx_model = ChronosMLXModel.from_chronos_pytorch(pt_model, model_cfg, include_experts=False)
+    from chronos.precision import resolve_mlx
+    precision = resolve_mlx("auto")
+    mlx_model = ChronosMLXModel.from_chronos_pytorch(pt_model.eval(), model_cfg, include_experts=False,
+                                                     dtype=precision.compute)
     _replace_mlx_experts_with_placeholders(mlx_model)
     del pt_model
     gc.collect()
@@ -956,6 +1048,9 @@ def _run_mlx_lazy_inference(model_cfg, model_path_val: str, token_ids: list[int]
             max_new_tokens=int(max_tok),
             temperature=float(temp) if do_sample else 0.0,
             top_p=0.85,
+            eos_token_id=eos_token_id,
+            speculative=bool(speculative),
+            **(speculative or {}),
         ))
         stats = dict(getattr(engine, "last_stats", {}))
         store_stats = engine.store.stats()
@@ -1089,6 +1184,43 @@ def _normalize_miss_policy(value) -> str:
     return policy if policy in MISS_POLICY_CHOICES else "on_demand"
 
 
+def _speculative_options(enabled, draft_depth=1, gamma=4) -> dict | None:
+    """UI controls → options for recurrent-depth self-speculative decoding.
+
+    ``None`` means plain decoding.  Speculative decoding needs no extra
+    weights; greedy output is token-for-token identical to plain greedy and
+    sampled output keeps the full-depth distribution (rejection sampling).
+    """
+    if not bool(enabled):
+        return None
+    try:
+        depth = max(1, int(float(draft_depth)))
+    except (TypeError, ValueError):
+        depth = 1
+    try:
+        g = max(1, min(8, int(float(gamma))))
+    except (TypeError, ValueError):
+        g = 4
+    return {"draft_depth": depth, "gamma": g, "gamma_max": 8, "adaptive_gamma": True}
+
+
+def _speculative_row_fields(stats: dict) -> dict:
+    spec = (stats or {}).get("speculative") or {}
+    if not spec:
+        return {}
+    enabled = spec.get("enabled", int(spec.get("draft_calls", 0) or 0) > 0)
+    return {
+        "speculative": bool(enabled),
+        "spec_draft_depth": spec.get("draft_depth"),
+        "spec_full_depth": spec.get("full_depth"),
+        "spec_acceptance_rate": spec.get("acceptance_rate"),
+        "spec_tokens_per_verify": spec.get("tokens_per_verify"),
+        "spec_verify_calls": spec.get("verify_calls"),
+        "spec_draft_calls": spec.get("draft_calls"),
+        "spec_gamma_final": spec.get("gamma_final"),
+    }
+
+
 def _format_inference_stats(rows: list[dict], diff: dict | None = None) -> str:
     if not rows:
         return "_No inference stats yet._"
@@ -1128,6 +1260,14 @@ def _format_inference_stats(rows: list[dict], diff: dict | None = None) -> str:
         ("CPU threads", lambda r: fmt_int(r, "cpu_threads")),
         ("Tokens", lambda r: fmt_int(r, "tokens")),
         ("Tokens/s", lambda r: fmt_num(r, "tokens_per_sec", precision=2)),
+        ("Self-speculative", lambda r: fmt_bool(r, "speculative")),
+        ("Draft / full depth", lambda r: (f"{r.get('spec_draft_depth')} / {r.get('spec_full_depth')}"
+                                          if r.get("spec_draft_depth") is not None else "")),
+        ("Draft acceptance", lambda r: fmt_pct(r, "spec_acceptance_rate") if r.get("spec_acceptance_rate") is not None else ""),
+        ("Tokens per verify", lambda r: fmt_num(r, "spec_tokens_per_verify", precision=2)
+         if r.get("spec_tokens_per_verify") is not None else ""),
+        ("Verify / draft forwards", lambda r: (f"{r.get('spec_verify_calls')} / {r.get('spec_draft_calls')}"
+                                               if r.get("spec_verify_calls") is not None else "")),
         ("Response time", lambda r: fmt_num(r, "response_time_s", "s")),
         ("Prefill time", lambda r: fmt_num(r, "prefill_time_s", "s")),
         ("Decode time", lambda r: fmt_num(r, "decode_time_s", "s")),
@@ -1146,6 +1286,13 @@ def _format_inference_stats(rows: list[dict], diff: dict | None = None) -> str:
         ("MLX decode", lambda r: fmt_num(r, "mlx_active_after_decode_gb", " GB")),
         ("Resident hit", lambda r: fmt_pct(r, "resident_hit_rate", "cache_hit_rate")),
         ("Predict hit", lambda r: fmt_pct(r, "prediction_hit_rate")),
+        ("Prediction top-k recall", lambda r: fmt_pct(r, "prediction_topk_recall")),
+        ("VRAM hit", lambda r: fmt_pct(r, "resident_vram_hit_rate")),
+        ("RAM promotion hit", lambda r: fmt_pct(r, "ram_promotion_hit_rate")),
+        ("SSD cold miss", lambda r: fmt_pct(r, "ssd_cold_miss_rate")),
+        ("Average recurrent depth", lambda r: fmt_num(r, "average_ponder_steps", precision=2)),
+        ("Early exit", lambda r: fmt_pct(r, "early_exit_ratio")),
+        ("Cluster recall", lambda r: fmt_pct(r, "cluster_recall")),
         ("Cold miss predict hit", lambda r: fmt_pct(r, "cold_miss_predict_hit_rate")),
         ("Fallback weight", lambda r: fmt_pct(r, "fallback_weight_rate")),
         ("On-demand loads", lambda r: fmt_int(r, "on_demand_loads")),
@@ -1261,6 +1408,14 @@ def _row_from_stats(mode: str, backend: str, tokens: list[int], elapsed: float,
         "cache_hit_rate": stats.get("cache_hit_rate", 1.0 if mode == "full_dram" else 0),
         "resident_hit_rate": stats.get("resident_hit_rate", stats.get("cache_hit_rate", 1.0 if mode == "full_dram" else 0)),
         "prediction_hit_rate": stats.get("prediction_hit_rate", 0.0),
+        "prediction_topk_recall": stats.get("prediction_topk_recall", 0.0),
+        "resident_vram_hit_rate": stats.get("resident_vram_hit_rate", 0.0),
+        "ram_promotion_hit_rate": stats.get("ram_promotion_hit_rate", 0.0),
+        "ssd_cold_miss_rate": stats.get("ssd_cold_miss_rate", 0.0),
+        "average_ponder_steps": stats.get("average_ponder_steps", 1.0),
+        "early_exit_ratio": stats.get("early_exit_ratio", 0.0),
+        "recurrent_contraction": stats.get("recurrent_contraction", 0.0),
+        "cluster_recall": stats.get("cluster_recall", 0.0),
         "prediction_hits": stats.get("prediction_hits", 0),
         "prediction_total": stats.get("prediction_total", 0),
         "cold_miss_predict_hit_rate": stats.get("cold_miss_predict_hit_rate", 0.0),
@@ -1367,54 +1522,11 @@ def _build_model_cfg(cfg, model_path_val):
         source_text = "; ".join(cfg_sources) if cfg_sources else model_path_val
         sniff_note = f"[checkpoint config: {summary} | source={source_text}]\n"
 
-    model_cfg_kwargs = {
-        "hidden_size":          sniffed.get("hidden_size",        cfg.get("hidden_size", 768)),
-        "num_hidden_layers":    sniffed.get("num_hidden_layers",  cfg.get("num_hidden_layers", 8)),
-        "num_experts":          sniffed.get("num_experts",        cfg.get("num_experts", 4)),
-        "num_experts_per_tok":  sniffed.get("num_experts_per_tok", cfg.get("num_experts_per_tok", 1)),
-        "num_shared_experts":   sniffed.get("num_shared_experts", cfg.get("num_shared_experts", 1)),
-        "lookahead_steps":      sniffed.get("lookahead_steps", cfg.get("lookahead_steps", 2)),
-        "kv_latent_dim":        sniffed.get("kv_latent_dim", cfg.get("kv_latent_dim", 64)),
-        "sliding_window_size":  sniffed.get("sliding_window_size", cfg.get("sliding_window_size", 2048)),
-        "use_hybrid_attention": sniffed.get("use_hybrid_attention", cfg.get("use_hybrid_attention", True)),
-        "vram_budget_gb":       sniffed.get("vram_budget_gb", cfg.get("vram_budget_gb", 4.0)),
-        "pinned_memory_max_fraction": sniffed.get("pinned_memory_max_fraction", cfg.get("pinned_memory_max_fraction", 0.25)),
-        "storage_format":       sniffed.get("storage_format", cfg.get("storage_format", "safetensors")),
-        "offload_miss_policy_default": sniffed.get("offload_miss_policy_default", cfg.get("offload_miss_policy_default", "on_demand")),
-        "recommended_resident_experts": sniffed.get("recommended_resident_experts", cfg.get("recommended_resident_experts", None)),
-        "use_moe": True,
-    }
-    if "cluster_manifest_path" in sniffed:
-        model_cfg_kwargs["cluster_manifest_path"] = sniffed["cluster_manifest_path"]
-    if "rope_dim" in sniffed:
-        model_cfg_kwargs["rope_dim"] = sniffed["rope_dim"]
-    if "num_attention_heads" in sniffed:
-        model_cfg_kwargs["num_attention_heads"] = sniffed["num_attention_heads"]
-    if "num_key_value_heads" in sniffed:
-        model_cfg_kwargs["num_key_value_heads"] = sniffed["num_key_value_heads"]
-    if "vocab_size" in sniffed:
-        model_cfg_kwargs["vocab_size"] = sniffed["vocab_size"]
-    if "moe_intermediate_size" in sniffed:
-        model_cfg_kwargs["intermediate_size"] = sniffed["moe_intermediate_size"]
-        model_cfg_kwargs["moe_intermediate_size"] = sniffed["moe_intermediate_size"]
-
-    for opt_key, cfg_key in [
-        ("num_attention_heads",   "num_attention_heads"),
-        ("num_key_value_heads",   "num_key_value_heads"),
-        ("rope_dim",              "rope_dim"),
-        ("max_position_embeddings", "max_seq_len"),
-        ("tie_word_embeddings",   "tie_word_embeddings"),
-    ]:
-        if opt_key in {"num_attention_heads", "num_key_value_heads", "rope_dim"} \
-                and opt_key in model_cfg_kwargs:
-            continue
-        if cfg_key not in cfg:
-            continue
-        val = cfg[cfg_key]
-        if val in (None, "", 0):
-            continue
-        model_cfg_kwargs[opt_key] = val
-
+    from chronos.config_schema import model_config_kwargs
+    # Checkpoint metadata defines the trained graph. UI values fill missing
+    # fields for legacy checkpoints, including all new recurrent/media fields.
+    model_cfg_kwargs = model_config_kwargs({**cfg, **sniffed})
+    model_cfg_kwargs.setdefault("hidden_size", 768)
     if "num_attention_heads_total_dim" in sniffed:
         h = model_cfg_kwargs["hidden_size"]
         n_heads = model_cfg_kwargs.get("num_attention_heads", cfg.get("num_attention_heads", 8))
@@ -1430,10 +1542,24 @@ def _build_model_cfg(cfg, model_path_val):
     return ChronosConfig(**model_cfg_kwargs), sniffed, sniff_note
 
 
+def _inference_tokenizer_dir(cfg, model_path_val: str) -> str:
+    """The tokenizer that belongs to the checkpoint, not a fixed default.
+
+    Order: config ``tokenizer_path``; the checkpoint's bundled ``tokenizer/``
+    or the path in its sidecar; the minimind tokenizer only as the last resort
+    (older checkpoints that never recorded one).
+    """
+    from chronos.model.checkpoint import resolve_checkpoint_tokenizer
+    explicit = str((cfg or {}).get("tokenizer_path") or "").strip() or None
+    path = model_path_val if model_path_val and os.path.exists(model_path_val) else None
+    return resolve_checkpoint_tokenizer(path, explicit, fallback=True)
+
+
 def _run_inference_modes(cfg, selected_backend, selected_mode, model_path_val,
                          prompt_val, max_tok, temp, raw_prompt_val,
                          ram_load_ratio=1.0, sweep_ram_load_ratios=False,
-                         miss_policy="on_demand") -> dict:
+                         miss_policy="on_demand", speculative=False, draft_depth=1,
+                         gamma=4) -> dict:
     from transformers import AutoTokenizer
     from chronos.backend.mac_diagnostics import mac_backend_diagnostics
 
@@ -1445,7 +1571,8 @@ def _run_inference_modes(cfg, selected_backend, selected_mode, model_path_val,
     backend, backend_note = _resolve_inference_backend(selected_backend, model_path_val, sniffed)
     cpu_threads_cfg = (cfg or {}).get("cpu_threads", "auto")
     cpu_budget_cfg = (cfg or {}).get("cpu_budget_percent", 100)
-    tokenizer = AutoTokenizer.from_pretrained(chronos.deps.get_tokenizer_path())
+    tokenizer = AutoTokenizer.from_pretrained(_inference_tokenizer_dir(cfg, model_path_val))
+    spec_opts = _speculative_options(speculative, draft_depth, gamma)
     token_ids, attn_mask = _encode_prompt(tokenizer, prompt_val, bool(raw_prompt_val))
 
     mode = _normalize_inference_mode(selected_mode)
@@ -1467,6 +1594,7 @@ def _run_inference_modes(cfg, selected_backend, selected_mode, model_path_val,
             **_bounded_offload_expert_budget(model_cfg, ram_load_ratio),
         },
         "rows": rows,
+        "speculative": spec_opts or {"enabled": False},
     }
 
     ratio_values = [_normalize_ram_load_ratio(ram_load_ratio)]
@@ -1490,6 +1618,8 @@ def _run_inference_modes(cfg, selected_backend, selected_mode, model_path_val,
                     do_sample=(mode != "compare"),
                     ram_load_ratio=ratio,
                     quality_safe=(mode == "compare" and not bool(sweep_ram_load_ratios)),
+                    eos_token_id=tokenizer.eos_token_id,
+                    speculative=spec_opts,
                 )
             else:
                 lazy_tokens, lazy_stats = _run_torch_inference(
@@ -1506,6 +1636,7 @@ def _run_inference_modes(cfg, selected_backend, selected_mode, model_path_val,
                     miss_policy=miss_policy,
                     cpu_threads=cpu_threads_cfg,
                     cpu_budget_percent=cpu_budget_cfg,
+                    speculative=spec_opts,
                 )
             lazy_elapsed = time.monotonic() - t0
             lazy_mem = _memory_snapshot_gb()
@@ -1515,6 +1646,7 @@ def _run_inference_modes(cfg, selected_backend, selected_mode, model_path_val,
                 "lazy_offload", backend, lazy_tokens, lazy_elapsed,
                 lazy_mem - mem0, lazy_stats,
             )
+            row.update(_speculative_row_fields(lazy_stats))
             _attach_decode_diagnostics(row, lazy_diag)
             if len(ratio_values) > 1:
                 row["mode"] = f"lazy_offload_{ratio:g}x"
@@ -1539,6 +1671,8 @@ def _run_inference_modes(cfg, selected_backend, selected_mode, model_path_val,
                 int(max_tok),
                 float(temp),
                 do_sample=(mode != "compare"),
+                eos_token_id=tokenizer.eos_token_id,
+                speculative=spec_opts,
             )
         else:
             full_tokens, full_stats = _run_torch_full_dram(
@@ -1553,6 +1687,7 @@ def _run_inference_modes(cfg, selected_backend, selected_mode, model_path_val,
                 do_sample=(mode != "compare"),
                 cpu_threads=cpu_threads_cfg,
                 cpu_budget_percent=cpu_budget_cfg,
+                speculative=spec_opts,
             )
         full_elapsed = time.monotonic() - t1
         full_mem = _memory_snapshot_gb()
@@ -1562,6 +1697,7 @@ def _run_inference_modes(cfg, selected_backend, selected_mode, model_path_val,
             "full_dram", backend, full_tokens, full_elapsed,
             full_mem - mem1, full_stats,
         )
+        row.update(_speculative_row_fields(full_stats))
         _attach_decode_diagnostics(row, full_diag)
         rows.append(row)
         outputs["full_dram"] = full_text
@@ -1595,12 +1731,12 @@ def _run_inference_modes(cfg, selected_backend, selected_mode, model_path_val,
 def generate_api(cfg, selected_backend="auto", selected_mode="compare", model_path_val="",
                  prompt_val="", max_tok=128, temp=0.85, raw_prompt_val=False,
                  ram_load_ratio=1.0, sweep_ram_load_ratios=False,
-                 miss_policy="on_demand") -> dict:
+                 miss_policy="on_demand", speculative=False, draft_depth=1, gamma=4) -> dict:
     try:
         return _run_inference_modes(
             cfg, selected_backend, selected_mode, model_path_val, prompt_val,
             max_tok, temp, raw_prompt_val, ram_load_ratio, sweep_ram_load_ratios,
-            miss_policy,
+            miss_policy, speculative, draft_depth, gamma,
         )
     except Exception as e:
         import traceback
@@ -1662,6 +1798,15 @@ def build_inference_tab(config_state: gr.State):
             register_translatable(miss_policy, "infer.miss_policy")
             register_translatable(ram_load_ratio, "infer.ram_load_ratio")
             register_translatable(sweep_ratios, "infer.sweep_ram_load_ratios")
+        with gr.Row():
+            speculative = gr.Checkbox(value=False, label=t("infer.speculative"))
+            draft_depth = gr.Slider(1, 8, value=1, step=1, label=t("infer.draft_depth"))
+            spec_gamma = gr.Slider(1, 8, value=4, step=1, label=t("infer.spec_gamma"))
+            register_translatable(speculative, "infer.speculative")
+            register_translatable(draft_depth, "infer.draft_depth")
+            register_translatable(spec_gamma, "infer.spec_gamma")
+        spec_note = gr.Markdown(t("infer.spec_note"))
+        register_translatable(spec_note, "infer.spec_note")
 
         gen_btn = gr.Button(t("infer.generate"), variant="primary")
         register_translatable(gen_btn, "infer.generate")
@@ -1810,98 +1955,11 @@ def build_inference_tab(config_state: gr.State):
             except Exception:
                 return {}
 
-        def _build_model_cfg(cfg, model_path_val):
-            from chronos.model.config import ChronosConfig
-            from chronos.model.checkpoint import config_dict_for_checkpoint, sniff_checkpoint_config
-            from chronos.export import config_dict_from_export, is_export_artifact
-
-            cfg = cfg or {}
-            cfg_sources = []
-            try:
-                if model_path_val and is_export_artifact(model_path_val):
-                    ckpt_cfg = config_dict_from_export(model_path_val)
-                    cfg_sources = [model_path_val]
-                else:
-                    ckpt_cfg, cfg_sources = config_dict_for_checkpoint(
-                        model_path_val if model_path_val else None,
-                        require_unsniffable=False,
-                    )
-            except Exception:
-                ckpt_cfg, cfg_sources = {}, []
-            sniffed = ckpt_cfg or (sniff_checkpoint_config(model_path_val) if model_path_val else {})
-            sniff_note = ""
-            if sniffed:
-                summary = ", ".join(
-                    f"{k}={v}" for k, v in sniffed.items()
-                    if k in ("vocab_size", "hidden_size", "num_hidden_layers",
-                             "num_experts", "moe_intermediate_size")
-                )
-                source_text = "; ".join(cfg_sources) if cfg_sources else model_path_val
-                sniff_note = f"[checkpoint config: {summary} | source={source_text}]\n"
-
-            model_cfg_kwargs = {
-                "hidden_size":          sniffed.get("hidden_size",        cfg.get("hidden_size", 768)),
-                "num_hidden_layers":    sniffed.get("num_hidden_layers",  cfg.get("num_hidden_layers", 8)),
-                "num_experts":          sniffed.get("num_experts",        cfg.get("num_experts", 4)),
-                "num_experts_per_tok":  sniffed.get("num_experts_per_tok", cfg.get("num_experts_per_tok", 1)),
-                "num_shared_experts":   sniffed.get("num_shared_experts", cfg.get("num_shared_experts", 1)),
-                "lookahead_steps":      sniffed.get("lookahead_steps", cfg.get("lookahead_steps", 2)),
-                "kv_latent_dim":        sniffed.get("kv_latent_dim", cfg.get("kv_latent_dim", 64)),
-                "sliding_window_size":  sniffed.get("sliding_window_size", cfg.get("sliding_window_size", 2048)),
-                "use_hybrid_attention": sniffed.get("use_hybrid_attention", cfg.get("use_hybrid_attention", True)),
-                "vram_budget_gb":       sniffed.get("vram_budget_gb", cfg.get("vram_budget_gb", 4.0)),
-                "pinned_memory_max_fraction": sniffed.get("pinned_memory_max_fraction", cfg.get("pinned_memory_max_fraction", 0.25)),
-                "storage_format":       sniffed.get("storage_format", cfg.get("storage_format", "safetensors")),
-                "use_moe": True,
-            }
-            if "cluster_manifest_path" in sniffed:
-                model_cfg_kwargs["cluster_manifest_path"] = sniffed["cluster_manifest_path"]
-            if "rope_dim" in sniffed:
-                model_cfg_kwargs["rope_dim"] = sniffed["rope_dim"]
-            if "num_attention_heads" in sniffed:
-                model_cfg_kwargs["num_attention_heads"] = sniffed["num_attention_heads"]
-            if "num_key_value_heads" in sniffed:
-                model_cfg_kwargs["num_key_value_heads"] = sniffed["num_key_value_heads"]
-            if "vocab_size" in sniffed:
-                model_cfg_kwargs["vocab_size"] = sniffed["vocab_size"]
-            if "moe_intermediate_size" in sniffed:
-                model_cfg_kwargs["intermediate_size"] = sniffed["moe_intermediate_size"]
-                model_cfg_kwargs["moe_intermediate_size"] = sniffed["moe_intermediate_size"]
-
-            for opt_key, cfg_key in [
-                ("num_attention_heads",   "num_attention_heads"),
-                ("num_key_value_heads",   "num_key_value_heads"),
-                ("rope_dim",              "rope_dim"),
-                ("max_position_embeddings", "max_seq_len"),
-                ("tie_word_embeddings",   "tie_word_embeddings"),
-            ]:
-                if opt_key in {"num_attention_heads", "num_key_value_heads", "rope_dim"} \
-                        and opt_key in model_cfg_kwargs:
-                    continue
-                if cfg_key not in cfg:
-                    continue
-                val = cfg[cfg_key]
-                if val in (None, "", 0):
-                    continue
-                model_cfg_kwargs[opt_key] = val
-
-            if "num_attention_heads_total_dim" in sniffed:
-                h = model_cfg_kwargs["hidden_size"]
-                n_heads = model_cfg_kwargs.get("num_attention_heads", cfg.get("num_attention_heads", 8))
-                head_dim = h // n_heads
-                if head_dim > 0:
-                    correct_n_heads = sniffed["num_attention_heads_total_dim"] // head_dim
-                    correct_n_kv    = sniffed["num_kv_heads_total_dim"]       // head_dim
-                    if correct_n_heads > 0:
-                        model_cfg_kwargs["num_attention_heads"] = correct_n_heads
-                    if correct_n_kv > 0:
-                        model_cfg_kwargs["num_key_value_heads"] = correct_n_kv
-
-            return ChronosConfig(**model_cfg_kwargs), sniffed, sniff_note
 
         def generate_unified(cfg, selected_backend, selected_mode, model_path_val,
                              prompt_val, max_tok, temp, raw_prompt_val,
-                             miss_policy_val, ram_load_ratio_val, sweep_ratios_val):
+                             miss_policy_val, ram_load_ratio_val, sweep_ratios_val,
+                             speculative_val=False, draft_depth_val=1, gamma_val=4):
             raw = generate_api(
                 cfg,
                 selected_backend=selected_backend,
@@ -1914,6 +1972,9 @@ def build_inference_tab(config_state: gr.State):
                 ram_load_ratio=ram_load_ratio_val,
                 sweep_ram_load_ratios=sweep_ratios_val,
                 miss_policy=miss_policy_val,
+                speculative=speculative_val,
+                draft_depth=draft_depth_val,
+                gamma=gamma_val,
             )
             if raw.get("error"):
                 text = f"Error: {raw.get('error')}"
@@ -1957,10 +2018,10 @@ def build_inference_tab(config_state: gr.State):
             inputs=[
                 config_state, inference_backend, inference_mode, model_path, prompt,
                 max_tokens, temperature, raw_prompt, miss_policy, ram_load_ratio, sweep_ratios,
+                speculative, draft_depth, spec_gamma,
             ],
             outputs=[output_box, lazy_output_box, full_output_box, stats_md, stats_chart, raw_stats],
             api_name=None,
-            api_visibility="private",
         )
 
         api_btn = gr.Button("api_generate", visible=False)
@@ -1970,6 +2031,7 @@ def build_inference_tab(config_state: gr.State):
             inputs=[
                 config_state, inference_backend, inference_mode, model_path, prompt,
                 max_tokens, temperature, raw_prompt, ram_load_ratio, sweep_ratios, miss_policy,
+                speculative, draft_depth, spec_gamma,
             ],
             outputs=[api_out],
             api_name="generate",

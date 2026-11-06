@@ -32,6 +32,8 @@ EXPORT_FORMATS = (
     "q8_0-safetensors",
     "fp16-gguf",
     "q8_0-gguf",
+    "chronos-native-gguf",
+    "ollama-compatible-gguf",
 )
 
 
@@ -99,6 +101,8 @@ def resolve_export_artifact(path: str) -> str:
             "model.q8_0.safetensors",
             "model.fp16.gguf",
             "model.q8_0.gguf",
+            "model.chronos-native.gguf",
+            "model.ollama-compatible.gguf",
         ):
             candidate = os.path.join(path, name)
             if os.path.exists(candidate):
@@ -320,6 +324,8 @@ def _normalize_formats(formats: Iterable[str] | str | None) -> list[str]:
         fmt = fmt.lower().replace("fp16_safetensors", "fp16-safetensors")
         fmt = fmt.replace("q8_0_safetensors", "q8_0-safetensors")
         fmt = fmt.replace("fp16_gguf", "fp16-gguf").replace("q8_0_gguf", "q8_0-gguf")
+        fmt = fmt.replace("chronos_native_gguf", "chronos-native-gguf")
+        fmt = fmt.replace("ollama_compatible_gguf", "ollama-compatible-gguf")
         if fmt == "all":
             for known in EXPORT_FORMATS:
                 if known not in out:
@@ -428,6 +434,9 @@ def _cluster_manifest_summary(expert_cache_dir: str | None) -> dict | None:
         "storage_format": data.get("storage_format", "safetensors"),
         "num_experts": data.get("num_experts"),
         "num_layers": data.get("num_layers"),
+        "version": int(data.get("version", 1)),
+        "layer_aware": bool(data.get("layer_aware", False)),
+        "layer_to_group": data.get("layer_to_group", {}),
     }
 
 
@@ -509,6 +518,7 @@ def _export_metadata(
         "config_sources": list(sources),
         "architecture": "chronos",
         "chronos": {
+            "architecture_version": cfg.get("architecture_version", 1),
             "hidden_size": cfg.get("hidden_size"),
             "num_hidden_layers": cfg.get("num_hidden_layers"),
             "num_experts": cfg.get("num_experts"),
@@ -526,6 +536,21 @@ def _export_metadata(
             "lambda_lookahead_topk": cfg.get("lambda_lookahead_topk"),
             "offload_miss_policy_default": cfg.get("offload_miss_policy_default", "on_demand"),
             "recommended_resident_experts": cfg.get("recommended_resident_experts"),
+            "recurrent_enabled": cfg.get("recurrent_enabled", False),
+            "recurrent_groups": cfg.get("recurrent_groups"),
+            "recurrent_depth": cfg.get("recurrent_depth", 1),
+            "min_recurrent_depth": cfg.get("min_recurrent_depth", 1),
+            "max_inference_depth": cfg.get("max_inference_depth"),
+            "recurrent_latent_refinement": cfg.get("recurrent_latent_refinement", True),
+            "recurrent_strategy": cfg.get("recurrent_strategy", "scheduled"),
+            "recurrent_depth_jitter": cfg.get("recurrent_depth_jitter", 0.0),
+            "recurrent_parallel_refine": cfg.get("recurrent_parallel_refine", False),
+            "adaptive_halting": cfg.get("adaptive_halting", False),
+            "halting_threshold": cfg.get("halting_threshold", 0.99),
+            "layer_aware_cache": cfg.get("layer_aware_cache", False),
+            "layer_aware_lookahead": cfg.get("layer_aware_lookahead", False),
+            "modalities": cfg.get("modalities", []),
+            "modality_adapters": cfg.get("modality_adapters", {}),
         },
         "export_contract": "predictive_lazy_routed_experts_or_shared_fallback + shared_residual",
         "offload_features": {
@@ -538,6 +563,16 @@ def _export_metadata(
             "cluster_aware_safetensors": bool(_cluster_manifest_summary(expert_cache_dir)),
         },
     }
+    if fmt == "ollama-compatible-gguf":
+        payload["compatibility_notice"] = {
+            "status": "manifest-only",
+            "stock_runtime_executable": False,
+            "reason": (
+                "Chronos MLA/sliding attention and layer-aware MoE tensors are "
+                "not yet materialized into standard llama.cpp tensor names."
+            ),
+            "required_backend": "chronos-aware runtime",
+        }
     if cluster_build:
         payload["cluster_build"] = cluster_build
     payload.update(_sidecar_config_for_export(checkpoint_path, config))
@@ -677,7 +712,12 @@ def export_gguf(
 ) -> ExportResult:
     os.makedirs(output_dir, exist_ok=True)
     quantized = fmt == "q8_0-gguf"
-    filename = "model.q8_0.gguf" if quantized else "model.fp16.gguf"
+    if fmt == "chronos-native-gguf":
+        filename = "model.chronos-native.gguf"
+    elif fmt == "ollama-compatible-gguf":
+        filename = "model.ollama-compatible.gguf"
+    else:
+        filename = "model.q8_0.gguf" if quantized else "model.fp16.gguf"
     path = os.path.join(output_dir, filename)
 
     cfg = config_to_dict(config)
@@ -691,12 +731,22 @@ def export_gguf(
             cluster_build=cluster_build,
         )["chronos_export"]
     )
+    compatibility_mode = "expanded" if fmt == "ollama-compatible-gguf" else "native"
     kvs = [
         _gguf_kv_string("general.architecture", "chronos"),
         _gguf_kv_string("general.name", "Project Chronos"),
         _gguf_kv_string("chronos.export.format", fmt),
         _gguf_kv_string("chronos.export.metadata_json", json.dumps(metadata_payload, sort_keys=True)),
     ]
+    kvs.extend([
+        _gguf_kv_string("chronos.compatibility_mode", compatibility_mode),
+        _gguf_kv_string(
+            "chronos.runtime_features",
+            "disabled" if compatibility_mode == "expanded" else "recurrent,moe,paging,lookahead",
+        ),
+        _gguf_kv_string("chronos.stock_runtime_executable", "false"),
+        _gguf_kv_string("chronos.modalities", json.dumps(cfg.get("modalities", []))),
+    ])
     for key in (
         "hidden_size",
         "num_hidden_layers",
@@ -713,6 +763,11 @@ def export_gguf(
         "sliding_window_size",
         "vocab_size",
         "recommended_resident_experts",
+        "architecture_version",
+        "recurrent_depth",
+        "recurrent_groups",
+        "min_recurrent_depth",
+        "max_inference_depth",
     ):
         value = cfg.get(key)
         if isinstance(value, int):
@@ -792,11 +847,12 @@ def _write_deployment_notes(output_dir: str, results: Sequence[ExportResult]) ->
     notes = [
         "# Project Chronos GGUF deployment",
         "",
-        "These files are standard GGUF containers with `general.architecture=chronos`.",
-        "They are intended for Chronos-aware runtimes. Stock Ollama/llama.cpp builds",
-        "that do not implement the Chronos architecture cannot execute the model",
-        "correctly because Chronos uses hybrid MLA/sliding-window attention,",
-        "lookahead expert prediction, and lazy MoE expert loading.",
+        "Chronos-native files are GGUF containers with `general.architecture=chronos`",
+        "and require a Chronos-aware runtime. Any `ollama-compatible` artifact in",
+        "this export is currently a compatibility manifest only and explicitly has",
+        "`chronos.stock_runtime_executable=false`; stock Ollama/llama.cpp cannot run",
+        "it until MLA/sliding attention, recurrent blocks, MoE and tensor names have",
+        "been materialized into a supported standard architecture.",
         "",
         "For an Ollama build with Chronos architecture support, use a Modelfile like:",
         "",
@@ -812,6 +868,18 @@ def _write_deployment_notes(output_dir: str, results: Sequence[ExportResult]) ->
         stem = name.replace("model.", "").replace(".gguf", "")
         with open(os.path.join(output_dir, f"Modelfile.{stem}"), "w", encoding="utf-8") as f:
             f.write(f"FROM ./{name}\nPARAMETER temperature 0.7\n")
+    native = next((n for n in gguf_files if "chronos-native" in n), None)
+    compat = next((n for n in gguf_files if "ollama-compatible" in n), None)
+    if native:
+        with open(os.path.join(output_dir, "Modelfile.chronos-native"), "w", encoding="utf-8") as f:
+            f.write(f"FROM ./{native}\nPARAMETER temperature 0.7\n")
+    if compat:
+        with open(os.path.join(output_dir, "Modelfile.ollama-compatible"), "w", encoding="utf-8") as f:
+            f.write(
+                "# Compatibility manifest only: stock Ollama execution is not yet supported.\n"
+                f"# Use a Chronos-aware backend for {compat}.\n"
+                f"FROM ./{compat}\nPARAMETER temperature 0.7\n"
+            )
 
 
 def export_checkpoint(
@@ -921,7 +989,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         "--formats",
         nargs="+",
         default=["fp16-safetensors"],
-        help="Any of: fp16-safetensors q8_0-safetensors fp16-gguf q8_0-gguf all",
+        help="Any of: fp16-safetensors q8_0-safetensors fp16-gguf q8_0-gguf chronos-native-gguf ollama-compatible-gguf all",
     )
     parser.add_argument("--config_path", default=None)
     parser.add_argument("--expert_cache_dir", default=None)

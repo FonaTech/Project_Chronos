@@ -27,6 +27,9 @@ from __future__ import annotations
 import json
 import os
 import threading
+import warnings
+import wave
+import urllib.request
 
 import torch
 from torch.utils.data import Dataset
@@ -44,6 +47,123 @@ _PAIR_KEYS = (
     ("question", "answer"),
     ("query", "answer"),
 )
+
+_IMAGE_KEYS = ("image", "images", "image_path", "image_paths", "image_url", "image_urls")
+_AUDIO_KEYS = ("audio", "audios", "audio_path", "audio_paths", "audio_url", "audio_urls", "wav")
+
+
+class ModalityRegistry:
+    """Single registry used by datasets, trainers and serving adapters."""
+
+    fields = {"image": _IMAGE_KEYS, "audio": _AUDIO_KEYS}
+
+    def detect(self, record: dict) -> set[str]:
+        return detect_modalities(record)
+
+    def summary(self, data_path: str, max_records: int = 10000) -> dict:
+        return dataset_modality_summary(data_path, max_records=max_records)
+
+
+class RecordDetector:
+    """Compatibility façade for callers that need schema-only detection."""
+
+    def __call__(self, record: dict) -> set[str]:
+        return detect_modalities(record)
+
+    detect = __call__
+
+
+def detect_modalities(record: dict) -> set[str]:
+    """Detect media modalities without opening files or allocating tensors."""
+    found = set()
+    # Accept the canonical v2 normalized record as input as well as the raw
+    # heterogeneous JSONL forms.  This makes dataset summaries, collators and
+    # serving adapters true round-trip consumers of the same schema.
+    nested = record.get("modalities")
+    if isinstance(nested, dict):
+        if nested.get("image") not in (None, "", [], {}):
+            found.add("image")
+        if nested.get("audio") not in (None, "", [], {}):
+            found.add("audio")
+        if nested.get("image_embeds") is not None:
+            found.add("image")
+        if nested.get("audio_embeds") is not None:
+            found.add("audio")
+    if any(record.get(key) not in (None, "", [], {}) for key in _IMAGE_KEYS):
+        found.add("image")
+    if any(record.get(key) not in (None, "", [], {}) for key in _AUDIO_KEYS):
+        found.add("audio")
+    if any(key in record for key in ("image_embeds", "image_features")):
+        found.add("image")
+    if any(key in record for key in ("audio_embeds", "audio_features")):
+        found.add("audio")
+    return found
+
+
+def normalize_multimodal_record(record: dict) -> dict:
+    """Normalize heterogeneous media fields to the canonical v2 schema."""
+    out = {
+        "messages": record.get("messages") or record.get("conversations") or [],
+        "modalities": {"image": [], "audio": []},
+        "labels": record.get("labels", {}),
+        "metadata": {k: v for k, v in record.items() if k not in _IMAGE_KEYS + _AUDIO_KEYS},
+    }
+    nested = record.get("modalities") if isinstance(record.get("modalities"), dict) else {}
+    for key in _IMAGE_KEYS:
+        value = record.get(key)
+        if value not in (None, "", [], {}):
+            out["modalities"]["image"] = list(value) if isinstance(value, (list, tuple)) else [value]
+            break
+    if not out["modalities"]["image"] and nested.get("image") not in (None, "", [], {}):
+        value = nested["image"]
+        out["modalities"]["image"] = list(value) if isinstance(value, (list, tuple)) else [value]
+    for key in _AUDIO_KEYS:
+        value = record.get(key)
+        if value not in (None, "", [], {}):
+            out["modalities"]["audio"] = list(value) if isinstance(value, (list, tuple)) else [value]
+            break
+    if not out["modalities"]["audio"] and nested.get("audio") not in (None, "", [], {}):
+        value = nested["audio"]
+        out["modalities"]["audio"] = list(value) if isinstance(value, (list, tuple)) else [value]
+    # Preserve already-materialized features for embedding-only datasets.
+    for name, aliases in (("image_embeds", ("image_embeds", "image_features")),
+                          ("audio_embeds", ("audio_embeds", "audio_features"))):
+        for key in aliases:
+            if key in record:
+                out["modalities"][name] = record[key]
+                break
+        if name not in out["modalities"] and nested.get(name) is not None:
+            out["modalities"][name] = nested[name]
+    return out
+
+
+def dataset_modality_summary(data_path: str, max_records: int = 10000) -> dict:
+    """Stream a JSONL prefix and return deterministic modality statistics."""
+    counts = {"text": 0, "image": 0, "audio": 0, "multimodal": 0, "invalid": 0}
+    scanned = 0
+    with open(data_path, "rb") as handle:
+        for raw in handle:
+            if scanned >= max_records:
+                break
+            if not raw.strip():
+                continue
+            scanned += 1
+            try:
+                record = json.loads(raw.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                counts["invalid"] += 1
+                continue
+            mods = detect_modalities(record)
+            if not mods:
+                counts["text"] += 1
+            else:
+                for mod in mods:
+                    counts[mod] += 1
+                if len(mods) > 1:
+                    counts["multimodal"] += 1
+    counts["scanned"] = scanned
+    counts["detected_modalities"] = [m for m in ("image", "audio") if counts[m] > 0]
+    return counts
 
 
 def _extract_text(record: dict) -> str:
@@ -177,6 +297,269 @@ class FlexibleDataset(_StreamingJSONLBase):
         return input_ids, labels
 
 
+def _media_value(value):
+    if isinstance(value, (list, tuple)):
+        return value[0] if value else None
+    return value
+
+
+class MediaResolver:
+    """Lazy media resolver shared by JSONL and API serving paths."""
+
+    def __init__(self, *, image_size: int = 224, audio_sample_rate: int = 16000,
+                 max_audio_seconds: float = 30.0):
+        self.image_size = int(image_size)
+        self.audio_sample_rate = int(audio_sample_rate)
+        self.max_audio_seconds = float(max_audio_seconds)
+
+    def image(self, value):
+        return _load_image(value, self.image_size)
+
+    def audio(self, value):
+        return _load_audio(value, self.audio_sample_rate, self.max_audio_seconds)
+
+    def resolve(self, modality: str, value):
+        if modality == "image":
+            return self.image(value)
+        if modality == "audio":
+            return self.audio(value)
+        raise ValueError(f"unsupported modality: {modality}")
+
+
+class MultimodalCollator:
+    """Callable wrapper retaining the functional collator API."""
+
+    def __call__(self, batch):
+        return multimodal_collate(batch)
+
+
+def _load_image(value, size: int) -> torch.Tensor:
+    try:
+        from PIL import Image
+        if isinstance(value, torch.Tensor):
+            image = value
+            if image.dim() == 3 and image.shape[0] not in (1, 3):
+                image = image.permute(2, 0, 1)
+            return torch.nn.functional.interpolate(
+                image.float().unsqueeze(0), size=(size, size), mode="bilinear", align_corners=False
+            ).squeeze(0).div(255.0 if image.max() > 1.5 else 1.0)
+        if isinstance(value, Image.Image):
+            image = value
+        elif str(value).startswith(("http://", "https://")):
+            with urllib.request.urlopen(str(value), timeout=10) as response:
+                import io
+                image = Image.open(io.BytesIO(response.read()))
+        else:
+            image = Image.open(str(value))
+        image = image.convert("RGB").resize((size, size))
+        import numpy as np
+        return torch.from_numpy(np.asarray(image)).permute(2, 0, 1).float().div(255.0)
+    except Exception as exc:
+        raise ValueError(f"unable to load image {value!r}: {exc}") from exc
+
+
+def _load_audio(value, sample_rate: int, max_seconds: float) -> torch.Tensor:
+    try:
+        if isinstance(value, torch.Tensor):
+            audio = value.float().flatten()
+            return audio[: int(sample_rate * max_seconds)]
+        # wave.open accepts paths and binary file-like objects.  Supporting
+        # bytes here makes API data-URI audio use exactly the JSONL decoder.
+        source = value
+        if isinstance(value, (bytes, bytearray)):
+            import io
+            source = io.BytesIO(value)
+        with wave.open(source, "rb") as handle:
+            n = min(handle.getnframes(), int(sample_rate * max_seconds))
+            raw = handle.readframes(n)
+            import numpy as np
+            audio = torch.from_numpy(np.frombuffer(raw, dtype=np.int16).copy()).float().div(32768.0)
+            channels = int(handle.getnchannels())
+            if channels > 1:
+                audio = audio.view(-1, channels).mean(dim=1)
+            source_rate = int(handle.getframerate())
+            if source_rate != sample_rate and audio.numel() > 1:
+                target = int(audio.numel() * sample_rate / source_rate)
+                audio = torch.nn.functional.interpolate(
+                    audio.view(1, 1, -1), size=target, mode="linear", align_corners=False
+                ).view(-1)
+            return audio[: int(sample_rate * max_seconds)]
+    except Exception as exc:
+        raise ValueError(f"unable to load audio {value!r}: {exc}") from exc
+
+
+class MultimodalStreamingDataset(FlexibleDataset):
+    """Streaming LM dataset with lazy image/audio materialization.
+
+    Text-only records retain the regular tuple contract. Media records return
+    a dict consumed by ``multimodal_collate`` and ChronosTrainer.
+    """
+    def __init__(self, data_path, tokenizer, max_length=512, *, image_size=224,
+                 audio_sample_rate=16000, max_audio_seconds=30.0,
+                 media_error_policy="warn"):
+        super().__init__(data_path, tokenizer, max_length=max_length)
+        self.image_size = int(image_size)
+        self.audio_sample_rate = int(audio_sample_rate)
+        self.max_audio_seconds = float(max_audio_seconds)
+        self.media_error_policy = str(media_error_policy)
+        self.modality_summary = dataset_modality_summary(data_path)
+
+    def __getitem__(self, index):
+        record = self._read_record(index)
+        base_ids, base_labels = _tokenize_record(record, self.tokenizer, self.max_length)
+        mods = detect_modalities(record)
+        if not mods:
+            return base_ids, base_labels
+        normalized = normalize_multimodal_record(record)
+        media = {}
+        # Pre-encoded features are first-class inputs.  They are intentionally
+        # kept on CPU and only batched here; the model/projector decides how to
+        # move them to the execution device.
+        for name in ("image_embeds", "audio_embeds"):
+            value = normalized["modalities"].get(name)
+            if value is not None:
+                try:
+                    media[name] = torch.as_tensor(value, dtype=torch.float32)
+                except Exception as exc:
+                    if self.media_error_policy == "raise":
+                        raise ValueError(f"invalid {name}: {exc}") from exc
+                    warnings.warn(f"invalid {name}: {exc}", RuntimeWarning, stacklevel=2)
+        for modality, loader in (
+            ("image", lambda v: _load_image(v, self.image_size)),
+            ("audio", lambda v: _load_audio(v, self.audio_sample_rate, self.max_audio_seconds)),
+        ):
+            # A pre-encoded representation takes precedence over a path/value.
+            if f"{modality}_embeds" in media:
+                continue
+            value = _media_value(normalized["modalities"].get(modality))
+            if value is None:
+                continue
+            try:
+                media[modality] = loader(value)
+            except Exception as exc:
+                if self.media_error_policy == "raise":
+                    raise
+                warnings.warn(str(exc), RuntimeWarning, stacklevel=2)
+        if not media:
+            return base_ids, base_labels
+        return {
+            "input_ids": base_ids,
+            "labels": base_labels,
+            "modality_inputs": media,
+            # Per-modality presence mask.  The old scalar mask is accepted by
+            # the model, but a two-column mask is required for mixed batches
+            # so a text+image sample never accidentally attends to an audio
+            # placeholder (and vice versa).
+            "modality_mask": torch.tensor([
+                float("image" in media or "image_embeds" in media),
+                float("audio" in media or "audio_embeds" in media),
+            ]),
+            "metadata": normalized.get("metadata", {}),
+        }
+
+
+def _tokenize_record(record, tokenizer, max_length):
+    text = _extract_text(record)
+    tok = tokenizer(text, add_special_tokens=False, max_length=max_length - 2, truncation=True)
+    tokens = [tokenizer.bos_token_id] + tok.input_ids + [tokenizer.eos_token_id]
+    pad_id = tokenizer.pad_token_id or 0
+    tokens = tokens + [pad_id] * (max_length - len(tokens))
+    ids = torch.tensor(tokens, dtype=torch.long)
+    labels = ids.clone()
+    labels[ids == pad_id] = -100
+    return ids, labels
+
+
+def multimodal_collate(batch):
+    """Collate mixed text/media records without invoking absent encoders."""
+    ids, labels, masks = [], [], []
+    images, audios, image_embeds, audio_embeds = [], [], [], []
+    has_image = has_audio = has_image_embeds = has_audio_embeds = False
+    for item in batch:
+        if isinstance(item, dict):
+            ids.append(item["input_ids"]); labels.append(item["labels"])
+            media_item = item.get("modality_inputs", {})
+            image = media_item.get("image")
+            audio = media_item.get("audio")
+            image_embed = media_item.get("image_embeds")
+            audio_embed = media_item.get("audio_embeds")
+            item_mask = item.get("modality_mask")
+            if isinstance(item_mask, dict):
+                mask = torch.tensor([
+                    float(item_mask.get("image", image is not None or image_embed is not None)),
+                    float(item_mask.get("audio", audio is not None or audio_embed is not None)),
+                ])
+            else:
+                mask = torch.as_tensor(item_mask if item_mask is not None else 1.0).flatten()
+                if mask.numel() == 1:
+                    # Legacy scalar means "this record has media".  Infer
+                    # the exact columns from materialized inputs.
+                    active = float(mask.item())
+                    mask = torch.tensor([
+                        active * float(image is not None or image_embed is not None),
+                        active * float(audio is not None or audio_embed is not None),
+                    ])
+                elif mask.numel() != 2:
+                    raise ValueError("modality_mask must have one scalar or two [image,audio] values")
+            masks.append(mask.float())
+            has_image = has_image or image is not None
+            has_audio = has_audio or audio is not None
+            has_image_embeds = has_image_embeds or image_embed is not None
+            has_audio_embeds = has_audio_embeds or audio_embed is not None
+            images.append(image); audios.append(audio)
+            image_embeds.append(image_embed); audio_embeds.append(audio_embed)
+        else:
+            ids.append(item[0]); labels.append(item[1]); masks.append(torch.zeros(2))
+            images.append(None); audios.append(None)
+            image_embeds.append(None); audio_embeds.append(None)
+    result = {"input_ids": torch.stack(ids), "labels": torch.stack(labels),
+            "modality_mask": torch.stack(masks)}
+    # A pre-encoded representation takes precedence for every sample.  Do not
+    # build both branches in one batch; doing so wastes encoder compute and
+    # makes duplicate modality tokens dependent on batch composition.
+    if has_image and not has_image_embeds:
+        shape = next(x.shape for x in images if x is not None)
+        result["modality_inputs"] = {"image": torch.stack([
+            x if x is not None else torch.zeros(shape) for x in images
+        ]), "image_mask": torch.tensor([x is not None for x in images])}
+    if has_audio and not has_audio_embeds:
+        width = max(x.numel() for x in audios if x is not None)
+        result.setdefault("modality_inputs", {})["audio"] = torch.stack([
+            (torch.nn.functional.pad(x.flatten(), (0, width - x.numel()))
+             if x is not None else torch.zeros(width)) for x in audios
+        ])
+        result["modality_inputs"]["audio_mask"] = torch.tensor([
+            x is not None for x in audios
+        ])
+    def _pad_embeddings(values):
+        present = [v.float() if v is not None else None for v in values]
+        exemplar = next(v for v in present if v is not None)
+        if exemplar.dim() == 1:
+            exemplar = exemplar.unsqueeze(0)
+        width = exemplar.shape[-1]
+        lengths = [v.shape[-2] if v is not None and v.dim() > 1 else 1 for v in present]
+        out = exemplar.new_zeros((len(values), max(lengths), width))
+        valid = torch.zeros((len(values), max(lengths)), dtype=torch.bool)
+        for i, value in enumerate(present):
+            if value is None:
+                continue
+            value = value.unsqueeze(0) if value.dim() == 1 else value
+            if value.shape[-1] != width:
+                raise ValueError("mixed pre-encoded modality embedding widths in one batch")
+            out[i, :value.shape[-2]] = value
+            valid[i, :value.shape[-2]] = True
+        return out, valid
+    if has_image_embeds:
+        image_batch, image_valid = _pad_embeddings(image_embeds)
+        result.setdefault("modality_inputs", {})["image_embeds"] = image_batch
+        result["modality_inputs"]["image_embeds_mask"] = image_valid
+    if has_audio_embeds:
+        audio_batch, audio_valid = _pad_embeddings(audio_embeds)
+        result.setdefault("modality_inputs", {})["audio_embeds"] = audio_batch
+        result["modality_inputs"]["audio_embeds_mask"] = audio_valid
+    return result
+
+
 # ── SFT (conversations → assistant-token loss mask) ─────────────────
 
 class StreamingSFTDataset(_StreamingJSONLBase):
@@ -254,6 +637,63 @@ class StreamingSFTDataset(_StreamingJSONLBase):
             torch.tensor(ids, dtype=torch.long),
             torch.tensor(labels, dtype=torch.long),
         )
+
+
+class MultimodalStreamingSFTDataset(StreamingSFTDataset):
+    """SFT records with lazy media and optional pre-encoded features."""
+
+    def __init__(self, data_path, tokenizer, max_length=1024, *, image_size=224,
+                 audio_sample_rate=16000, max_audio_seconds=30.0,
+                 media_error_policy="warn"):
+        super().__init__(data_path, tokenizer, max_length=max_length)
+        self.image_size = int(image_size)
+        self.audio_sample_rate = int(audio_sample_rate)
+        self.max_audio_seconds = float(max_audio_seconds)
+        self.media_error_policy = str(media_error_policy)
+        self.modality_summary = dataset_modality_summary(data_path)
+
+    def __getitem__(self, index):
+        input_ids, labels = super().__getitem__(index)
+        record = self._read_record(index)
+        if not detect_modalities(record):
+            return input_ids, labels
+        normalized = normalize_multimodal_record(record)
+        media = {}
+        for name in ("image_embeds", "audio_embeds"):
+            value = normalized["modalities"].get(name)
+            if value is not None:
+                try:
+                    media[name] = torch.as_tensor(value, dtype=torch.float32)
+                except Exception as exc:
+                    if self.media_error_policy == "raise":
+                        raise ValueError(f"invalid {name}: {exc}") from exc
+                    warnings.warn(f"invalid {name}: {exc}", RuntimeWarning, stacklevel=2)
+        for modality, loader in (
+            ("image", lambda v: _load_image(v, self.image_size)),
+            ("audio", lambda v: _load_audio(v, self.audio_sample_rate, self.max_audio_seconds)),
+        ):
+            if f"{modality}_embeds" in media:
+                continue
+            value = _media_value(normalized["modalities"].get(modality))
+            if value is None:
+                continue
+            try:
+                media[modality] = loader(value)
+            except Exception as exc:
+                if self.media_error_policy == "raise":
+                    raise
+                warnings.warn(str(exc), RuntimeWarning, stacklevel=2)
+        if not media:
+            return input_ids, labels
+        return {
+            "input_ids": input_ids, "labels": labels,
+            "modality_inputs": media,
+            "modality_mask": torch.tensor([
+                float("image" in media or "image_embeds" in media),
+                float("audio" in media or "audio_embeds" in media),
+            ]),
+            "metadata": normalized.get("metadata", {}),
+        }
 
 
 # ── DPO / ORPO (chosen + rejected pair) ─────────────────────────────

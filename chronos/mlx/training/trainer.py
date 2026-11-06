@@ -25,6 +25,7 @@ try:
     from chronos.mlx.model import ChronosMLXModel
     from chronos.mlx.moe import ChronosMLXMOE
     from chronos.mlx.training.io import mlx_state_to_torch
+    from chronos.mlx.training.optim import MixedPrecisionAdamW
 except ModuleNotFoundError:
     mx = None
     nn = None
@@ -43,10 +44,15 @@ def _ids_to_mx(x) -> mx.array:
     return mx.array(x).astype(mx.int32)
 
 
+def _f32(x: mx.array) -> mx.array:
+    """FP32 view for loss math; a no-op when logits were born FP32."""
+    return x if x.dtype == mx.float32 else x.astype(mx.float32)
+
+
 def _masked_lm_loss(logits: mx.array, labels: mx.array) -> mx.array:
     shift_logits = logits[:, :-1, :]
     shift_labels = labels[:, 1:]
-    flat_logits = shift_logits.reshape(-1, shift_logits.shape[-1]).astype(mx.float32)
+    flat_logits = _f32(shift_logits.reshape(-1, shift_logits.shape[-1]))
     flat_labels = shift_labels.reshape(-1)
     mask = flat_labels != -100
     safe_labels = mx.where(mask, flat_labels, mx.zeros_like(flat_labels))
@@ -56,7 +62,7 @@ def _masked_lm_loss(logits: mx.array, labels: mx.array) -> mx.array:
 
 def _gather_token_logprobs(logits: mx.array, labels: mx.array) -> mx.array:
     labels = labels.astype(mx.int32)
-    logits = logits.astype(mx.float32)
+    logits = _f32(logits)
     log_probs = logits - mx.logsumexp(logits, axis=-1, keepdims=True)
     flat = log_probs.reshape(-1, log_probs.shape[-1])
     idx = labels.reshape(-1)
@@ -84,14 +90,22 @@ def _shifted_token_logprobs(logits: mx.array, ids: mx.array) -> mx.array:
 
 
 def _collect_router_probs(model) -> mx.array | None:
+    """Every dispatch of the last forward: ``[B, S, V, E]`` (V = virtual layers)."""
     probs = []
     for layer in getattr(model, "layers", []):
         moe = getattr(layer, "mlp", None)
-        if isinstance(moe, ChronosMLXMOE) and moe.last_router_probs is not None:
-            probs.append(moe.last_router_probs)
+        if isinstance(moe, ChronosMLXMOE):
+            probs.extend(moe.iteration_router_probs)
     if not probs:
         return None
-    return mx.stack(probs, axis=2)  # [B, S, L, E]
+    return mx.stack(probs, axis=2)
+
+
+def _first_iteration_router_probs(model) -> mx.array | None:
+    """Step-0 routing per physical layer ``[B, S, L, E]`` (lookahead teacher)."""
+    probs = [layer.mlp.iteration_router_probs[0] for layer in getattr(model, "layers", [])
+             if isinstance(getattr(layer, "mlp", None), ChronosMLXMOE) and layer.mlp.iteration_router_probs]
+    return mx.stack(probs, axis=2) if probs else None
 
 
 def _temporal_locality_loss(router_mean: mx.array) -> mx.array:
@@ -127,11 +141,34 @@ def _load_balance_loss(router_4d: mx.array, num_experts_per_tok: int) -> mx.arra
     return total
 
 
+def _flatten_lookahead_groups(prediction, teacher):
+    """Flatten matching groups into batch; never average distinct routing heads."""
+    if prediction is None or teacher is None:
+        return prediction, teacher
+    if prediction.ndim == 5:
+        b, seq, steps, groups, experts = prediction.shape
+        if teacher.shape != (b, seq, groups, experts):
+            raise ValueError(f"MLX lookahead teacher {teacher.shape} does not match prediction {prediction.shape}")
+        return (prediction.transpose(0, 3, 1, 2, 4).reshape(b*groups, seq, steps, experts),
+                teacher.transpose(0, 2, 1, 3).reshape(b*groups, seq, experts))
+    if prediction.ndim != 4 or teacher.ndim != 3:
+        raise ValueError("MLX lookahead expects 4-D/3-D or 5-D/4-D prediction/teacher")
+    return prediction, teacher
+
+
+def _lookahead_teacher(router, prediction, config):
+    if prediction is None or prediction.ndim == 4:
+        return mx.stop_gradient(router.mean(axis=2))
+    start = int(config.prelude_layers)
+    return mx.stop_gradient(router[:, :, start:start + prediction.shape[3], :])
+
+
 def _lookahead_supervision_loss(
     lookahead_probs: mx.array | None,
     teacher_router_probs: mx.array | None,
     lookahead_steps: int,
 ) -> mx.array:
+    lookahead_probs, teacher_router_probs = _flatten_lookahead_groups(lookahead_probs, teacher_router_probs)
     if lookahead_probs is None:
         return mx.zeros(())
     if teacher_router_probs is None:
@@ -159,6 +196,7 @@ def _lookahead_topk_hit_loss(
     lookahead_steps: int,
     num_experts_per_tok: int,
 ) -> mx.array:
+    lookahead_probs, teacher_router_probs = _flatten_lookahead_groups(lookahead_probs, teacher_router_probs)
     if lookahead_probs is None:
         return mx.zeros(())
     if teacher_router_probs is None:
@@ -190,6 +228,7 @@ def _lookahead_union_loss(
     lookahead_steps: int,
     num_experts_per_tok: int,
 ) -> mx.array:
+    lookahead_probs, teacher_router_probs = _flatten_lookahead_groups(lookahead_probs, teacher_router_probs)
     if lookahead_probs is None:
         return mx.zeros(())
     if teacher_router_probs is None:
@@ -217,6 +256,7 @@ def _offload_training_metrics(
     lookahead_steps: int,
     num_experts_per_tok: int,
 ) -> dict[str, float]:
+    lookahead_probs, router_mean = _flatten_lookahead_groups(lookahead_probs, router_mean)
     if router_mean is None:
         return {}
     B, S, E = router_mean.shape
@@ -286,71 +326,97 @@ def _router_kl_anchor(current: mx.array, reference: mx.array | None, lambda_anch
     return float(lambda_anchor) * kl
 
 
-def _chronos_regularized_loss(model, base_loss: mx.array, lookahead_probs: mx.array | None, config, router_ref=None) -> mx.array:
-    setattr(model, "_last_lookahead_probs", lookahead_probs)
-    loss = base_loss.astype(mx.float32)
-    router_4d = _collect_router_probs(model)
-    if router_4d is None:
-        return loss
-    router_4d = router_4d.astype(mx.float32)
+def draft_exit_active(model, config) -> bool:
+    if float(getattr(config, "draft_exit_kl_coef", 0.0) or 0.0) <= 0.0 or not getattr(model, "training", False):
+        return False
+    if not getattr(config, "recurrent_enabled", True) or int(config.recurrent_depth) <= 1:
+        return False
+    return 1 <= int(getattr(config, "draft_exit_depth", 1)) < int(config.recurrent_depth)
 
-    lambda_balance = float(getattr(config, "lambda_balance", 0.0) or 0.0)
-    if lambda_balance > 0.0:
-        loss = loss + lambda_balance * _load_balance_loss(
-            router_4d,
-            int(getattr(config, "num_experts_per_tok", 1) or 1),
-        )
 
-    if router_4d.shape[1] > 1:
-        router_mean = router_4d.mean(axis=2)
-        lambda_temporal = float(getattr(config, "lambda_temporal", 0.0) or 0.0)
-        if lambda_temporal > 0.0:
-            loss = loss + lambda_temporal * _temporal_locality_loss(router_mean)
-        lambda_locality = float(getattr(config, "lambda_router_locality", 0.0) or 0.0)
-        if lambda_locality > 0.0:
-            loss = loss + lambda_locality * _router_locality_loss(
-                router_mean,
-                int(getattr(config, "num_experts_per_tok", 1) or 1),
-            )
+def draft_exit_logits(model, input_ids, config):
+    """Draft-depth FP32 logits, or None when the KL hook is off.
 
-        lookahead_steps = int(getattr(config, "lookahead_steps", 0) or 0)
-        lambda_lookahead = float(getattr(config, "lambda_lookahead", 0.0) or 0.0)
-        if lookahead_probs is not None and lambda_lookahead > 0.0 and lookahead_steps > 0:
-            teacher = mx.stop_gradient(router_mean)
-            loss = loss + lambda_lookahead * _lookahead_supervision_loss(
-                lookahead_probs,
-                teacher,
-                lookahead_steps,
-            )
-            lambda_topk = float(getattr(config, "lambda_lookahead_topk", 0.0) or 0.0)
-            if lambda_topk > 0.0:
-                loss = loss + lambda_topk * _lookahead_topk_hit_loss(
-                    lookahead_probs,
-                    teacher,
-                    lookahead_steps,
-                    int(getattr(config, "num_experts_per_tok", 1) or 1),
-                )
-            lambda_union = float(getattr(config, "lambda_lookahead_union", 0.0) or 0.0)
-            if lambda_union > 0.0:
-                loss = loss + lambda_union * _lookahead_union_loss(
-                    lookahead_probs,
-                    teacher,
-                    lookahead_steps,
-                    int(getattr(config, "num_experts_per_tok", 1) or 1),
-                )
+    Run *before* the full-depth forward: the full pass then owns the routing
+    and recurrent diagnostics the other regularizers read.
+    """
+    if not draft_exit_active(model, config):
+        return None
+    logits, _lookahead, _cache = model(input_ids, logits_dtype=mx.float32,
+                                       recurrent_depth=int(config.draft_exit_depth))
+    return logits
 
-        loss = loss + _router_kl_anchor(
-            router_mean,
-            router_ref,
-            float(getattr(config, "lambda_router_anchor", 0.0) or 0.0),
-        )
+
+def draft_exit_kl(draft_logits: mx.array, full_logits: mx.array, keep: mx.array | None) -> mx.array:
+    """Mean KL(full.detach() || draft) in FP32; ``keep`` [B, S] marks supervised logits."""
+    teacher = mx.stop_gradient(full_logits.astype(mx.float32))
+    t_log = teacher - mx.logsumexp(teacher, axis=-1, keepdims=True)
+    d32 = draft_logits.astype(mx.float32)
+    s_log = d32 - mx.logsumexp(d32, axis=-1, keepdims=True)
+    kl = (mx.exp(t_log) * (t_log - s_log)).sum(axis=-1)
+    if keep is None:
+        return kl.mean()
+    keep = keep.astype(mx.float32)
+    return (kl * keep).sum() / mx.maximum(keep.sum(), 1.0)
+
+
+def _shifted_keep(labels: mx.array) -> mx.array:
+    """Logit t is supervised when label t+1 is not -100 (CE shift)."""
+    nxt = labels[:, 1:] != -100
+    return mx.concatenate([nxt, mx.zeros((labels.shape[0], 1), dtype=mx.bool_)], axis=1)
+
+
+def _chronos_regularized_loss(model, base_loss, lookahead_probs, config, router_ref=None, metrics=None,
+                              draft_kl=None):
+    """Return total loss and retain the actual weighted components for logging."""
+    object.__setattr__(model, "_last_lookahead_probs", lookahead_probs)
+    terms = {"primary_loss": base_loss.astype(mx.float32)}
+    def add(name, coefficient, value):
+        if coefficient:
+            terms[name] = float(coefficient) * value.astype(mx.float32)
+
+    recurrent = getattr(model, "last_recurrent_state", None) or {}
+    for name, coefficient in (("ponder_loss", "ponder_loss_coef"), ("distill_loss", "recurrent_distill_coef"), ("stability_loss", "recurrent_stability_coef")):
+        if name in recurrent:
+            add("recurrent_" + name, getattr(config, coefficient, 0), recurrent[name])
+    if "contraction" in recurrent:
+        add("recurrent_contraction_loss", config.recurrent_contraction_coef,
+            mx.maximum(recurrent["contraction"]-config.recurrent_contraction_budget, 0)**2)
+
+    router = _collect_router_probs(model)
+    if router is not None:
+        router = router.astype(mx.float32)
+        top_k = config.num_experts_per_tok
+        add("balance_loss", config.lambda_balance, _load_balance_loss(router, top_k))
+        if router.shape[1] > 1:
+            mean = router.mean(axis=2)
+            add("temporal_loss", config.lambda_temporal, _temporal_locality_loss(mean))
+            add("locality_loss", config.lambda_router_locality, _router_locality_loss(mean, top_k))
+            if lookahead_probs is not None and config.lambda_lookahead > 0 and config.lookahead_steps > 0:
+                teacher = _lookahead_teacher(_first_iteration_router_probs(model).astype(mx.float32),
+                                             lookahead_probs, config)
+                add("lookahead_loss", config.lambda_lookahead,
+                    _lookahead_supervision_loss(lookahead_probs, teacher, config.lookahead_steps))
+                add("lookahead_topk_loss", config.lambda_lookahead_topk,
+                    _lookahead_topk_hit_loss(lookahead_probs, teacher, config.lookahead_steps, top_k))
+                add("lookahead_union_loss", config.lambda_lookahead_union,
+                    _lookahead_union_loss(lookahead_probs, teacher, config.lookahead_steps, top_k))
+            add("anchor_loss", 1, _router_kl_anchor(mean, router_ref, config.lambda_router_anchor))
+    if draft_kl is not None:
+        add("draft_exit_kl", getattr(config, "draft_exit_kl_coef", 0.0), draft_kl)
+    loss = sum(terms.values())
+    object.__setattr__(model, "_last_loss_components", terms)
+    object.__setattr__(model, "_last_stage_metrics", metrics or {"primary": base_loss})
     return loss
 
 
 def _ce_stage_loss(model, input_ids, labels):
-    logits, lookahead, _cache = model(input_ids)
+    draft = draft_exit_logits(model, input_ids, model.config)
+    logits, lookahead, _cache = model(input_ids, logits_dtype=mx.float32)
     base = _masked_lm_loss(logits, labels)
-    return _chronos_regularized_loss(model, base, lookahead, model.config)
+    draft_kl = None if draft is None else draft_exit_kl(draft, logits, _shifted_keep(labels))
+    return _chronos_regularized_loss(model, base, lookahead, model.config, metrics={"ce": base, "primary": base},
+                                     draft_kl=draft_kl)
 
 
 def _dpo_stage_loss(model, reference, batch, beta: float = 0.1, router_ref=None):
@@ -361,12 +427,12 @@ def _dpo_stage_loss(model, reference, batch, beta: float = 0.1, router_ref=None)
     m_c = _ids_to_mx(batch["mask_chosen"])
     m_r = _ids_to_mx(batch["mask_rejected"])
     x = mx.concatenate([x_c, x_r], axis=0)
-    logits, lookahead, _cache = model(x)
+    logits, lookahead, _cache = model(x, logits_dtype=mx.float32)
     B = x_c.shape[0]
     lp_c = _aligned_sequence_logprob(logits[:B], y_c, m_c)
     lp_r = _aligned_sequence_logprob(logits[B:], y_r, m_r)
     if reference is not None:
-        ref_logits, _ref_lp, _ref_cache = reference(x)
+        ref_logits, _ref_lp, _ref_cache = reference(x, logits_dtype=mx.float32)
         ref_c = mx.stop_gradient(_aligned_sequence_logprob(ref_logits[:B], y_c, m_c))
         ref_r = mx.stop_gradient(_aligned_sequence_logprob(ref_logits[B:], y_r, m_r))
         base = -mx.mean(nn.log_sigmoid(beta * ((lp_c - lp_r) - (ref_c - ref_r))))
@@ -383,7 +449,7 @@ def _orpo_stage_loss(model, batch, beta: float = 0.1, lambda_or: float = 0.1, ro
     m_c = _ids_to_mx(batch["mask_chosen"])
     m_r = _ids_to_mx(batch["mask_rejected"])
     x = mx.concatenate([x_c, x_r], axis=0)
-    logits, lookahead, _cache = model(x)
+    logits, lookahead, _cache = model(x, logits_dtype=mx.float32)
     B = x_c.shape[0]
     lp_c = _aligned_sequence_logprob(logits[:B], y_c, m_c, average=True)
     lp_r = _aligned_sequence_logprob(logits[B:], y_r, m_r, average=True)
@@ -393,8 +459,9 @@ def _orpo_stage_loss(model, batch, beta: float = 0.1, lambda_or: float = 0.1, ro
     odds = (mx.log(p_c) - mx.log1p(-p_c)) - (
         mx.log(p_r) - mx.log1p(-p_r)
     )
-    base = nll - lambda_or * mx.mean(nn.log_sigmoid(beta * odds))
-    return _chronos_regularized_loss(model, base, lookahead, model.config, router_ref=router_ref)
+    or_term = -lambda_or * mx.mean(nn.log_sigmoid(beta * odds))
+    base = nll + or_term
+    return _chronos_regularized_loss(model, base, lookahead, model.config, router_ref=router_ref, metrics={"primary": nll, "secondary": or_term})
 
 
 def _distill_stage_loss(
@@ -407,14 +474,14 @@ def _distill_stage_loss(
     temperature: float = 4.0,
     router_ref=None,
 ):
-    logits, lookahead, _cache = model(input_ids)
-    t_logits, _tlp, _tcache = teacher(teacher_input_ids if teacher_input_ids is not None else input_ids)
+    logits, lookahead, _cache = model(input_ids, logits_dtype=mx.float32)
+    t_logits, _tlp, _tcache = teacher(teacher_input_ids if teacher_input_ids is not None else input_ids, logits_dtype=mx.float32)
     V = min(logits.shape[-1], t_logits.shape[-1])
     S = min(logits.shape[1], t_logits.shape[1])
     logits_kd = logits[:, :S, :V]
     t_logits = mx.stop_gradient(t_logits[:, :S, :V])
-    logits_kd = logits_kd.astype(mx.float32)
-    t_logits = t_logits.astype(mx.float32)
+    logits_kd = _f32(logits_kd)
+    t_logits = _f32(t_logits)
     s_logp = logits_kd / temperature - mx.logsumexp(logits_kd / temperature, axis=-1, keepdims=True)
     t_prob = mx.softmax(t_logits / temperature, axis=-1)
     kd_tok = mx.sum(t_prob * (mx.log(mx.maximum(t_prob, 1e-12)) - s_logp), axis=-1)
@@ -422,7 +489,7 @@ def _distill_stage_loss(
     kd = (temperature * temperature) * (kd_tok * mask).sum() / mx.maximum(mask.sum(), 1.0)
     ce = _masked_lm_loss(logits, labels)
     base = alpha * kd + (1.0 - alpha) * ce
-    return _chronos_regularized_loss(model, base, lookahead, model.config, router_ref=router_ref)
+    return _chronos_regularized_loss(model, base, lookahead, model.config, router_ref=router_ref, metrics={"primary": kd, "secondary": ce, "ce": ce})
 
 
 def _fit_teacher_input(ids: mx.array, teacher_vocab_size: int) -> mx.array:
@@ -433,7 +500,7 @@ def _grpo_stage_loss(model, reference, batch, beta: float = 0.04, router_ref=Non
     ids = _ids_to_mx(batch["ids"])
     response_mask = mx.array(batch["response_mask"]).astype(mx.float32)
     advantages = mx.array(batch["advantages"]).astype(mx.float32)
-    logits, lookahead, _cache = model(ids)
+    logits, lookahead, _cache = model(ids, logits_dtype=mx.float32)
     lp_tok = _shifted_token_logprobs(logits, ids)
     mask = response_mask[:, 1:]
     seq_lp = (lp_tok * mask).sum(axis=1) / mx.maximum(mask.sum(axis=1), 1.0)
@@ -441,12 +508,12 @@ def _grpo_stage_loss(model, reference, batch, beta: float = 0.04, router_ref=Non
 
     kl = mx.zeros((), dtype=logits.dtype)
     if reference is not None:
-        ref_logits, _ref_lp, _ref_cache = reference(ids)
+        ref_logits, _ref_lp, _ref_cache = reference(ids, logits_dtype=mx.float32)
         ref_lp_tok = mx.stop_gradient(_shifted_token_logprobs(ref_logits, ids))
         log_ratio = ref_lp_tok - lp_tok
         kl = ((mx.exp(log_ratio) - log_ratio - 1.0) * mask).sum() / mx.maximum(mask.sum(), 1.0)
     base = pg_loss + float(beta) * kl
-    return _chronos_regularized_loss(model, base, lookahead, model.config, router_ref=router_ref)
+    return _chronos_regularized_loss(model, base, lookahead, model.config, router_ref=router_ref, metrics={"primary": pg_loss, "secondary": kl})
 
 
 def _capture_router_ref(model, batch, stage: str) -> mx.array | None:
@@ -550,6 +617,7 @@ class MLXStageResult:
     stopped: bool = False
     checkpoint_saved: bool = False
     rollbacks: int = 0
+    failure_reason: str = ""
 
 
 def _is_mx_array(value) -> bool:
@@ -564,9 +632,9 @@ def _tree_copy(tree):
     if isinstance(tree, tuple):
         return tuple(_tree_copy(v) for v in tree)
     if _is_mx_array(tree):
-        copied = mx.array(tree)
-        mx.eval(copied)
-        return copied
+        # MLX arrays are immutable; copy the tree without synchronizing once
+        # per tensor. Snapshots retain already evaluated arrays until rollback.
+        return mx.array(tree)
     return tree
 
 
@@ -583,13 +651,23 @@ def _tree_arrays(tree) -> list[mx.array]:
     return arrays
 
 
+def _tree_finite_check(tree) -> mx.array:
+    """Lazy device boolean: every floating array in ``tree`` is finite.
+
+    Evaluate it together with the arrays it checks (one ``mx.eval`` for
+    values + guard) instead of a separate sync per check.
+    """
+    checks = [mx.all(mx.isfinite(arr)) for arr in _tree_arrays(tree)
+              if mx.issubdtype(arr.dtype, mx.inexact)]
+    if not checks:
+        return mx.array(True)
+    return mx.all(mx.stack(checks)) if len(checks) > 1 else checks[0]
+
+
 def _tree_all_finite(tree) -> bool:
-    arrays = _tree_arrays(tree)
-    if not arrays:
-        return True
-    checks = [mx.all(mx.isfinite(arr)) for arr in arrays]
-    mx.eval(*checks)
-    return all(bool(check.item()) for check in checks)
+    check = _tree_finite_check(tree)
+    mx.eval(check)
+    return bool(check.item())
 
 
 def _scalar_is_finite(value: mx.array) -> bool:
@@ -600,8 +678,8 @@ def _scalar_is_finite(value: mx.array) -> bool:
 
 def _add_grads(a, b):
     if a is None:
-        return _tree_copy(b)
-    return tree_map(lambda x, y: x + y, a, b)
+        return tree_map(lambda g: g.astype(mx.float32), b)
+    return tree_map(lambda x, y: x + y.astype(mx.float32), a, b)
 
 
 def _scale_grads(grads, scale: float):
@@ -641,22 +719,32 @@ def _mlx_dtype_from_name(dtype_name: str | None):
 
 
 def _load_mlx_from_checkpoint(config, checkpoint_path: str | None, dtype_name: str | None = None):
+    """Build the MLX model directly in the policy compute dtype.
+
+    ``chronos.precision.resolve_mlx`` decides the dtype once (GPU: requested
+    or BF16; CPU: FP32 because CPU GatherMM is FP32-only).  Each tensor is
+    converted once from the checkpoint dtype; no FP32 staging copy.
+    """
+    from chronos.precision import resolve_mlx
+    policy = resolve_mlx(dtype_name or "auto")
     pt = ChronosForCausalLM(config)
     if checkpoint_path and os.path.exists(checkpoint_path):
         state = load_checkpoint_state_dict(checkpoint_path, map_location="cpu")
         load_state_dict_controlled(pt, state)
-    model = ChronosMLXModel.from_chronos_pytorch(pt, config)
-    dtype = _mlx_dtype_from_name(dtype_name)
-    model.set_dtype(dtype)
+    model = ChronosMLXModel.from_chronos_pytorch(pt, config, dtype=policy.compute)
     mx.eval(model.parameters())
     model.config = config
+    model._chronos_precision = policy
     return model
 
 
 def _save_mlx_checkpoint(model, config, out_path: str, stage: str) -> None:
+    """Save in the model's compute dtype (BF16 stays BF16, bit-exact)."""
     pt = ChronosForCausalLM(config)
-    pt.load_state_dict(mlx_state_to_torch(model, config), strict=True)
-    save_state_dict_with_config(pt, out_path, config, stage=stage)
+    state = mlx_state_to_torch(model, config)
+    dtype = next(iter(state.values())).dtype
+    pt.to(dtype).load_state_dict(state, strict=True)
+    save_state_dict_with_config(pt, out_path, config, stage=stage, half=False)
 
 
 def run_mlx_stage(
@@ -666,6 +754,7 @@ def run_mlx_stage(
     checkpoint_path: str | None,
     save_dir: str,
     loader=None,
+    validation_loader=None,
     prompts=None,
     teacher_path: str | None = None,
     args=None,
@@ -691,13 +780,20 @@ def run_mlx_stage(
         teacher = _load_mlx_from_checkpoint(teacher_config, teacher_path, dtype_name=dtype_name)
 
     base_lr = float(getattr(args, "learning_rate", 5e-5) if args is not None else 5e-5)
-    default_eps = 1e-6 if dtype_name in {"float16", "bfloat16"} else 1e-8
-    optimizer = optim.AdamW(
+    default_eps = 1e-8
+    optimizer = MixedPrecisionAdamW(
         learning_rate=base_lr,
         weight_decay=float(getattr(args, "weight_decay", 0.01) if args is not None else 0.01),
         eps=float(getattr(args, "adam_eps", default_eps) if args is not None else default_eps),
     )
+    optimizer.init(model.trainable_parameters())
+    model.train()
+    for frozen in (reference, teacher):
+        if frozen is not None:
+            frozen.eval()
     max_steps = getattr(args, "steps", None) if args is not None else None
+    if max_steps is not None and int(max_steps) <= 0:
+        max_steps = None
     epochs = int(getattr(args, "epochs", 1) if args is not None else 1)
     accum = max(1, int(getattr(args, "accumulation_steps", 1) if args is not None else 1))
     grad_clip = float(getattr(args, "grad_clip", 0.0) if args is not None else 0.0)
@@ -710,6 +806,11 @@ def run_mlx_stage(
     log_interval = max(1, int(getattr(args, "log_interval", 10) if args is not None else 10))
     steps = 0
     last_loss = 0.0
+    best_loss = float("inf")
+    failure_reason = ""
+    grad_norm = 0.0
+    token_count = 0
+    last_log_tokens = 0
     t0 = time.monotonic()
     last_log_t = t0
     last_log_step = 0
@@ -731,6 +832,8 @@ def run_mlx_stage(
     if data_iter is None:
         raise ValueError(f"MLX {stage} requires loader/prompts")
     total_steps = _planned_total_steps(data_iter, epochs, max_steps)
+    total_updates = max(1, (total_steps + accum - 1) // accum)
+    optimizer.learning_rate = get_lr(1, total_updates, base_lr)
     os.makedirs(save_dir, exist_ok=True)
     out_path = os.path.join(
         save_dir,
@@ -745,6 +848,8 @@ def run_mlx_stage(
     pending_count = 0
     rollback_model_state = _tree_copy(model.parameters())
     rollback_optimizer_state = _tree_copy(optimizer.state)
+    rollback_loss = 0.0
+    best_validation = float("inf")
 
     def _emit(event: dict) -> None:
         if progress_callback is not None:
@@ -756,7 +861,9 @@ def run_mlx_stage(
         pending_count = 0
 
     def _restore_rollback_state() -> None:
+        nonlocal last_loss
         _discard_pending()
+        last_loss = rollback_loss
         model.update(_tree_copy(rollback_model_state))
         optimizer.state = _tree_copy(rollback_optimizer_state)
         mx.eval(model.parameters(), optimizer.state)
@@ -816,7 +923,81 @@ def run_mlx_stage(
         "lr": base_lr,
         "accumulation_steps": accum,
         "save_interval": save_interval,
+        "optimizer": "AdamW FP32 masters/moments, betas=(0.9,0.95), bias correction",
+        "optimizer_updates": total_updates,
     })
+
+    def rollback(reason, epoch):
+        nonlocal rollback_count, consecutive_rollbacks, lr_scale, failure_reason
+        rollback_count += 1
+        consecutive_rollbacks += 1
+        lr_scale *= .5
+        _restore_rollback_state()
+        if consecutive_rollbacks >= rollback_limit:
+            failure_reason = reason
+        _emit({"event": "rollback", "stage": stage, "epoch": epoch, "epochs": epochs,
+               "step": steps, "steps": total_steps, "loss": last_loss,
+               "elapsed_s": time.monotonic()-t0, "dtype": dtype_name,
+               "lr": base_lr*lr_scale, "rollbacks": rollback_count, "reason": reason})
+
+    def apply_pending(epoch):
+        nonlocal rollback_model_state, rollback_optimizer_state, rollback_loss
+        nonlocal consecutive_rollbacks, grad_norm
+        if pending_grads is None:
+            return True
+        update_grads = _scale_grads(pending_grads, 1.0 / max(1, pending_count))
+        # Accumulation and this norm are FP32 even when forward weights are BF16.
+        update_grads, norm = optim.clip_grad_norm(update_grads, grad_clip if grad_clip > 0 else float("inf"))
+        grads_ok = _tree_finite_check((norm, update_grads))
+        optimizer.learning_rate = get_lr(int(optimizer.step.item()) + 1, total_updates, base_lr * lr_scale)
+        previous_snapshot = (rollback_model_state, rollback_optimizer_state, rollback_loss)
+        rollback_model_state = _tree_copy(model.parameters())
+        rollback_optimizer_state = _tree_copy(optimizer.state)
+        rollback_loss = last_loss
+        optimizer.update(model, update_grads)
+        # One device sync for clip + guard + update + post-update guard. A bad
+        # gradient only wastes this update's compute: both guards are read
+        # before the result is kept, and the rollback targets are unchanged.
+        state_ok = _tree_finite_check((model.parameters(), optimizer.state))
+        mx.eval(model.parameters(), optimizer.state, norm, grads_ok, state_ok)
+        grad_norm = float(norm.item())
+        if not bool(grads_ok.item()):
+            rollback_model_state, rollback_optimizer_state, rollback_loss = previous_snapshot
+            rollback("non_finite_accumulated_grad", epoch)
+            return False
+        if not bool(state_ok.item()):
+            rollback("non_finite_parameters_or_optimizer", epoch)
+            return False
+        consecutive_rollbacks = 0
+        _discard_pending()
+        return True
+
+    def evaluate_validation(epoch):
+        nonlocal best_validation
+        if validation_loader is None or stage not in {"pretrain", "sft"}:
+            return
+        total_nll, valid_tokens = 0.0, 0
+        was_training = model.training
+        model.eval()
+        try:
+            for ids, labels in validation_loader:
+                labels = _ids_to_mx(labels)
+                logits, _, _ = model(_ids_to_mx(ids), logits_dtype=mx.float32)
+                ce = _masked_lm_loss(logits, labels)
+                count = mx.sum(labels[:, 1:] != -100)
+                mx.eval(ce, count)
+                total_nll += float(ce.item()) * int(count.item())
+                valid_tokens += int(count.item())
+        finally:
+            model.train(was_training)
+        if valid_tokens:
+            value = total_nll / valid_tokens
+            _emit({"event": "validation", "stage": stage, "epoch": epoch,
+                   "step": steps, "steps": total_steps, "ce": value,
+                   "tokens": valid_tokens, "elapsed_s": time.monotonic()-t0})
+            if value < best_validation:
+                best_validation = value
+                _save_mlx_checkpoint(model, config, out_path.replace(".pth", ".best.pth"), checkpoint_stage)
 
     stop_outer = False
     for epoch_idx in range(epochs):
@@ -836,29 +1017,19 @@ def run_mlx_stage(
                     reward_fn,
                     args,
                 )
+            model.recurrent_controller.set_training_progress(steps + 1, total_steps)
             loss, grads = grad_fn(model, train_batch)
-            mx.eval(loss, grads)
+            supervised = stage in {"pretrain", "sft", "distill"}
+            # Loss, gradients, their finite guard, the FP32 accumulation and the
+            # supervised-token count are materialised by one device sync.
+            finite_check = _tree_finite_check((loss, grads))
+            candidate = _add_grads(pending_grads, grads)
+            n_supervised = mx.sum(_ids_to_mx(train_batch[1])[:, 1:] != -100) if supervised else None
+            mx.eval(loss, finite_check, candidate, *([n_supervised] if supervised else []))
             steps += 1
-            finite = _scalar_is_finite(loss) and _tree_all_finite(grads)
+            finite = bool(finite_check.item())
             if not finite:
-                rollback_count += 1
-                consecutive_rollbacks += 1
-                lr_scale *= 0.5
-                _discard_pending()
-                _emit({
-                    "event": "rollback",
-                    "stage": stage,
-                    "epoch": epoch_idx + 1,
-                    "epochs": epochs,
-                    "step": steps,
-                    "steps": total_steps,
-                    "loss": last_loss,
-                    "elapsed_s": time.monotonic() - t0,
-                    "dtype": dtype_name,
-                    "lr": base_lr * lr_scale,
-                    "rollbacks": rollback_count,
-                    "reason": "non_finite_loss_or_grad",
-                })
+                rollback("non_finite_loss_or_grad", epoch_idx + 1)
                 if consecutive_rollbacks >= rollback_limit:
                     stop_outer = True
                     break
@@ -866,72 +1037,26 @@ def run_mlx_stage(
                     break
                 continue
 
-            last_loss = float(loss.item())
-            pending_grads = _add_grads(pending_grads, grads)
+            observed_loss = float(loss.item())
+            # A catastrophe guard, not a convergence/quality criterion. Only
+            # nonnegative supervised objectives have a meaningful ratio here.
+            if stage in {"pretrain", "sft", "distill"} and observed_loss > max(100.0, 20.0*best_loss):
+                rollback("finite_loss_divergence", epoch_idx + 1)
+                failure_reason = "finite_loss_divergence"
+                stop_outer = True
+                break
+            last_loss = observed_loss
+            best_loss = min(best_loss, observed_loss)
+            if supervised:
+                token_count += int(n_supervised.item())
+            pending_grads = candidate          # adopted only after the guard passed
             pending_count += 1
-            should_update = pending_count >= accum
-            if max_steps is not None and steps >= int(max_steps):
-                should_update = True
-            if should_update and pending_grads is not None:
-                current_lr = get_lr(steps, total_steps or steps, base_lr * lr_scale)
-                optimizer.learning_rate = current_lr
-                update_grads = _scale_grads(pending_grads, 1.0 / max(1, pending_count))
-                if grad_clip > 0.0:
-                    update_grads, _norm = optim.clip_grad_norm(update_grads, grad_clip)
-                    mx.eval(update_grads)
-                if not _tree_all_finite(update_grads):
-                    rollback_count += 1
-                    consecutive_rollbacks += 1
-                    lr_scale *= 0.5
-                    _discard_pending()
-                    _emit({
-                        "event": "rollback",
-                        "stage": stage,
-                        "epoch": epoch_idx + 1,
-                        "epochs": epochs,
-                        "step": steps,
-                        "steps": total_steps,
-                        "loss": last_loss,
-                        "elapsed_s": time.monotonic() - t0,
-                        "dtype": dtype_name,
-                        "lr": base_lr * lr_scale,
-                        "rollbacks": rollback_count,
-                        "reason": "non_finite_accumulated_grad",
-                    })
-                    if consecutive_rollbacks >= rollback_limit:
-                        stop_outer = True
-                        break
-                else:
-                    rollback_model_state = _tree_copy(model.parameters())
-                    rollback_optimizer_state = _tree_copy(optimizer.state)
-                    optimizer.update(model, update_grads)
-                    mx.eval(model.parameters(), optimizer.state)
-                    if not _tree_all_finite(model.parameters()):
-                        rollback_count += 1
-                        consecutive_rollbacks += 1
-                        lr_scale *= 0.5
-                        _restore_rollback_state()
-                        _emit({
-                            "event": "rollback",
-                            "stage": stage,
-                            "epoch": epoch_idx + 1,
-                            "epochs": epochs,
-                            "step": steps,
-                            "steps": total_steps,
-                            "loss": last_loss,
-                            "elapsed_s": time.monotonic() - t0,
-                            "dtype": dtype_name,
-                            "lr": base_lr * lr_scale,
-                            "rollbacks": rollback_count,
-                            "reason": "non_finite_parameters",
-                        })
-                        if consecutive_rollbacks >= rollback_limit:
-                            stop_outer = True
-                            break
-                    else:
-                        consecutive_rollbacks = 0
-                        pending_grads = None
-                        pending_count = 0
+            should_update = pending_count >= accum or (max_steps is not None and steps >= int(max_steps))
+            if should_update:
+                apply_pending(epoch_idx + 1)
+                if consecutive_rollbacks >= rollback_limit:
+                    stop_outer = True
+                    break
 
             if steps % save_interval == 0:
                 _save_checkpoint("interval")
@@ -939,17 +1064,31 @@ def run_mlx_stage(
             if steps == 1 or steps % log_interval == 0:
                 now = time.monotonic()
                 delta_steps = steps - last_log_step
-                tps = delta_steps / max(now - last_log_t, 1e-6)
+                interval_s = max(now - last_log_t, 1e-6)
+                tps = delta_steps / interval_s
+                tokens_per_s = (token_count-last_log_tokens) / interval_s
+                last_log_tokens = token_count
                 last_log_t = now
                 last_log_step = steps
                 router_4d = _collect_router_probs(model)
-                router_mean = router_4d.mean(axis=2) if router_4d is not None else None
+                prediction = getattr(model, "_last_lookahead_probs", None)
+                router_mean = _lookahead_teacher(router_4d, prediction, config) if router_4d is not None else None
                 offload_metrics = _offload_training_metrics(
                     router_mean,
                     getattr(model, "_last_lookahead_probs", None),
                     int(getattr(config, "lookahead_steps", 0) or 0),
                     int(getattr(config, "num_experts_per_tok", 1) or 1),
                 )
+                components = {k: float(v.item()) for k, v in getattr(model, "_last_loss_components", {}).items()}
+                stage_metrics = {k: float(v.item()) for k, v in getattr(model, "_last_stage_metrics", {}).items()}
+                lookahead_loss = sum(v for k, v in components.items() if k.startswith("lookahead_"))
+                recurrent_loss = sum(v for k, v in components.items() if k.startswith("recurrent_"))
+                defaults = {
+                    "pretrain": (last_loss-components.get("primary_loss", last_loss), components.get("temporal_loss", 0)),
+                    "sft": (lookahead_loss, components.get("anchor_loss", 0)),
+                    "dpo": (components.get("anchor_loss", 0), lookahead_loss),
+                }
+                secondary, tertiary = defaults.get(stage, (0, components.get("anchor_loss", 0)))
                 _emit({
                     "event": "step",
                     "stage": stage,
@@ -958,10 +1097,18 @@ def run_mlx_stage(
                     "step": steps,
                     "steps": total_steps,
                     "loss": last_loss,
-                    "ce": last_loss,
-                    "aux": 0.0,
-                    "temporal": 0.0,
+                    **stage_metrics,
+                    "secondary": stage_metrics.get("secondary", secondary),
+                    "tertiary": tertiary,
+                    "aux": last_loss-components.get("primary_loss", last_loss),
+                    "temporal": components.get("temporal_loss", 0),
+                    "loss_components": components,
+                    "recurrent_loss": recurrent_loss,
+                    "lookahead_loss": lookahead_loss,
+                    "grad_norm": grad_norm,
+                    "optimizer_step": int(optimizer.step.item()),
                     "tps": tps,
+                    "tokens_per_s": tokens_per_s,
                     "elapsed_s": now - t0,
                     "dtype": dtype_name,
                     "lr": float(optimizer.learning_rate.item()) if "learning_rate" in optimizer.state else base_lr * lr_scale,
@@ -970,27 +1117,22 @@ def run_mlx_stage(
                 })
             if max_steps is not None and steps >= int(max_steps):
                 break
+        if not stop_outer and not _should_stop():
+            evaluate_validation(epoch_idx+1)
         if stop_outer or _should_stop() or (max_steps is not None and steps >= int(max_steps)):
             break
 
     stopped = _should_stop()
     if pending_grads is not None and pending_count > 0 and not stop_outer:
-        current_lr = get_lr(steps, total_steps or steps, base_lr * lr_scale)
-        optimizer.learning_rate = current_lr
-        update_grads = _scale_grads(pending_grads, 1.0 / max(1, pending_count))
-        if grad_clip > 0.0:
-            update_grads, _norm = optim.clip_grad_norm(update_grads, grad_clip)
-            mx.eval(update_grads)
-        if _tree_all_finite(update_grads):
-            rollback_model_state = _tree_copy(model.parameters())
-            rollback_optimizer_state = _tree_copy(optimizer.state)
-            optimizer.update(model, update_grads)
-            mx.eval(model.parameters(), optimizer.state)
-            if not _tree_all_finite(model.parameters()):
-                _restore_rollback_state()
-        else:
-            _discard_pending()
-    _save_checkpoint("stop" if stopped else ("rollback_limit" if stop_outer else "final"))
+        if not apply_pending(epochs):
+            stop_outer = True
+            failure_reason = "final_update_failed"
+        elif not stopped:
+            evaluate_validation(epochs)
+    if stop_outer:
+        # Keep a failed run's recovery artifact distinct from a successful model.
+        out_path = out_path.replace(".pth", ".recovery.pth")
+    _save_checkpoint("stop" if stopped else (failure_reason if stop_outer else "final"))
     elapsed = time.monotonic() - t0
     _emit({
         "event": "stopped" if stopped else ("failed" if stop_outer else "complete"),
@@ -1003,6 +1145,7 @@ def run_mlx_stage(
         "checkpoint_path": out_path if checkpoint_saved else "",
         "checkpoint_saved": checkpoint_saved,
         "rollbacks": rollback_count,
+        "reason": failure_reason,
     })
     if stopped:
         print(
@@ -1029,4 +1172,5 @@ def run_mlx_stage(
         stopped=stopped or stop_outer,
         checkpoint_saved=checkpoint_saved,
         rollbacks=rollback_count,
+        failure_reason=failure_reason,
     )

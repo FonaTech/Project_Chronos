@@ -80,7 +80,14 @@ CHECKPOINT_TOPOLOGY_KEYS = (
     "kv_latent_dim",
     "rope_dim",
     "num_attention_heads",
-    "num_key_value_heads",
+    "num_key_value_heads", "head_dim", "use_moe", "use_hybrid_attention", "tie_word_embeddings",
+    "architecture_version", "recurrent_enabled", "recurrent_groups", "recurrent_depth",
+    "prelude_layers", "coda_layers", "layer_aware_lookahead", "layer_aware_cache",
+    "modalities", "image_patch_size", "modality_fusion_heads",
+    # v3 semantics that do not change tensor shapes but do change what the
+    # weights compute; a stage must inherit them from its init checkpoint.
+    "recurrent_attention_mode", "rope_layout", "rope_theta", "sliding_window_size",
+    "intermediate_size", "router_scope",
 )
 STAGE_HELP_TEXT = {
     "pretrain": {
@@ -444,6 +451,8 @@ def _effective_training_config(
         "teacher_path",
         "data_path",
         "data_path_source",
+        "lambda_router_anchor",
+        "stage_overrides_applied",
     ]
     out = {
         "mode": mode,
@@ -538,6 +547,13 @@ def _planned_optimizer_updates(train_steps: int, accumulation_steps: int) -> int
     return (train_steps + accum - 1) // accum if train_steps else 0
 
 
+_STAGE_OVERRIDE_KEYS = frozenset((
+    "learning_rate", "batch_size", "accumulation_steps", "epochs", "max_steps", "max_seq_len",
+    "weight_decay", "grad_clip", "save_interval", "lambda_router_anchor", "beta", "alpha",
+    "lambda_or", "temperature", "num_generations", "max_gen_len",
+))
+
+
 def _prepare_training_run_config(
     cfg: dict | None,
     train_mode: str,
@@ -552,6 +568,11 @@ def _prepare_training_run_config(
 ) -> tuple[dict, dict]:
     merged = dict(MINIMIND_MOE_DEFAULTS)
     merged.update(dict(cfg) if cfg else {})
+    # Per-stage hyperparameters (Config tab → auto plan) override the shared
+    # values for this stage only; architecture keys are never stage-specific.
+    stage_values = (merged.get("stage_overrides") or {}).get(train_mode) or {}
+    merged.update({k: v for k, v in stage_values.items() if k in _STAGE_OVERRIDE_KEYS})
+    merged["stage_overrides_applied"] = sorted(k for k in stage_values if k in _STAGE_OVERRIDE_KEYS)
     cfg = merged
     requested_backend = (selected_backend or "auto").strip().lower() or "auto"
     resolved_backend, resolved_device = resolve_training_device(requested_backend)
@@ -891,6 +912,8 @@ class TrainSession:
         self.last_sample: str = ""
         self.last_sample_step: int = 0
         self.effective_config: dict = {}
+        self.tokenizer_path: str = ""
+        self.vocab_size: int = 0
 
     def _normalise_effective_cpu_config(self, cfg: dict, resolved_backend: str) -> None:
         cfg["cpu_budget_percent"] = _cpu_budget_for_backend(cfg, resolved_backend)
@@ -908,6 +931,8 @@ class TrainSession:
         self._metrics.clear()
         self.total_steps = 0
         self.t_start = time.monotonic()
+        self.tokenizer_path = str(cfg.get("tokenizer_path") or "").strip()
+        self.vocab_size = int(cfg.get("vocab_size") or 0)
         self._thread = threading.Thread(
             target=self._run, args=(cfg, mode), daemon=True
         )
@@ -972,7 +997,7 @@ class TrainSession:
     def _topology_mismatches(self, sniffed: dict, model_cfg_kwargs: dict) -> list[str]:
         mismatches = []
         for k in CHECKPOINT_TOPOLOGY_KEYS:
-            if k in sniffed and k in model_cfg_kwargs and int(sniffed[k]) != int(model_cfg_kwargs[k]):
+            if k in sniffed and k in model_cfg_kwargs and sniffed[k] != model_cfg_kwargs[k]:
                 mismatches.append(f"{k}: ckpt={sniffed[k]} != ui={model_cfg_kwargs[k]}")
         return mismatches
 
@@ -983,11 +1008,9 @@ class TrainSession:
                 continue
             current = model_cfg_kwargs.get(key)
             value = sniffed[key]
-            if current is None or int(current) != int(value):
+            if current is None or current != value:
                 adopted[key] = value
             model_cfg_kwargs[key] = value
-        if "moe_intermediate_size" in sniffed:
-            model_cfg_kwargs["intermediate_size"] = sniffed["moe_intermediate_size"]
         return adopted
 
     def _build_stage_args(self, cfg: dict, mode: str, save_dir: str, hidden_size: int):
@@ -1122,8 +1145,8 @@ class TrainSession:
         with torch.no_grad():
             gen = ids.clone()
             for _ in range(80):
-                with autocast_context(device, cfg.get("dtype", "auto")):
-                    o, _ = model(gen, use_cache=False)
+                with autocast_context(device, cfg.get("dtype", "auto"), model=model):
+                    o = model(gen, use_cache=False)
                 nxt = o.logits[:, -1, :].argmax(dim=-1, keepdim=True)
                 gen = torch.cat([gen, nxt], dim=-1)
                 if int(nxt.item()) == (tokenizer.eos_token_id or -1):
@@ -1149,58 +1172,21 @@ class TrainSession:
             from chronos.model.moe_chronos import ChronosMOEFeedForward
 
             self._put(f"[{mode.upper()}] Building model...")
-            # Pass the FULL config dict so user-set arch overrides (e.g.
-            # moe_intermediate_size, num_attention_heads, vocab_size) are
-            # actually honored. Previously this method only forwarded a
-            # hardcoded subset, so the trainer silently used minimind's
-            # auto-derived intermediate_size while the UI estimator showed
-            # the user's slider — causing 10x param-count mismatches.
-            model_cfg_kwargs = {
-                "hidden_size":               cfg.get("hidden_size", 512),
-                "num_hidden_layers":         cfg.get("num_hidden_layers", 8),
-                "num_experts":               cfg.get("num_experts", 4),
-                "num_experts_per_tok":       cfg.get("num_experts_per_tok", 1),
-                "num_shared_experts":        cfg.get("num_shared_experts", 1),
-                "lookahead_steps":           cfg.get("lookahead_steps", 2),
-                "kv_latent_dim":             cfg.get("kv_latent_dim", 64),
-                "sliding_window_size":       cfg.get("sliding_window_size", 2048),
-                "lambda_balance":            cfg.get("lambda_balance", 5e-4),
-                "lambda_temporal":           cfg.get("lambda_temporal", 3e-3),
-                "lambda_lookahead":           cfg.get("lambda_lookahead", 0.1),
-                "lambda_lookahead_topk":      cfg.get("lambda_lookahead_topk", 0.15),
-                "lambda_lookahead_union":     cfg.get("lambda_lookahead_union", 0.05),
-                "lambda_router_locality":     cfg.get("lambda_router_locality", 0.02),
-                "fallback_mask_prob":         cfg.get("fallback_mask_prob", 0.08),
-                "vram_budget_gb":            cfg.get("vram_budget_gb", 4.0),
-                "use_hybrid_attention":      cfg.get("use_hybrid_attention", True),
-                "use_moe":                   True,
-            }
-            # Optional overrides: only forward when the user actually set them.
-            # For the "auto" sentinel fields (0 = let MiniMindConfig derive
-            # it), we skip forwarding when value is 0 so ceil(H·π/64)·64
-            # takes effect instead of Linear(H, 0) crashing MPS init.
-            AUTO_SENTINEL_KEYS = {"intermediate_size", "moe_intermediate_size"}
-            for opt_key, cfg_key in [
-                ("num_attention_heads",   "num_attention_heads"),
-                ("num_key_value_heads",   "num_key_value_heads"),
-                ("rope_dim",              "rope_dim"),
-                ("vocab_size",            "vocab_size"),
-                ("max_position_embeddings", "max_seq_len"),
-                ("intermediate_size",     "moe_intermediate_size"),
-                ("moe_intermediate_size", "moe_intermediate_size"),
-                ("lambda_router_anchor",  "lambda_router_anchor"),
-                ("pinned_memory_max_fraction", "pinned_memory_max_fraction"),
-                ("storage_format",        "storage_format"),
-                ("tie_word_embeddings",   "tie_word_embeddings"),
-            ]:
-                if cfg_key not in cfg:
-                    continue
-                val = cfg[cfg_key]
-                if val in (None, ""):
-                    continue
-                if opt_key in AUTO_SENTINEL_KEYS and val == 0:
-                    continue
-                model_cfg_kwargs[opt_key] = val
+            from chronos.config_schema import model_config_kwargs
+            model_cfg_kwargs = model_config_kwargs(cfg)
+            model_cfg_kwargs.setdefault("hidden_size", 512)
+            model_cfg_kwargs.setdefault("num_hidden_layers", 8)
+            detected_modalities_pre = []
+            if data_path_for_cleanup and os.path.exists(data_path_for_cleanup):
+                try:
+                    from chronos.data.flexible_dataset import dataset_modality_summary
+                    detected_modalities_pre = dataset_modality_summary(data_path_for_cleanup).get(
+                        "detected_modalities", []
+                    )
+                except Exception as exc:
+                    self._put(f"[data] modality detection warning: {exc}")
+            if cfg.get("auto_detect_modalities", True):
+                model_cfg_kwargs["modalities"] = detected_modalities_pre
             save_dir = cfg.get("save_dir", "./out")
             init_weight = (cfg.get("init_weight") or "").strip()
             load_path = ""
@@ -1276,6 +1262,13 @@ class TrainSession:
 
             requested_backend = (cfg.get("train_backend") or "auto").strip().lower() or "auto"
             resolved_backend, device = resolve_training_device(requested_backend)
+            if resolved_backend == "mlx" and model_cfg.modalities:
+                if requested_backend != "auto":
+                    raise ValueError("MLX 尚未实现多模态编码器训练，请选择 auto 或 PyTorch MPS/CUDA 后端。")
+                supported = set(training_available())
+                target = next(name for name in ("cuda", "xpu", "mps", "cpu") if name in supported)
+                resolved_backend, device = resolve_training_device(target)
+                self._put(f"[data] Modalities {model_cfg.modalities}: using {resolved_backend} for encoder training.")
             cfg["train_backend"] = requested_backend
             cfg["device"] = device
             cfg["dtype"] = _normalize_dtype_for_trainer(cfg.get("dtype"))
@@ -1324,12 +1317,34 @@ class TrainSession:
             else:
                 tokenizer = self._load_tokenizer()
                 from chronos.data.flexible_dataset import (
-                    FlexibleDataset, StreamingSFTDataset, StreamingDPODataset,
+                    FlexibleDataset, StreamingSFTDataset, MultimodalStreamingDataset,
+                    MultimodalStreamingSFTDataset, StreamingDPODataset,
+                    dataset_modality_summary, multimodal_collate,
                 )
+                modality_summary = dataset_modality_summary(data_path)
+                detected_modalities = modality_summary.get("detected_modalities", [])
                 if mode == "pretrain":
-                    full_ds = FlexibleDataset(data_path, tokenizer, max_length=max_seq_len)
+                    if cfg.get("auto_detect_modalities", True) and detected_modalities:
+                        model_cfg_kwargs["modalities"] = detected_modalities
+                    full_ds = (
+                        MultimodalStreamingDataset(data_path, tokenizer, max_length=max_seq_len,
+                            image_size=int(cfg.get("image_size", 224)),
+                            audio_sample_rate=int(cfg.get("audio_sample_rate", 16000)),
+                            max_audio_seconds=float(cfg.get("max_audio_seconds", 30.0)),
+                            media_error_policy=cfg.get("media_error_policy", "warn"))
+                        if detected_modalities else FlexibleDataset(data_path, tokenizer, max_length=max_seq_len)
+                    )
                 elif mode in {"sft", "distill"}:
-                    full_ds = StreamingSFTDataset(data_path, tokenizer, max_length=max_seq_len)
+                    if cfg.get("auto_detect_modalities", True) and detected_modalities:
+                        model_cfg_kwargs["modalities"] = detected_modalities
+                    full_ds = (
+                        MultimodalStreamingSFTDataset(data_path, tokenizer, max_length=max_seq_len,
+                            image_size=int(cfg.get("image_size", 224)),
+                            audio_sample_rate=int(cfg.get("audio_sample_rate", 16000)),
+                            max_audio_seconds=float(cfg.get("max_audio_seconds", 30.0)),
+                            media_error_policy=cfg.get("media_error_policy", "warn"))
+                        if detected_modalities else StreamingSFTDataset(data_path, tokenizer, max_length=max_seq_len)
+                    )
                 elif mode in {"dpo", "orpo"}:
                     full_ds = StreamingDPODataset(data_path, tokenizer, max_length=max_seq_len)
                 else:
@@ -1352,6 +1367,7 @@ class TrainSession:
                     DataLoader(
                         train_ds,
                         batch_size=batch_size,
+                        collate_fn=multimodal_collate if detected_modalities and mode in {"pretrain", "sft", "distill"} else None,
                         **dataloader_kwargs(device=device, num_workers=cfg.get("num_workers", "auto"), shuffle=True),
                     )
                     if train_ds is not None else None
@@ -1360,6 +1376,7 @@ class TrainSession:
                     DataLoader(
                         val_ds,
                         batch_size=batch_size,
+                        collate_fn=multimodal_collate if detected_modalities and mode in {"pretrain", "sft", "distill"} else None,
                         **dataloader_kwargs(device=device, num_workers=cfg.get("num_workers", "auto"), shuffle=False),
                     )
                     if val_ds is not None else None
@@ -1413,10 +1430,16 @@ class TrainSession:
                 if mlx_checkpoint_path:
                     self._put(f"[MLX {mode.upper()}] Loading checkpoint → {mlx_checkpoint_path}")
                 else:
-                    self._put(f"[MLX {mode.upper()}] Starting from current in-memory random init.")
+                    self._put(f"[MLX {mode.upper()}] Starting from random init.")
 
                 def _mlx_progress(event: dict):
                     kind = str(event.get("event", "step"))
+                    if kind == "validation":
+                        value = float(event["ce"])
+                        self._put(f"[MLX {mode.upper()} validation] step={event['step']} CE={value:.4f} tokens={event['tokens']}")
+                        self._put_metric({"step": event["step"], "total": value, "primary": value,
+                                          "ce": value, "aux": 0., "temporal": 0., "tps": 0., "val": True, "val_loss": value})
+                        return
                     if kind == "start":
                         total = int(event.get("steps", 0) or 0)
                         if total > 0:
@@ -1426,6 +1449,7 @@ class TrainSession:
                             f"total_steps={self.total_steps} accum={event.get('accumulation_steps', '')} "
                             f"save_interval={event.get('save_interval', '')}"
                         )
+                        self._put(f"[MLX optimizer] {event.get('optimizer', '')}")
                         return
                     if kind == "step":
                         step = int(event.get("step", event.get("steps", 0)) or 0)
@@ -1439,17 +1463,25 @@ class TrainSession:
                         metric = {
                             "step": step,
                             "total": loss,
-                            "primary": float(event.get("ce", loss) or loss),
-                            "secondary": float(event.get("aux", 0.0) or 0.0),
-                            "tertiary": float(event.get("temporal", 0.0) or 0.0),
-                            "ce": float(event.get("ce", loss) or loss),
+                            "primary": float(event.get("primary", event.get("ce", loss))),
+                            "secondary": float(event.get("secondary", event.get("aux", 0.0))),
+                            "tertiary": float(event.get("tertiary", event.get("temporal", 0.0))),
+                            "ce": float(event.get("ce", 0.0)),
                             "aux": float(event.get("aux", 0.0) or 0.0),
                             "temporal": float(event.get("temporal", 0.0) or 0.0),
                             "tps": tps,
+                            "tokens_per_s": float(event.get("tokens_per_s", 0)),
+                            "grad_norm": float(event.get("grad_norm", 0)),
+                            "loss_components": event.get("loss_components", {}),
+                            "recurrent_loss": float(event.get("recurrent_loss", 0)),
+                            "lookahead_loss": float(event.get("lookahead_loss", 0)),
                         }
                         self._put_metric(metric)
                         self._put(
                             f"[MLX {mode.upper()}] step={step}/{self.total_steps} loss={loss:.4f} "
+                            f"primary={metric['primary']:.4f} aux={metric['aux']:.4f} "
+                            f"recurrent={metric['recurrent_loss']:.4f} grad_norm={metric['grad_norm']:.3f} "
+                            f"tokens/s={metric['tokens_per_s']:.0f} "
                             f"steps/s={tps:.2f} lr={float(event.get('lr', 0.0) or 0.0):.2e} "
                             f"elapsed={float(event.get('elapsed_s', 0.0) or 0.0):.1f}s"
                         )
@@ -1480,7 +1512,7 @@ class TrainSession:
                         return
                     if kind == "failed":
                         self._put(
-                            f"[MLX {mode.upper()}] stopped after rollback limit at "
+                            f"[MLX {mode.upper()}] failed ({event.get('reason', 'numerical_error')}) at "
                             f"step={int(event.get('step', 0) or 0)}/{int(event.get('steps', self.total_steps) or self.total_steps)}"
                         )
                         return
@@ -1496,6 +1528,7 @@ class TrainSession:
                     checkpoint_path=mlx_checkpoint_path,
                     save_dir=save_dir,
                     loader=loader,
+                    validation_loader=val_loader,
                     prompts=prompts,
                     teacher_path=stage_args.teacher_path if mode == "distill" else None,
                     args=stage_args,
@@ -1515,7 +1548,7 @@ class TrainSession:
                 if result.stopped:
                     self.status = "error"
                     self._put(
-                        f"[MLX {mode.upper()}] Stopped after rollback limit in {elapsed:.1f}s. "
+                        f"[MLX {mode.upper()}] Failed ({getattr(result, 'failure_reason', 'numerical_error')}) in {elapsed:.1f}s. "
                         f"Last finite checkpoint → {result.checkpoint_path}"
                     )
                     if result.checkpoint_saved:
@@ -1527,10 +1560,19 @@ class TrainSession:
                 return
 
             model = model.to(device)
-            from chronos.trainer.optim_utils import build_optimizer, get_lr, apply_lr
-            optimizer = build_optimizer(model, lr=base_lr, weight_decay=weight_decay)
-            train_autocast = autocast_context(device, cfg.get("dtype", "auto"))
-            scaler = grad_scaler(device, cfg.get("dtype", "auto"))
+            from chronos.trainer.optim_utils import build_configured_optimizer, get_lr, apply_lr
+            optimizer = build_configured_optimizer(
+                model, model_cfg, lr=base_lr, weight_decay=weight_decay,
+            )
+            from chronos.trainer.paged_store import PagedTrainingController
+            paged_training = PagedTrainingController(model, model_cfg)
+            # One compute dtype end to end (weights, activations, KV) with
+            # FP32 masters in the optimizer; no autocast per-op casts.
+            from chronos.trainer.precision_training import attach_precision
+            precision, train_autocast, scaler = attach_precision(
+                model, optimizer, device, cfg.get("dtype", "auto"))
+            self._put(f"[precision] {precision.backend}/{precision.device}: compute={precision.compute} "
+                      f"master={precision.master} ({precision.reason})")
 
             model.train()
             global_step = 0
@@ -1546,12 +1588,27 @@ class TrainSession:
                 model.eval()
                 tot, n = 0.0, 0
                 with torch.no_grad():
-                    for k, (vx, vy) in enumerate(val_loader):
+                    for k, vbatch in enumerate(val_loader):
                         if k >= 50:  # cap eval cost
                             break
+                        if isinstance(vbatch, dict):
+                            vx, vy = vbatch["input_ids"], vbatch["labels"]
+                            vmedia, vmedia_mask = vbatch.get("modality_inputs"), vbatch.get("modality_mask")
+                        else:
+                            vx, vy = vbatch
+                            vmedia = vmedia_mask = None
                         vx = vx.to(device); vy = vy.to(device)
-                        with autocast_context(device, cfg.get("dtype", "auto")):
-                            vout, _ = model(vx, labels=vy)
+                        if vmedia:
+                            vmedia = {key: value.to(device) for key, value in vmedia.items()}
+                        if vmedia_mask is not None:
+                            vmedia_mask = vmedia_mask.to(device)
+                        with autocast_context(device, cfg.get("dtype", "auto"), model=model):
+                            eval_masks = paged_training.masks_for_forward(device, allow_evict=False)
+                            vout = model(
+                                vx, labels=vy,
+                                modality_inputs=vmedia, modality_mask=vmedia_mask,
+                                available_expert_masks=eval_masks,
+                            )
                         tot += float(vout.loss.item()); n += 1
                 model.train()
                 return tot / max(n, 1)
@@ -1564,19 +1621,35 @@ class TrainSession:
                         trainer = ChronosSFTTrainer(model, model_cfg, stage_args, tokenizer)
                         if float(getattr(model_cfg, "lambda_router_anchor", 0.0)) > 0 and loader is not None:
                             first_batch = next(iter(loader))
-                            trainer.set_calibration_batch(first_batch[0])
+                            if isinstance(first_batch, dict):
+                                trainer.set_calibration_batch(
+                                    first_batch["input_ids"],
+                                    modality_inputs=first_batch.get("modality_inputs"),
+                                    modality_mask=first_batch.get("modality_mask"),
+                                )
+                            else:
+                                trainer.set_calibration_batch(first_batch[0])
                             self._put("[SFT] Router anchor reference captured.")
                         iters = _planned_epoch_iters(loader, stage_args.steps)
                         stage_global_step = 0
                         for epoch in range(stage_args.epochs):
                             epoch_start = time.monotonic()
-                            for step_idx, (ids, labels) in enumerate(loader, start=1):
+                            for step_idx, batch in enumerate(loader, start=1):
                                 if self._stop.is_set():
                                     break
                                 if step_idx > iters or (stage_args.steps is not None and stage_global_step >= stage_args.steps):
                                     break
                                 stage_global_step += 1
-                                result = trainer.train_step(ids, labels, stage_global_step, self.total_steps)
+                                if isinstance(batch, dict):
+                                    ids, labels = batch["input_ids"], batch["labels"]
+                                    result = trainer.train_step(
+                                        ids, labels, stage_global_step, self.total_steps,
+                                        modality_inputs=batch.get("modality_inputs"),
+                                        modality_mask=batch.get("modality_mask"),
+                                    )
+                                else:
+                                    ids, labels = batch
+                                    result = trainer.train_step(ids, labels, stage_global_step, self.total_steps)
                                 if step_idx % stage_args.log_interval == 0 or step_idx == iters:
                                     elapsed = max(time.monotonic() - epoch_start, 1e-6)
                                     self._record_stage_metric(mode, stage_global_step, result, tps=step_idx / elapsed)
@@ -1691,19 +1764,33 @@ class TrainSession:
                         trainer = ChronosDistillTrainer(model, teacher, model_cfg, stage_args, tokenizer)
                         if float(getattr(model_cfg, "lambda_router_anchor", 0.0)) > 0 and loader is not None:
                             first = next(iter(loader))
-                            trainer.set_calibration_batch(first[0])
+                            if isinstance(first, dict):
+                                trainer.set_calibration_batch(
+                                    first["input_ids"], modality_inputs=first.get("modality_inputs"),
+                                    modality_mask=first.get("modality_mask"),
+                                )
+                            else:
+                                trainer.set_calibration_batch(first[0])
                             self._put("[DISTILL] Router anchor reference captured.")
                         iters = _planned_epoch_iters(loader, stage_args.steps)
                         stage_global_step = 0
                         for epoch in range(stage_args.epochs):
                             epoch_start = time.monotonic()
-                            for step_idx, (ids, labels) in enumerate(loader, start=1):
+                            for step_idx, batch in enumerate(loader, start=1):
                                 if self._stop.is_set():
                                     break
                                 if step_idx > iters or (stage_args.steps is not None and stage_global_step >= stage_args.steps):
                                     break
                                 stage_global_step += 1
-                                result = trainer.train_step(ids, labels, stage_global_step, self.total_steps)
+                                if isinstance(batch, dict):
+                                    result = trainer.train_step(
+                                        batch["input_ids"], batch["labels"], stage_global_step, self.total_steps,
+                                        modality_inputs=batch.get("modality_inputs"),
+                                        modality_mask=batch.get("modality_mask"),
+                                    )
+                                else:
+                                    ids, labels = batch
+                                    result = trainer.train_step(ids, labels, stage_global_step, self.total_steps)
                                 if step_idx % stage_args.log_interval == 0 or step_idx == iters:
                                     elapsed = max(time.monotonic() - epoch_start, 1e-6)
                                     self._record_stage_metric(mode, stage_global_step, result, tps=step_idx / elapsed)
@@ -1724,17 +1811,33 @@ class TrainSession:
             for epoch in range(epochs):
                 if self._stop.is_set() or stop_outer:
                     break
-                for step, (input_ids, labels) in enumerate(loader, start=1):
+                for step, batch in enumerate(loader, start=1):
                     if self._stop.is_set():
                         break
                     if max_steps and global_step >= max_steps:
                         stop_outer = True
                         break
+                    if isinstance(batch, dict):
+                        input_ids, labels = batch["input_ids"], batch["labels"]
+                        media, media_mask = batch.get("modality_inputs"), batch.get("modality_mask")
+                    else:
+                        input_ids, labels = batch
+                        media = media_mask = None
                     input_ids = input_ids.to(device)
                     labels = labels.to(device)
+                    if media:
+                        media = {key: value.to(device) for key, value in media.items()}
+                    if media_mask is not None:
+                        media_mask = media_mask.to(device)
 
                     with train_autocast:
-                        out, lp = model(input_ids, labels=labels)
+                        paged_masks = paged_training.masks_for_forward(device)
+                        result = model(
+                            input_ids, labels=labels,
+                            modality_inputs=media, modality_mask=media_mask,
+                            available_expert_masks=paged_masks,
+                        )
+                        out, lp = result.legacy_tuple()
                         moe_layers = [l.mlp for l in model.model.layers
                                       if isinstance(l.mlp, ChronosMOEFeedForward)]
 
@@ -1786,6 +1889,7 @@ class TrainSession:
                             model.parameters(),
                             1.0,
                         )
+                        paged_training.observe()
 
                     if global_step % log_interval == 0:
                         now = time.monotonic()
@@ -1865,8 +1969,8 @@ class TrainSession:
                             with torch.no_grad():
                                 gen = ids.clone()
                                 for _ in range(80):
-                                    with autocast_context(device, cfg.get("dtype", "auto")):
-                                        o, _ = model(gen, use_cache=False)
+                                    with autocast_context(device, cfg.get("dtype", "auto"), model=model):
+                                        o = model(gen, use_cache=False)
                                     nxt = o.logits[:, -1, :].argmax(dim=-1, keepdim=True)
                                     gen = torch.cat([gen, nxt], dim=-1)
                                     if int(nxt.item()) == (tokenizer.eos_token_id or -1):
@@ -1919,7 +2023,24 @@ class TrainSession:
 
     def _load_tokenizer(self):
         from transformers import AutoTokenizer
-        return AutoTokenizer.from_pretrained(chronos.deps.get_tokenizer_path())
+        path = resolve_tokenizer_dir(self.tokenizer_path)
+        tok = AutoTokenizer.from_pretrained(path)
+        if self.vocab_size and len(tok) > self.vocab_size:
+            raise ValueError(
+                f"tokenizer at {path} has {len(tok)} tokens but the model vocab_size is "
+                f"{self.vocab_size}; set vocab_size >= {len(tok)} or pick the matching tokenizer"
+            )
+        return tok
+
+
+def resolve_tokenizer_dir(configured: str | None) -> str:
+    """Config ``tokenizer_path`` (a Chronos Tokenizer Builder output) wins; else minimind."""
+    configured = os.path.expanduser(str(configured or "").strip())
+    if configured:
+        if not os.path.isfile(os.path.join(configured, "tokenizer.json")):
+            raise FileNotFoundError(f"tokenizer_path {configured!r} has no tokenizer.json")
+        return configured
+    return chronos.deps.get_tokenizer_path()
 
 
 _session = TrainSession()

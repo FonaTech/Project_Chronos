@@ -16,13 +16,17 @@ import chronos.deps  # ensure minimind on sys.path
 
 import argparse
 from torch.utils.data import DataLoader
-from transformers import AutoTokenizer
 
 from chronos.backend import resolve_training_device
 from trainer.trainer_utils import setup_seed, Logger
-from chronos.data.flexible_dataset import FlexibleDataset as PretrainDataset
+from chronos.data.flexible_dataset import (
+    FlexibleDataset as PretrainDataset,
+    MultimodalStreamingDataset,
+    dataset_modality_summary,
+    multimodal_collate,
+)
 from chronos.trainer.chronos_trainer import ChronosTrainer
-from chronos.trainer.stage_utils import add_topology_args, build_pretrain_config
+from chronos.trainer.stage_utils import add_topology_args, build_pretrain_config, load_stage_tokenizer
 from chronos.model.checkpoint import save_state_dict_with_config
 from chronos.trainer.device_utils import configure_cpu_threads, dataloader_kwargs, runtime_summary
 
@@ -74,13 +78,25 @@ def main():
 
     config = build_pretrain_config(args)
 
-    tokenizer = AutoTokenizer.from_pretrained(
-        chronos.deps.get_tokenizer_path()
-    )
-    dataset = PretrainDataset(args.data_path, tokenizer, max_length=args.max_seq_len)
+    modality_summary = dataset_modality_summary(args.data_path)
+    if config.auto_detect_modalities:
+        config.modalities = modality_summary["detected_modalities"]
+
+    tokenizer = load_stage_tokenizer(args, config)
+    if config.modalities:
+        dataset = MultimodalStreamingDataset(
+            args.data_path, tokenizer, max_length=args.max_seq_len,
+            image_size=config.image_size,
+            audio_sample_rate=config.audio_sample_rate,
+            max_audio_seconds=config.max_audio_seconds,
+            media_error_policy=config.media_error_policy,
+        )
+    else:
+        dataset = PretrainDataset(args.data_path, tokenizer, max_length=args.max_seq_len)
     loader = DataLoader(
         dataset,
         batch_size=args.batch_size,
+        collate_fn=multimodal_collate if config.modalities else None,
         **dataloader_kwargs(device=args.device, num_workers=args.num_workers, shuffle=True),
     )
 
@@ -109,6 +125,7 @@ def main():
            f"experts={config.num_experts} shared={config.num_shared_experts} "
            f"lookahead={config.lookahead_steps} "
            f"λ1={config.lambda_balance} λ2={config.lambda_temporal}")
+    Logger(f"Dataset modalities: {modality_summary}")
     rt = runtime_summary(args.device, args.dtype)
     Logger(
         f"Training backend: {selected_backend}  device={args.device} "
@@ -132,7 +149,10 @@ def main():
     import os
     os.makedirs(args.save_dir, exist_ok=True)
     ckp = os.path.join(args.save_dir, f"chronos_{config.hidden_size}_moe.pth")
-    save_state_dict_with_config(trainer.model, ckp, config, stage="chronos")
+    save_state_dict_with_config(
+        trainer.model, ckp, config, stage="chronos",
+        extra={"dataset_modality_summary": modality_summary},
+    )
     Logger(f"Saved → {ckp}")
 
 

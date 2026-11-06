@@ -2,7 +2,6 @@
 import argparse
 
 import chronos.deps  # noqa
-from transformers import AutoTokenizer
 
 from chronos.backend import resolve_training_device
 from chronos.model.model_chronos import ChronosForCausalLM
@@ -10,6 +9,7 @@ from chronos.trainer.grpo_trainer import ChronosGRPOTrainer, load_grpo_prompts
 from chronos.trainer.stage_utils import (
     add_topology_args,
     build_config_from_upstream,
+    load_stage_tokenizer,
     load_required_checkpoint,
 )
 
@@ -56,7 +56,7 @@ def main():
         max_positions=args.max_seq_len + args.max_gen_len,
         lambda_router_anchor=args.lambda_router_anchor,
     )
-    tokenizer = AutoTokenizer.from_pretrained(chronos.deps.get_tokenizer_path())
+    tokenizer = load_stage_tokenizer(args, cfg, ckp_path)
     prompts = load_grpo_prompts(args.data_path, max_prompts=None)
     if selected_backend == "mlx":
         from chronos.mlx.training import run_mlx_stage

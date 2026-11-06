@@ -54,6 +54,99 @@ sequenceDiagram
 
 ---
 
+## v3 内核：循环深度 MoE（0.3.0）
+
+v3 让少量物理层被多次复用。执行分三段：
+- Prelude 执行一次。
+- 每个共享循环组循环 `recurrent_depth` 次，每次做收缩式更新 `h ← h + dt·(block(h + e_loop) − h)`。
+- Coda 执行一次。
+
+50M demo 有 6 个物理层，实际执行 18 个虚拟层（prelude 1 + 4 个循环层 × 深度 4 + coda 1）。
+
+```mermaid
+flowchart LR
+    X["tokens"] --> P["Prelude<br/>执行一次"]
+    P --> G["循环组<br/>MLA / SWA + top-2 MoE"]
+    G -->|"循环 d = 1..D<br/>收缩更新，ACT 退出"| G
+    G --> C["Coda<br/>执行一次"]
+    C --> H["LM head"]
+    P -. "lookahead 输入" .-> LR["LookaheadRouter<br/>专家预取"]
+```
+
+**相对 v2 的变化**
+
+| | v2 | v3 |
+|---|---|---|
+| 循环内注意力 | 只在第 0 轮执行（`first_only`） | 每轮都执行 |
+| 每个循环层的 KV cache | 1 个槽位；打开"每轮注意力"开关时每轮重写（实测 prefill+decode 与 full forward 偏差 0.94） | `shared_first`：每轮重算 Q，K/V 取第 0 轮，KV 槽位数 = 物理层数 |
+| 路由 | top-1（gate 拿不到 CE 梯度） | top-2 + 1 个共享专家 |
+| MoE 调度 | Python 逐专家循环，含 `.item()` 同步 | 排序分组调度：MLX 用 `gather_mm`，Torch 用 `argsort` + `index_add_` |
+| 提前退出 | 每步同步 host | 纯张量 ACT，结果精确且与 batch 无关；decode 可逐 token 退出，不留 KV 缺口 |
+| 解码 | 普通自回归 | 循环深度自推测解码 |
+
+`per_iteration`（每个虚拟层一个 KV 槽位）保留，用于消融对比。v2 checkpoint 自动以 `first_only` 加载，logits 与保存的 golden 张量误差在 1e-5 以内。
+
+**自推测解码（不增加参数）**
+- 同一个模型先用浅深度起草 γ 个 token，再用一次全深度批量前向校验。
+- greedy 输出与全深度 greedy 逐 token 一致。
+- 采样使用 rejection sampling，保持全深度的分布不变。
+- 拒绝后截断 cache：MLA 截断 `c_kv`，滑窗 cache 保留 `窗口 + γ_max` 个条目。
+- Torch（`chronos/runtime/speculative.py`）与 MLX（`chronos/mlx/speculative.py`、`ChronosMLXInferenceEngine.generate(speculative=True)`）使用同一套算法。
+- 两个后端的测试都覆盖 greedy 一致性、拒绝采样分布，以及回滚结果与从头 prefill 一致。
+- Web UI 推理 Tab 提供自推测开关，可调起草深度和 γ。
+- 50M demo 在实测过的所有运行时上都结果一致，但都没有提速。实测条件：预训练 step 13,996 checkpoint，greedy，batch 1，FLORES+ dev 英→中，起草深度 1，γ 4。报告在 `reports/speculative/`。
+
+| 运行时 | 普通 tok/s | 自推测 tok/s | 比值 | 接受率 |
+|---|---|---|---|---|
+| MLX GPU bf16，专家全部在内存 | 112.0 | 107.4 | 0.96× | 42 % |
+| MLX GPU bf16，懒加载专家（216 页中常驻 12 页） | 43.7 | 32.0 | 0.73× | 42 % |
+| Torch MPS fp32，专家全部加载 | 32.1 | 25.9 | 0.81× | 40 % |
+| Torch MPS fp32，懒加载专家 | 17.0 | 14.7 | 0.86× | 40 % |
+
+- 这个规模下，一次全深度单步的开销与一次批量校验相当。
+- 懒加载时，起草和校验路由到的专家不同，自推测从 SSD 读取的专家页多出 1.4–1.6 倍。
+- greedy 输出在 CPU fp32 和 Torch MPS fp32 下完全一致；GPU bf16 下，24 句中有 2 句在近似平票的位置翻转了 token。
+- 因此该开关默认关闭。
+
+**精度链路**
+- 全链路使用同一个计算精度。
+- FP32 只用在收益明确的位置：RMSNorm 统计量、SDPA softmax、RoPE 表、路由 softmax、LM head logits、优化器 master 权重。
+- MLX↔Torch 的 bf16 互转逐位一致。
+- `auto` 在 MLX GPU 和 CUDA 上选 bf16，在 CPU 和 MPS 上选 fp32（MPS 的 bf16 实测更慢，见下文）。
+
+**v3 新增工具**
+
+| 命令 | 作用 |
+|---|---|
+| `chronos tokenizer` | 自研字节回退 BPE：按文字脚本预切分，按语言平衡合并；输出 HF 兼容的 `tokenizer.json` 和 chat template |
+| `chronos corpus download / build / shards` | 固定版本下载、清洗、全局去重、剔除评测集泄漏、生成 uint16 分片 |
+| `chronos longrun --spec recipe.json`（别名 `run`） | 按墙钟预算训练的 MLX 任务：每个阶段 warmup + cosine，NaN 回滚，续跑逐位一致，带验证和翻译探针 |
+| `chronos serve` | 原生运行时上的 Ollama/OpenAI 协议服务（见下文） |
+| `chronos monitor` | 只读训练监控页面 + JSON API（见下文） |
+
+`chronos.model.factory.fit_config` 按总参数量和激活参数量目标搜索模型配置。
+
+**50M 英译中 demo（进行中）**
+- 模型：总参数 49.69M，激活 12.09M；36 个专家；MLA latent 128；SWA 窗口 128；自研 16k 词表。
+- 训练：72 小时 MLX bf16 任务（先预训练，后 SFT），2026-11-05 启动。
+- 中途实测：预训练第 13,996 步（计划约 24.7k 步）valid CE 为 2.477（第 1,656 步时为 3.012）。该 checkpoint 已打包为 `chronos-enzh-50m-pretrain-s13996`（见“模型包”）。
+- FLORES+ 和 WMT22 上的 BLEU/chrF，以及各项消融（注意力模式、深度、懒加载专家预算、推测 γ），等训练结束后公布。在此之前不给出任何质量数字。
+
+**推理与内存选项（全部默认关闭）。** 每个选项既是 config 字段，也可作为 `chronos serve` 和 Inference Tab 的覆盖项；测试在 Torch 和 MLX 上把每个选项与参考路径做对比。
+
+| 字段 | 取值（第一个为默认） | 作用 |
+|---|---|---|
+| `kv_cache_dtype` | `auto`、`int8` | `int8` 把 MLA `c_kv` 与 SWA k/v 按 token、每 32 元素一组量化并带 scale；回滚和推测解码都支持 |
+| `mla_decode` | `expanded`、`absorbed`、`auto` | `absorbed` 直接对 `c_kv` 打分，不展开 K/V。`auto` 只对短的缓存块做吸收，改为显式开启，因为实测 bf16 下“prefill 走 expanded、decode 走 absorbed”会偏离 full forward（logit 最大差 0.06） |
+| `mla_cache_rope` | `false`、`true` | 额外缓存已加 RoPE 的 key，用内存换 decode 速度 |
+| `router_scope` | `per_iteration`、`shared` | `shared` 让循环后续各轮复用第 0 轮的专家，每个 token 驻留的专家更少 |
+| `draft_exit_kl_coef`、`draft_exit_depth` | `0`、`1` | 训练项：浅层出口对 detach 后的全深度 logits 做 KL，提高推测解码接受率 |
+| `max_resident_experts`、`ram_budget_mb` | 不设 | 快速层和 RAM 层的硬上限；LRU 不淘汰 lookahead 预测要用的专家；预取覆盖一个虚拟层的全部循环轮次 |
+
+Web UI 新增 Tokenizer Tab（抽取 → 训练 → 评估）和 Serve Tab（启停 `chronos serve`；API key 通过环境变量传入，不进 argv）。
+
+---
+
 ## 三级存储架构（M1：cluster-aware safetensors）
 
 ```mermaid
@@ -183,7 +276,7 @@ flowchart LR
 
 训练精度与资源策略：
 
-- 默认 `--dtype auto`。MPS/MLX 训练优先解析为 BF16 以保证稳定性，CUDA/XPU 解析为 FP16；CPU 默认 FP32，只有显式传 `--dtype float16` 或 `--dtype bfloat16` 才启用 CPU autocast。
+- 默认 `--dtype auto`。权重、激活、KV cache 和专家页统一使用一个计算精度。FP32 只保留在融合 kernel 内部（SDPA softmax、RMSNorm 统计量），以及 RoPE 表、路由 softmax、loss logits 和优化器的 FP32 master/moments。`auto` 的解析结果：MLX GPU 为 BF16；CUDA 为 BF16，不支持时改用 FP16 并开启 loss scaling；CPU 和 MPS 为 FP32。在 MPS 上，原生 BF16 实测比 FP32 慢：M5 Max、torch 2.10、Chronos 50M 每个训练步 0.749 s 对 0.619 s，decode 每个 token 49.1 ms 对 37.3 ms。如需把权重和 KV 内存减半，可以显式传 `--dtype bfloat16`，代价是速度。
 - CPU 训练默认使用物理核心；可用 `--cpu_threads` 或 `--cpu_budget_percent` 覆盖。
 - macOS 上 MPS/MLX 训练默认强制 DataLoader workers 为 `0`，避免 multiprocessing 触发 Metal command-buffer 崩溃。CPU/CUDA 仍可使用 worker 进程；高级用户可用 `CHRONOS_ALLOW_METAL_DATALOADER_WORKERS=1` 覆盖这个保护。
 - MLX 原生训练会按 `log_interval` 同步 UI 日志、标量读数和图表点；Web UI Stop 会在每个 batch 边界检查并停止。
@@ -194,8 +287,8 @@ trainer 在 `chronos.mlx.*` 中复刻 PyTorch 训练栈：masked CE、DPO/ORPO/G
 蒸馏损失、load balance、temporal locality、lookahead soft-target 监督、
 lookahead top-k 命中损失、router KL anchor。即使权重使用 BF16/FP16，路由
 softmax、CE、Adam moments 等数值敏感路径仍以 FP32 计算；因此 `auto` 在
-MLX/MPS 上默认优先 BF16。FP16 的指数范围太小，在小模型/小 batch/路由分布
-剧烈波动时更容易把 loss 推成 NaN。
+MLX GPU 上默认 BF16（MPS 实测 FP32 更快，默认 FP32）。FP16 的指数范围太小，
+在小模型/小 batch/路由分布剧烈波动时更容易把 loss 推成 NaN。
 
 Web UI 的 MLX 训练日志与 CPU/MPS 对齐：step、loss、steps/s、ETA、
 checkpoint 保存事件、stop 事件、verify 结果都会同步到界面。Stop 在 batch
@@ -337,7 +430,7 @@ D_{\mathrm{KL}}
 
 ---
 
-## 安装  (Not Ready in PyPI Yet)
+## 安装
 
 ```bash
 pip install Project_Chronos
@@ -356,22 +449,29 @@ pip install -e ".[dev]"
 pip install "Project_Chronos[mlx]"
 ```
 
+**可选依赖组**（版本已固定）：
+```bash
+pip install "Project_Chronos[serve]"      # chronos serve / chronos monitor（fastapi、uvicorn）
+pip install "Project_Chronos[translate]"  # 语料反分词 + BLEU/chrF 探针（sacremoses、sacrebleu）
+```
+
 **vLLM 服务（可选，仅 Linux+CUDA）：**
 ```bash
 pip install vllm
 ```
 
 > **minimind 依赖**：Project Chronos 使用 [minimind](https://github.com/jingyaogong/minimind) 作为 MoE 内核。
-> 若本地未找到，首次 import 时自动克隆至 `~/.cache/chronos/minimind-master/`。
+> 若本地未找到，首次 import 时自动克隆至 `~/.cache/chronos/minimind-master/`（需要 `git` 和网络）。
+> 设置 `CHRONOS_MINIMIND_DIR=/path/to/minimind` 可改用本地副本；模型包自带 `third_party/minimind`，启动脚本会设置这个变量。
 > minimind 采用 **Apache-2.0** 授权，完整归属见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
-**环境要求**：Python 3.10+，PyTorch 2.4+
+**环境要求**：Python 3.10+，PyTorch 2.6+
 
 ---
 
 ## 快速开始
 
-### Web UI（M6 — 8 个 Tab，4 种语言）
+### Web UI（12 个 Tab，4 种语言）
 
 ```bash
 chronos-ui
@@ -379,7 +479,116 @@ chronos-ui
 python chronos_app.py
 ```
 
-包含：⚙️ Config（含右侧实时参数估算面板，合并了 Designer）/ 🏋️ Train（拥有 data_path）/ 🧪 6-Stage Pipeline（每阶段独立数据路径）/ 💬 Inference（含懒加载 vs 全量 DRAM 对比）/ 📦 Export（FP16/Q8_0 safetensors 与 GGUF）/ 📊 Benchmark（Markdown 表 + 对比图）/ 🔬 Auto-Tune（持久化日志 + 一键 Apply Best → Config）/ 📡 IO Monitor。i18n 支持 zh-Hans / zh-Hant / en / ja。
+包含：⚙️ Config（v3 预设、自动规划器和实时参数估算面板）/ 🗂️ Data（数据集扫描与转换）/ 🔤 Tokenizer（从数据集抽取文本、训练 Chronos BPE、评估并保存）/ 🏋️ Train（拥有 data_path，按所选阶段合并阶段参数）/ 📈 Training Monitor（只读监控 `runs/`，见下文）/ 🧪 6-Stage Pipeline（每阶段独立数据路径）/ 💬 Inference（含懒加载 vs 全量 DRAM 对比）/ 📦 Export（FP16/Q8_0 safetensors 与 GGUF）/ 🛰️ Serve（启停 `chronos serve` 并查看日志）/ 📊 Benchmark（Markdown 表 + 对比图）/ 🔬 Auto-Tune（持久化日志 + 一键 Apply Best → Config）/ 📡 IO Monitor。i18n 支持 zh-Hans / zh-Hant / en / ja。窗口宽 1280 px 时，Gradio 会把最后几个 Tab（Auto-Tune、IO Monitor）收进 “…” 溢出菜单。
+
+### 预设与自动规划器
+
+Config Tab 提供 5 档 v3 预设。它们都由规划器生成，存放在 `ui/presets_v3.json`，可用 `python -m ui.presets` 重新生成。参数量在 meta device 上实测，峰值内存是估算值。
+
+| 预设 | 总参数 / 激活参数（实测） | 形状 | 内存档位 | 训练峰值（估算） |
+|---|---|---|---|---|
+| Chronos-v3 Tiny (smoke / CI) | 1.51M / 1.29M | E4 top-2，词表 6400，seq 128，深度 2 | none | 2.13 GB |
+| Chronos-v3 50M (en→zh recipe) | 49.69M / 12.09M | h384，L6，E36 top-2，词表 16384，seq 512 | none | 16.4 GB（正在跑的任务实测峰值 8.72 GB） |
+| Chronos-v3 200M (32 GB)（默认） | 200.72M / 28.20M | h576，E32 top-2 | balanced | 10.14 GB |
+| Chronos-v3 500M (32 GB) | 499.53M / 61.59M | E48 top-3 | aggressive | 9.26 GB |
+| Chronos-v3 1B (64 GB) | 1002.17M / 99.74M | E64 top-4，seq 2048 | aggressive | 18.92 GB |
+
+旧预设名（Recommended-CN、Tiny/Small/Medium/Large）仍可加载，会映射到最接近的 v3 档位。
+
+**自动规划器**（Config Tab →“自动规划”）
+
+输入：
+- 目标总参数量、是否开启 MoE；
+- 专家数，以及“激活专家数”或“激活参数量”二选一；
+- 内存节省档位：`none`、`balanced`、`aggressive`、`extreme`；
+- 可选：数据集路径、内存、token 预算、词表大小、序列长度。
+
+`chronos.model.planner.plan_training` 的处理步骤：
+1. **分析数据集。** 读取分片 manifest 或抽样文件，把记录分成预训练、SFT、偏好、RL 四类，并读取分词器报告。数据里有词表大小、序列长度（p95 或上限）、token 数和分词器路径时，直接采用。
+2. **搜索架构。** 找出 meta device 实测参数量最接近目标的隐藏维度、层数、专家宽度和 GQA 头数。
+3. **确定学习率和 batch。** 按 DeepSeek LLM 的计算最优拟合式（η = 0.3118·C^−0.125，B = 0.2920·C^0.3271）给出，宽模型的学习率另设上限。
+4. **匹配内存。** 按内存档位选择 micro-batch、梯度累积、int8 KV、路由范围、激活检查点、优化器分页和专家 RAM 预算。
+5. **生成各阶段参数。** pretrain、SFT、DPO、ORPO、GRPO、distill 各有独立的学习率、batch、epoch、保存间隔，以及各自的专用项（β、温度、α）。
+
+阶段表可以直接编辑。Train Tab 会把所选阶段那一行合并到共享参数之上；pretrain 行与共享控件保持同步。“保存方案”把 config、各阶段参数和报告写成 JSON。报告里每个数字都标注实测或估算。
+
+### 训练监控（控制台 Tab + 独立页面/API）
+
+`chronos longrun` 的运行目录包含以下文件：
+- `run_spec.json`、`metrics.jsonl`；
+- `status.json`：心跳；
+- `runtime.json`：精度策略、设备、版本、代码哈希；
+- `parameters.jsonl`：逐张量的权重、梯度、更新量统计，以及逐虚拟层路由；
+- `samples.jsonl`、`inspections/` 和 checkpoint。
+
+控制台的 **Training Monitor** Tab 和独立页面读取的是同一批文件，都不会占用训练设备。遥测功能上线前启动的运行同样能显示进度，其状态由 `metrics.jsonl` 和进程表推断。
+
+```bash
+chronos monitor --runs-dir runs                    # http://127.0.0.1:7870/
+chronos serve --models-dir exports --monitor-runs-dir runs   # 同一页面挂在 /monitor/
+```
+
+JSON API（只读）：
+- `GET /api/state?run=&history=1`
+- `/api/metrics?run=&phase=&since=`
+- `/api/parameters`、`/api/tensors`、`/api/tensor?name=`
+- `/api/log?bytes=`、`/api/runs`
+
+安全：
+- 默认只监听 127.0.0.1，不带认证。
+- 绑定其他地址时，必须同时给出 `--allow-remote` 和 `--api-key`（或设置环境变量 `CHRONOS_MONITOR_KEY`）。
+- 浏览器登录一次后获得 HttpOnly、SameSite=Strict 的会话 cookie；脚本使用 `Authorization: Bearer <key>`。
+- 登录失败有限流。
+- 非本机访问时请加 `--ssl-certfile/--ssl-keyfile` 或使用 TLS 反向代理，否则密钥会以明文在网络上传输。
+
+### Ollama / OpenAI 协议服务
+
+`chronos serve` 把原生 Chronos 运行时挂在 Ollama 和 OpenAI 的 HTTP API 之后。内核不会被转换成其他架构，因此循环深度、SSD 懒加载专家与 lookahead 预取、KV 压缩、自推测解码都保持生效。
+
+```bash
+pip install "Project_Chronos[serve]"
+chronos serve --models-dir ./exports --port 11435        # 11434 会和正在运行的 Ollama 冲突
+OLLAMA_HOST=127.0.0.1:11435 ollama list
+OLLAMA_HOST=127.0.0.1:11435 ollama run <模型名> "你好"
+```
+
+- 接口：`/api/version`、`/api/tags`、`/api/show`、`/api/ps`、`/api/pull`、`/api/generate` 和 `/api/chat`（流式 NDJSON）、`/v1/models`、`/v1/chat/completions`（SSE）。
+- 模型来源：`--models-dir` 下成对的 `<name>.pth` 和 `<name>.config.json`。
+- Chronos 专属参数放在请求的 `options` 里：`chronos_speculative`、`chronos_draft_depth`、`chronos_gamma`、`chronos_miss_policy`。
+- stock `ollama` / llama.cpp 无法执行 Chronos 的 GGUF 文件，因为 MLA+SWA 混合层和收缩式循环没有对应的 stock 实现；请改用本服务。
+- 安全：默认只监听 127.0.0.1，不带认证。绑定其他地址必须同时给出 `--allow-remote` 和 `--api-key`，客户端随后发送 `Authorization: Bearer <key>`。
+
+### 模型包（开箱即用的预训练模型）
+
+`chronos bundle build` 把 `chronos longrun` 某次运行导出的一个 checkpoint 打包成解压即用的目录。打包过程只读取运行目录。
+
+```bash
+chronos bundle build --run-dir runs/enzh_50m_v1 --which best --wheel dist/project_chronos-0.3.0-py3-none-any.whl --pack
+```
+
+| 包内路径 | 内容 |
+|---|---|
+| `model/` | 权重 + `.config.json` 配置文件，分词器（`model/tokenizer/`） |
+| `eval/` | FLORES+ dev/devtest（CC BY-SA 4.0），供 `bundle eval` / `probe` 使用 |
+| `data/sft_valid/` | 该次运行的 SFT 验证分片 |
+| `third_party/minimind/` | 内置 minimind（Apache-2.0），无需 git clone |
+| `wheels/`、`bin/setup.sh`、`bin/chronos` | 离线安装到 `.venv`；启动脚本设置 `CHRONOS_BUNDLE` / `CHRONOS_MINIMIND_DIR` |
+| `recipes/source_run_spec.json`、`recommended.json` | 产生这份权重的配方；微调档位 `smoke` / `quick` / `standard` / `full` |
+| `bundle.json` | 来源信息（步数、token 数、valid CE）、实测质量探针、每个文件的 SHA-256 |
+
+接收方的用法：
+
+```bash
+bin/setup.sh                                              # 建 venv、装 wheel、运行 `bundle check`
+bin/chronos bundle translate "The weather is very nice today."
+bin/chronos bundle translate --backend mlx --speculative --file examples/translate_en.txt
+bin/chronos bundle eval --split devtest -n 200
+bin/chronos bundle prepare-data my_pairs.jsonl --out work/data      # 会从你的数据中剔除 FLORES+
+bin/chronos bundle finetune --data work/data --run-dir work/ft --tier quick --mode sft
+bin/chronos bundle serve -- --port 11435
+```
+
+`--speculative` 要求 `--repetition-penalty 1.0`（此时的默认值），因为惩罚会逐位置改变目标分布。`finetune` 写出一份 `init_checkpoint` 指向包内权重的 `chronos longrun` spec；运行目录里已有训练时会拒绝写入。用许可未知的数据（WMT19、OPUS-100）训练的模型包，`NOTICE.md` 中写明权重仅供研究使用。
 
 ### 部署导出
 
@@ -461,6 +670,22 @@ python tools/compare_minimind_chronos_v3.py \
 
 输出包括：每阶段 loss、HF roundtrip Δlogit、tokens/sec、激活专家比例、常驻专家字节、M3 流水线富余空间、当前主机后端列表。
 
+### v2 循环深度与分页实测
+
+`tools/benchmark_chronos_v2.py` 使用固定种子的可收敛 next-token 任务，对照 v1、固定循环深度 2/4、ACT adaptive，并实际执行 `sync_on_demand`、`on_demand` 和 `fallback_diagnostic` 三种专家分页路径。报告会写入 JSON，包含训练/验证 CE、PPL、next-token accuracy、prefill/decode tokens/s、KV 长度、平均循环深度、early-exit、RSS、专家驻留比例、预测 recall 和 full-resident 精确 token 对齐率。
+
+```bash
+# CPU：完整四组架构 + SSD/分页路径
+python -m tools.benchmark_chronos_v2 \
+    --device cpu --train_steps 60 --output results/chronos_v2_benchmark_cpu.json
+
+# Apple Silicon MPS：功能/质量/Metal 内存快照
+python -m tools.benchmark_chronos_v2 \
+    --device mps --train_steps 20 --output results/chronos_v2_benchmark_mps.json
+```
+
+该基准只代表 tiny 模型的架构回归，不等同于大模型最终能力；CUDA 显存峰值、NVMe 带宽和生产级 tokens/s 必须在目标 CUDA+NVMe 机器上另行运行。
+
 ### 专家聚簇存储（最大化 SSD 顺序读）
 
 ```python
@@ -502,7 +727,10 @@ Project_Chronos/
 │   ├── deps.py                    # 自动下载 minimind（若本地未找到）
 │   ├── __init__.py                # 注册 AutoConfig / AutoModelForCausalLM
 │   ├── model/
-│   │   ├── config.py              # ChronosConfig（lookahead/temporal/anchor/storage_format 等）
+│   │   ├── config.py              # ChronosConfig（lookahead/temporal/anchor/storage_format、v3 字段与 v2 迁移）
+│   │   ├── recurrent.py           # 循环/组嵌入、收缩步长、纯张量 ACT
+│   │   ├── precision_ops.py       # 单一计算精度的 RMSNorm/SDPA/RoPE
+│   │   ├── factory.py             # 按参数预算搜索配置
 │   │   ├── hybrid_attention.py    # MLAAttention + SlidingWindowAttention
 │   │   ├── lookahead_router.py    # 逐 token 前瞻预测器（第二层）
 │   │   ├── moe_chronos.py         # ChronosMOEFeedForward + 共享专家 + Soft Gating
@@ -521,7 +749,11 @@ Project_Chronos/
 │   │   └── prefill_scheduler.py   # 编排 prefill 阶段批量预加载
 │   ├── mlx/                       # Apple Silicon 原生后端
 │   │   ├── attention.py / moe.py / model.py / expert_store.py / inference.py
+│   │   ├── moe_kernels.py         # 排序 gather_mm 调度（mlx >= 0.32.4）
+│   │   ├── speculative.py         # MLX 自推测解码（与 Torch 对齐）
+│   │   └── training/              # longrun.py、telemetry.py、recipes/
 │   ├── runtime/
+│   │   ├── speculative.py         # 循环深度自推测解码
 │   │   ├── cache_manager.py       # prefetch_for_next_step / ensure_resident（M3）
 │   │   ├── inference_engine.py    # 端到端推理引擎（重排为 H2D-compute 重叠）
 │   │   └── metrics.py             # MetricsBus（IO Monitor 数据源）
@@ -540,14 +772,19 @@ Project_Chronos/
 │   │   ├── io_profiler.py         # Phase 1 验证（前瞻准确率）
 │   │   └── benchmark.py           # 端到端基准测试
 │   ├── data/
-│   │   └── flexible_dataset.py    # 自动识别任意 JSONL 字段格式
+│   │   ├── flexible_dataset.py    # 自动识别任意 JSONL 字段格式
+│   │   └── corpus/                # 下载 / 清洗 / 去重 / 泄漏过滤 / 分片
+│   ├── tokenizer/                 # Chronos BPE 构建器（抽取、规范化、训练、评估）
+│   ├── monitor/                   # 只读运行监控：快照、API 服务、静态页面
 │   ├── backend/
 │   │   ├── __init__.py            # BackendDispatcher（cpu/mps/cuda/mlx）
 │   │   ├── dispatcher.py          # 探针 + 优先级 + 训练能力声明
 │   │   └── ext/opencl.py          # 第三方 OpenCL 插件钩子（stub）
 │   ├── _backend_legacy.py         # 向后兼容 build_model() 等旧 API
+│   ├── bundle/                    # chronos bundle：打包/校验/翻译/微调
 │   ├── serving/
-│   │   ├── __init__.py
+│   │   ├── ollama_server.py       # chronos serve：Ollama/OpenAI 协议层
+│   │   ├── runtime.py             # 模型发现、懒加载专家、推测生成
 │   │   └── vllm_adapter.py        # 可选 vLLM 注册（无 vLLM 时优雅降级）
 │   └── cli.py                     # 统一 CLI
 ├── ui/                            # Gradio Web UI（i18n: zh-Hans/zh-Hant/en/ja）
@@ -555,7 +792,9 @@ Project_Chronos/
 │   ├── estimator.py               # 实时参数量/内存估算（与 Config 同步）
 │   └── tabs/
 │       ├── config_tab.py          # 已合并 Designer，右侧实时估算面板
+│       ├── data_tab.py
 │       ├── train_tab.py           # 拥有 data_path（不再属于 Config）
+│       ├── monitor_tab.py         # Training Monitor（与 chronos.monitor 共用数据层）
 │       ├── pipeline_tab.py        # 6 阶段，每段独立 data_path
 │       ├── inference_tab.py
 │       ├── benchmark_tab.py       # Markdown 表 + gr.BarPlot
@@ -573,8 +812,9 @@ Project_Chronos/
 │   ├── compare_minimind_chronos_v2.py   # v2 (M3+M4)
 │   └── compare_minimind_chronos_v3.py   # v3 (含 6 阶段 + HF roundtrip + 后端报告)
 ├── tests/
-│   ├── test_smoke.py              # 18 个单元测试
-│   ├── test_smoke_cuda.py         # 仅 CUDA 主机执行
+│   ├── test_smoke.py / test_smoke_cuda.py（后者仅 CUDA 主机执行）
+│   ├── test_v3_kernel.py / test_speculative.py / test_moe_dispatch.py / test_precision_chain.py
+│   ├── test_tokenizer_builder.py / test_longrun.py / test_monitor.py
 │   └── fixtures/                  # tiny_pretrain / tiny_sft / tiny_dpo / tiny_grpo
 ├── docs/
 │   └── vllm_integration.md
@@ -616,7 +856,19 @@ timeline
         : HF IO、vLLM adapter、多后端调度
         : Stage 6 蒸馏和可插拔 reward
         : Web UI v2、Benchmark 图表、IO Monitor
+    v3（0.3.0）
+        : 循环深度内核 + shared_first KV
+        : top-2 + 共享专家，分组 MoE 调度
+        : 自推测解码（Torch 与 MLX）
+        : Ollama/OpenAI 协议服务
+        : 开箱即用模型包（chronos bundle）
+        : Chronos 分词器、语料流水线、长时训练器
+        : 训练监控页面、API 与控制台 Tab
+        : int8 KV、MLA 吸收式解码、共享路由（显式开启）
+        : 自动规划器、v3 预设、分词器与 serve Tab
     Next
+        : 50M 英译中结果与消融
+        : 自推测解码：在更大模型与懒加载专家下真正提速的起草路径
         : 大规模激活语料训练 IntentClassifier
         : 7B+ checkpoint 基准测试
         : vLLM worker path mask 注入

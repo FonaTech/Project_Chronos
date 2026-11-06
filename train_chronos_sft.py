@@ -2,14 +2,15 @@
 import argparse
 
 import chronos.deps  # noqa
-from transformers import AutoTokenizer
 
 from chronos.backend import resolve_training_device
 from chronos.model.model_chronos import ChronosForCausalLM
 from chronos.trainer.sft_trainer import ChronosSFTTrainer, build_sft_loader
+from chronos.data.flexible_dataset import dataset_modality_summary
 from chronos.trainer.stage_utils import (
     add_topology_args,
     build_config_from_upstream,
+    load_stage_tokenizer,
     load_required_checkpoint,
 )
 
@@ -54,7 +55,10 @@ def main():
         max_positions=args.max_seq_len,
         lambda_router_anchor=args.lambda_router_anchor,
     )
-    tokenizer = AutoTokenizer.from_pretrained(chronos.deps.get_tokenizer_path())
+    modality_summary = dataset_modality_summary(args.data_path)
+    if cfg.auto_detect_modalities:
+        cfg.modalities = modality_summary["detected_modalities"]
+    tokenizer = load_stage_tokenizer(args, cfg, ckp_path)
     loader = build_sft_loader(
         args.data_path,
         tokenizer,
@@ -62,6 +66,10 @@ def main():
         args.batch_size,
         device=selected_backend if selected_backend == "mlx" else args.device,
         num_workers=args.num_workers,
+        modalities=cfg.modalities, image_size=cfg.image_size,
+        audio_sample_rate=cfg.audio_sample_rate,
+        max_audio_seconds=cfg.max_audio_seconds,
+        media_error_policy=cfg.media_error_policy,
     )
     if selected_backend == "mlx":
         from chronos.mlx.training import run_mlx_stage
@@ -90,7 +98,13 @@ def main():
     # Capture router reference on the first batch BEFORE training
     if cfg.lambda_router_anchor > 0:
         first_batch = next(iter(loader))
-        trainer.set_calibration_batch(first_batch[0])
+        if isinstance(first_batch, dict):
+            trainer.set_calibration_batch(
+                first_batch["input_ids"], modality_inputs=first_batch.get("modality_inputs"),
+                modality_mask=first_batch.get("modality_mask"),
+            )
+        else:
+            trainer.set_calibration_batch(first_batch[0])
         print("[SFT] Router anchor reference captured.")
 
     iters = len(loader) if args.steps is None else min(args.steps, len(loader))

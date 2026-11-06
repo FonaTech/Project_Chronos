@@ -20,52 +20,11 @@ import torch
 from .config import ChronosConfig
 
 
-CHECKPOINT_CONFIG_VERSION = 1
+CHECKPOINT_CONFIG_VERSION = 2
 
-CHECKPOINT_CONFIG_FIELDS = (
-    "hidden_size",
-    "num_hidden_layers",
-    "num_experts",
-    "num_experts_per_tok",
-    "num_shared_experts",
-    "intermediate_size",
-    "moe_intermediate_size",
-    "num_attention_heads",
-    "num_key_value_heads",
-    "head_dim",
-    "rope_dim",
-    "kv_latent_dim",
-    "lookahead_steps",
-    "vocab_size",
-    "max_position_embeddings",
-    "sliding_window_size",
-    "use_hybrid_attention",
-    "use_moe",
-    "tie_word_embeddings",
-    "norm_topk_prob",
-    "router_aux_loss_coef",
-    "lambda_balance",
-    "lambda_temporal",
-    "lambda_lookahead",
-    "lambda_lookahead_topk",
-    "lambda_lookahead_union",
-    "lambda_router_locality",
-    "lambda_router_anchor",
-    "fallback_mask_prob",
-    "offload_miss_policy_default",
-    "recommended_resident_experts",
-    "offload_working_set_experts",
-    "vram_budget_gb",
-    "pinned_memory_max_fraction",
-    "storage_format",
-    "cluster_manifest_path",
-    "dropout",
-    "rms_norm_eps",
-    "rope_theta",
-    "flash_attn",
-    "bos_token_id",
-    "eos_token_id",
-)
+from chronos.config_schema import MODEL_FIELDS
+
+CHECKPOINT_CONFIG_FIELDS = MODEL_FIELDS + ("extra_metadata",)
 VALID_CHRONOS_CONFIG_KEYS = set(CHECKPOINT_CONFIG_FIELDS) | {"max_seq_len"}
 
 SNIFFABLE_TOPOLOGY_FIELDS = (
@@ -136,7 +95,49 @@ def tokenizer_metadata(tokenizer_path: str | None = None) -> dict:
     return meta
 
 
+def resolve_checkpoint_tokenizer(checkpoint_path: str | None = None, explicit: str | None = None,
+                                 *, fallback: bool = True) -> str:
+    """Return the tokenizer directory that belongs to ``checkpoint_path``.
+
+    Order:
+    1. ``explicit``;
+    2. ``<checkpoint dir>/tokenizer`` (bundle layout);
+    3. the ``tokenizer.path`` recorded in the sidecar config;
+    4. the minimind tokenizer, only when ``fallback`` is set.
+
+    A path that exists but holds no ``tokenizer.json`` raises an error.
+    It is never silently skipped, because a wrong vocabulary corrupts training without failing.
+    """
+    explicit = os.path.expanduser(str(explicit or "").strip())
+    if explicit:
+        if not os.path.isfile(os.path.join(explicit, "tokenizer.json")):
+            raise FileNotFoundError(f"tokenizer path {explicit!r} has no tokenizer.json")
+        return explicit
+    if checkpoint_path:
+        candidates = [os.path.join(os.path.dirname(os.path.abspath(checkpoint_path)), "tokenizer")]
+        meta_path = checkpoint_config_path(checkpoint_path)
+        if os.path.exists(meta_path):
+            with open(meta_path, encoding="utf-8") as fh:
+                recorded = (json.load(fh).get("tokenizer") or {}).get("path")
+            if recorded:
+                candidates.append(recorded)
+        for candidate in candidates:
+            if candidate and os.path.isfile(os.path.join(candidate, "tokenizer.json")):
+                return candidate
+    if not fallback:
+        raise FileNotFoundError(f"no tokenizer.json next to {checkpoint_path!r} or in its config metadata")
+    import chronos.deps
+    return chronos.deps.get_tokenizer_path()
+
+
 def config_to_dict(config: ChronosConfig | dict) -> dict:
+    try:
+        from chronos.config_schema import canonical_config_dict
+        canonical = canonical_config_dict(config)
+        canonical.pop("schema_version", None)
+        return {k: v for k, v in canonical.items() if v is not None}
+    except Exception:
+        pass
     if isinstance(config, dict):
         src = dict(config)
         # UI config uses max_seq_len; model config uses max_position_embeddings.
@@ -187,9 +188,17 @@ def save_state_dict_with_config(
     extra: dict | None = None,
 ) -> str:
     os.makedirs(os.path.dirname(os.path.abspath(checkpoint_path)) or ".", exist_ok=True)
+    paging = getattr(model, "_chronos_paged_training_controller", None)
+    if paging is not None:
+        # A complete checkpoint must never serialize zero-sized placeholders.
+        # The next paged forward reapplies the active residency budget.
+        paging.materialize_all()
     state = model.state_dict()
     if half:
-        state = {k: v.half().cpu() for k, v in state.items()}
+        # ``half`` compacts FP32 weights to FP16 (the legacy release format).
+        # Weights already in a 16-bit compute dtype keep it: BF16 -> FP16 would
+        # clip BF16's exponent range for no size gain.
+        state = {k: (v.half() if v.dtype == torch.float32 else v).cpu() for k, v in state.items()}
     torch.save(state, checkpoint_path)
     save_checkpoint_config(checkpoint_path, config, tokenizer_path, stage=stage, extra=extra)
     return checkpoint_path
@@ -204,7 +213,25 @@ def read_checkpoint_config(checkpoint_path: str) -> tuple[dict, str | None]:
     cfg = meta.get("config", meta)
     if not isinstance(cfg, dict):
         return {}, path
-    return dict(cfg), path
+    cfg = dict(cfg)
+    version = int(meta.get("checkpoint_config_version", 1) or 1)
+    if version < 2 and "recurrent_enabled" not in cfg:
+        import warnings
+        warnings.warn(
+            "Loading a Chronos v1 checkpoint in read-only compatibility mode. "
+            "Run `chronos migrate --output ... CHECKPOINT` before v2 training.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        cfg.update({
+            "architecture_version": 1,
+            "recurrent_enabled": False,
+            "recurrent_depth": 1,
+            "min_recurrent_depth": 1,
+            "layer_aware_lookahead": False,
+            "layer_aware_cache": False,
+        })
+    return cfg, path
 
 
 def read_project_config(config_path: str | None = None) -> tuple[dict, str | None]:
@@ -435,6 +462,25 @@ def load_state_dict_controlled(
     allow_missing_substrings: Iterable[str] = (),
     allow_unexpected_prefixes: Iterable[str] = (),
 ) -> tuple[list[str], list[str]]:
+    # Known optional v2 modules are absent from legacy v1 checkpoints.  Keep
+    # this compatibility explicit and topology-gated rather than allowing
+    # arbitrary missing tensors: a v1 model is constructed with the v2
+    # controller object for API stability, but its execution graph is still
+    # disabled by ``recurrent_enabled=False``.
+    model_cfg = getattr(model, "config", None)
+    if model_cfg is not None:
+        legacy_recurrent = (
+            not bool(getattr(model_cfg, "recurrent_enabled", True))
+            or int(getattr(model_cfg, "architecture_version", 2) or 2) < 2
+        )
+        if legacy_recurrent:
+            allow_missing_prefixes = tuple(allow_missing_prefixes) + (
+                "model.recurrent_controller.",
+            )
+        if not getattr(model_cfg, "modalities", None):
+            allow_missing_prefixes = tuple(allow_missing_prefixes) + (
+                "model.multimodal_fusion.",
+            )
     result = model.load_state_dict(state_dict, strict=False)
     if result is None:
         missing, unexpected = [], []

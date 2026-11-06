@@ -36,7 +36,16 @@ except ModuleNotFoundError:  # pragma: no cover - exercised in slim CI
         def change(self, *args, **kwargs):
             return self
 
+        def input(self, *args, **kwargs):
+            return self
+
         def tick(self, *args, **kwargs):
+            return self
+
+        def select(self, *args, **kwargs):
+            return self
+
+        def submit(self, *args, **kwargs):
             return self
 
         def launch(self, **kwargs):
@@ -54,6 +63,7 @@ except ModuleNotFoundError:  # pragma: no cover - exercised in slim CI
         Checkbox=_Component,
         CheckboxGroup=_Component,
         Column=_Component,
+        Dataframe=_Component,
         Dropdown=_Component,
         File=_Component,
         HTML=_Component,
@@ -70,4 +80,5 @@ except ModuleNotFoundError:  # pragma: no cover - exercised in slim CI
         Textbox=_Component,
         Timer=_Component,
         update=_update,
+        skip=lambda: None,
     )

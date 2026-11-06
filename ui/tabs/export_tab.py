@@ -59,6 +59,17 @@ def _export(model_path: str, output_dir: str, formats, config_path: str,
                 "tensors": r.tensors,
                 "expert_cache": _result_payload(r).get("expert_cache"),
                 "cluster_build": _result_payload(r).get("cluster_build"),
+                "preserves_recurrent_depth": r.format != "ollama-compatible-gguf",
+                "preserves_lazy_expert_paging": r.format != "ollama-compatible-gguf",
+                "stock_ollama_executable": bool(
+                    _result_payload(r).get("compatibility_notice", {}).get(
+                        "stock_runtime_executable", False
+                    )
+                ),
+                "requires_chronos_backend": True,
+                "multimodal_encoders_embedded": bool(
+                    _result_payload(r).get("chronos", {}).get("modalities")
+                ),
             }
             for r in results
         }
@@ -66,7 +77,9 @@ def _export(model_path: str, output_dir: str, formats, config_path: str,
             "\n\nCompatibility note: safetensors and GGUF outputs are standard containers "
             "with Chronos architecture metadata. Stock Ollama/llama.cpp builds need a "
             "Chronos architecture adapter to execute hybrid attention, lookahead MoE "
-            "prediction, and lazy expert loading correctly."
+            "prediction, and lazy expert loading correctly. The current "
+            "ollama-compatible artifact is explicitly manifest-only and is not "
+            "reported as stock-runtime executable."
         )
         return format_export_report(results) + compatibility, summary
     except Exception as exc:

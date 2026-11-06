@@ -197,7 +197,7 @@ class ChronosAutoTuner(AutoTuner):
         losses = []
         for step in range(probe_steps):
             ids = torch.randint(0, vocab_size, (batch, seq_len), device=device)
-            out, _ = model(ids, labels=ids)
+            out, _ = model(ids, labels=ids, legacy_output=True)
             moe_layers = [l.mlp for l in model.model.layers
                           if isinstance(l.mlp, ChronosMOEFeedForward)]
             if moe_layers and moe_layers[0].last_router_probs is not None:

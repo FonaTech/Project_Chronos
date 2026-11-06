@@ -61,6 +61,45 @@ def collect_router_probs(model, *, with_grad: bool = False) -> Optional[torch.Te
     return torch.stack(probs, dim=2)
 
 
+def collect_iteration_router_probs(model, *, with_grad: bool = False) -> Optional[torch.Tensor]:
+    """Every dispatch decision of the last forward as ``[B, S, V, E]``.
+
+    A recurrent block routes once per loop iteration, so V counts virtual
+    layers (prelude + groups·depth + coda for a full-depth forward).  Load
+    balance and temporal locality must hold for each of them.
+    """
+    probs: List[torch.Tensor] = []
+    for layer in model.model.layers:
+        mlp = getattr(layer, "mlp", None)
+        if isinstance(mlp, ChronosMOEFeedForward):
+            probs.extend(mlp.iteration_router_probs_grad if with_grad else mlp.iteration_router_probs)
+    if not probs:
+        return None
+    return torch.stack(probs, dim=2)
+
+
+def first_iteration_router_probs(model) -> Optional[torch.Tensor]:
+    """Step-0 routing per physical layer (lookahead teacher; prefetch key)."""
+    probs = []
+    for layer in model.model.layers:
+        mlp = getattr(layer, "mlp", None)
+        if isinstance(mlp, ChronosMOEFeedForward) and mlp.iteration_router_probs:
+            probs.append(mlp.iteration_router_probs[0])
+    return torch.stack(probs, dim=2) if probs else None
+
+
+def lookahead_teacher(router_4d, lookahead_probs, config):
+    """Align prediction head g to physical layer prelude_layers + g."""
+    if lookahead_probs.dim() == 4:
+        return router_4d.mean(dim=2).detach()
+    groups = lookahead_probs.shape[3]
+    start = int(getattr(config, "prelude_layers", 0))
+    teacher = router_4d[:, :, start:start + groups, :]
+    if teacher.shape[2] != groups:
+        raise ValueError("lookahead heads do not match the recurrent physical layers")
+    return teacher.detach()
+
+
 def chronos_loss_term(
     model,
     base_loss: torch.Tensor,
@@ -100,9 +139,11 @@ def chronos_loss_term(
             aux_term = raw_total if saw_raw else aux_loss
             loss = loss + lambda_balance * aux_term
 
-    router_4d = collect_router_probs(model, with_grad=True)
+    router_4d = collect_iteration_router_probs(model, with_grad=True)
     if router_4d is not None and router_4d.shape[1] > 1:
-        router_mean = router_4d.mean(dim=2)  # [B, S, E]
+        # Locality must hold within each dispatch (virtual layer). Averaging
+        # layers lets opposite routing changes cancel and hides page churn.
+        router_mean = router_4d.permute(0, 2, 1, 3).flatten(0, 1)
         lambda_temporal = float(getattr(config, "lambda_temporal", 0.0))
         if lambda_temporal > 0.0:
             loss = loss + lambda_temporal * temporal_locality_loss(router_mean)
@@ -122,7 +163,7 @@ def chronos_loss_term(
         ):
             # Teacher must be detached: lookahead targets are stop-grad'd
             # by construction (we predict the *future* router state).
-            teacher = router_mean.detach()
+            teacher = lookahead_teacher(first_iteration_router_probs(model), lookahead_probs, config)
             la = lookahead_supervision_loss(lookahead_probs, teacher, lookahead_steps)
             loss = loss + lambda_lookahead * la
             lambda_lookahead_topk = float(getattr(config, "lambda_lookahead_topk", 0.0))
@@ -143,6 +184,34 @@ def chronos_loss_term(
                     int(getattr(config, "num_experts_per_tok", 1) or 1),
                 )
                 loss = loss + lambda_lookahead_union * union_loss
+    # Recurrent-depth regularizers are exposed by ChronosModel without
+    # changing the HuggingFace output tuple.  This keeps all six stage
+    # trainers source-compatible while shaping the shared transition.
+    recurrent_state = getattr(getattr(model, "model", None), "last_recurrent_state", None)
+    if recurrent_state:
+        ponder_coef = float(getattr(config, "ponder_loss_coef", 0.0))
+        stability_coef = float(getattr(config, "recurrent_stability_coef", 0.0))
+        distill_coef = float(getattr(config, "recurrent_distill_coef", 0.0))
+        if ponder_coef > 0:
+            loss = loss + ponder_coef * recurrent_state["ponder_loss"]
+        if stability_coef > 0:
+            loss = loss + stability_coef * recurrent_state["stability_loss"]
+        if distill_coef > 0:
+            loss = loss + distill_coef * recurrent_state["distill_loss"]
+        # Penalize expansive fixed points while allowing the learned
+        # contractive Euler step to approach one near convergence.
+        contraction_budget = float(getattr(config, "recurrent_contraction_budget", 1.0))
+        contraction_coef = float(getattr(config, "recurrent_contraction_coef", 0.0))
+        if contraction_coef > 0 and "contraction" in recurrent_state:
+            loss = loss + contraction_coef * (
+                recurrent_state["contraction"] - contraction_budget
+            ).clamp_min(0.0).pow(2)
+    # Self-speculative draft exit: KL(full.detach() || draft-depth logits),
+    # computed by ChronosForCausalLM.forward when draft_exit_kl_coef > 0.
+    draft_kl = getattr(model, "last_draft_exit_kl", None)
+    draft_coef = float(getattr(config, "draft_exit_kl_coef", 0.0) or 0.0)
+    if draft_kl is not None and draft_coef > 0.0:
+        loss = loss + draft_coef * draft_kl
     return loss
 
 
@@ -184,7 +253,7 @@ def router_kl_anchor(
     return lambda_anchor * kl
 
 
-def capture_reference_routing(model, calibration_batch, device) -> torch.Tensor:
+def capture_reference_routing(model, calibration_batch, device, *, modality_inputs=None, modality_mask=None) -> torch.Tensor:
     """Run `model` in eval mode on the calibration batch, return the
     layer-averaged routing distribution as a detached reference for the
     `router_kl_anchor` term.
@@ -196,8 +265,12 @@ def capture_reference_routing(model, calibration_batch, device) -> torch.Tensor:
     model.eval()
     with torch.no_grad():
         ids = calibration_batch.to(device)
+        if modality_inputs:
+            modality_inputs = {k: v.to(device) for k, v in modality_inputs.items()}
+        if modality_mask is not None:
+            modality_mask = modality_mask.to(device)
         try:
-            _ = model(ids, use_cache=False)
+            _ = model(ids, use_cache=False, modality_inputs=modality_inputs, modality_mask=modality_mask)
         except TypeError:
             _ = model(ids)  # minimind models don't accept use_cache kwarg here
         router_4d = collect_router_probs(model)

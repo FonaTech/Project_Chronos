@@ -35,6 +35,9 @@ class ChronosMLXInferenceEngine:
     """
 
     def __init__(self, model, config, ssd_dir: str = "./expert_cache_mlx"):
+        # Inference only: training mode would randomly mask experts
+        # (fallback_mask_prob) and use the training ACT schedule.
+        model.eval()
         self.model = model
         self.config = config
         self.store = MLXExpertStore(model, config, ssd_dir=ssd_dir)
@@ -214,6 +217,32 @@ class ChronosMLXInferenceEngine:
             return False
         return len(self.store.hot_expert_ids()) >= num_experts
 
+    def _current_virtual_ids(self) -> List[int]:
+        """Last-token top-k ids over every MoE dispatch of the last forward.
+
+        Recurrent groups dispatch once per loop iteration (virtual layer)
+        and may pick different experts each time; residency follows the
+        union, so the next step's identical iterations stay hot.
+        """
+        from chronos.mlx.moe import ChronosMLXMOE
+        e = int(self.config.num_experts)
+        k = max(1, min(int(self.config.num_experts_per_tok), e))
+        rows = []
+        for layer in self.model.layers:
+            moe = getattr(layer, "mlp", None)
+            if isinstance(moe, ChronosMLXMOE):
+                rows.extend(p[:, -1, :].reshape(-1, e) for p in (moe.iteration_router_probs or ()))
+        if not rows:
+            return []
+        probs = mx.concatenate(rows, axis=0).astype(mx.float32)
+        ids = mx.argpartition(-probs, kth=k - 1, axis=-1)[:, :k]
+        weights = mx.take_along_axis(probs, ids, axis=-1)
+        scores = ((ids[..., None] == mx.arange(e)).astype(mx.float32) * weights[..., None]).sum(axis=(0, 1))
+        values = scores.tolist()
+        with self._stats_lock:
+            self._runtime_stats["virtual_dispatches"] = self._runtime_stats.get("virtual_dispatches", 0) + len(rows)
+        return [i for i, _v in sorted(((i, v) for i, v in enumerate(values) if v > 0), key=lambda t: (-t[1], t[0]))]
+
     def _protect_prediction_window(self, expert_ids: List[int]) -> None:
         capacity = max(
             1,
@@ -221,7 +250,8 @@ class ChronosMLXInferenceEngine:
             int(getattr(self.store, "_capacity", 1) or 1),
         )
         hot_ids = sorted(self.store.hot_expert_ids())
-        protected = list(dict.fromkeys([int(eid) for eid in expert_ids] + hot_ids))[:capacity]
+        current = list(getattr(self, "_last_current", ()) or ())
+        protected = list(dict.fromkeys([int(eid) for eid in expert_ids] + current + hot_ids))[:capacity]
         self.store.set_protected_experts(protected)
 
     def stop(self):
@@ -242,6 +272,15 @@ class ChronosMLXInferenceEngine:
         temperature: float = 0.85,
         top_p: float = 0.9,
         scheduler=None,                # Optional[PrefillScheduler] — lazy import
+        *,
+        speculative: bool = False,     # recurrent-depth self-speculative decoding
+        draft_depth: int = 1,
+        gamma: int = 4,
+        gamma_max: int = 8,
+        adaptive_gamma: bool = True,
+        top_k: int = 0,
+        seed: Optional[int] = None,
+        eos_token_id=None,
     ) -> Iterator[int]:
         """
         Yields token IDs one at a time.
@@ -249,10 +288,22 @@ class ChronosMLXInferenceEngine:
         If scheduler is provided (PrefillScheduler), runs prefill-time batch
         loading before the generation loop (dual-layer mode).  Otherwise falls
         back to per-token LookaheadRouter-driven prefetch.
+
+        ``speculative=True`` drafts ``gamma`` tokens at ``draft_depth`` and
+        verifies them in one full-depth forward (``chronos.mlx.speculative``);
+        greedy output equals plain greedy decoding.  ``eos_token_id`` (int or
+        list) stops generation after that token is yielded.
         """
+        if speculative:
+            yield from self._generate_speculative(
+                input_ids, max_new_tokens=max_new_tokens, temperature=temperature, top_p=top_p, top_k=top_k,
+                draft_depth=draft_depth, gamma=gamma, gamma_max=gamma_max, adaptive_gamma=adaptive_gamma,
+                seed=seed, eos_token_id=eos_token_id)
+            return
         t0 = time.monotonic()
         setup_mem = self._memory_snapshot()
         self._last_predicted = set()
+        self._last_current = []
         with self._stats_lock:
             all_resident_fast_path = self._all_resident_fast_path_enabled()
             self._runtime_stats = self._new_runtime_stats(all_resident_fast_path)
@@ -277,6 +328,7 @@ class ChronosMLXInferenceEngine:
             prefill_masks = self._build_avail_masks(None)
         logits, lookahead_probs, cache = self.model(input_ids, available_expert_masks=prefill_masks)
         mx.eval(logits)
+        self._last_current = [] if all_resident_fast_path else self._current_virtual_ids()
         prefill_t1 = time.monotonic()
         prefill_mem = self._memory_snapshot()
 
@@ -297,9 +349,11 @@ class ChronosMLXInferenceEngine:
             self._last_predicted = set(int(eid) for eid in future_ids)
             self._protect_prediction_window(future_ids)
             self._prefetch_and_promote_window(future_ids, promote_ids=immediate_ids, timeout_s=0.025)
-        yield int(next_token.item())
+        eos = set([eos_token_id] if isinstance(eos_token_id, int) else (eos_token_id or []))
+        first_id = int(next_token.item())
+        yield first_id
 
-        for _ in range(max_new_tokens - 1):
+        for _ in range(0 if first_id in eos else max_new_tokens - 1):
             if all_resident_fast_path:
                 avail_masks = None
             elif scheduler is not None:
@@ -328,6 +382,8 @@ class ChronosMLXInferenceEngine:
                 available_expert_masks=avail_masks,
             )
             mx.eval(logits)
+            if not all_resident_fast_path:
+                self._last_current = self._current_virtual_ids()
 
             next_token = self._sample(logits[:, -1, :], temperature, top_p)
             mx.eval(next_token)
@@ -335,6 +391,8 @@ class ChronosMLXInferenceEngine:
             activated_ids.append(tok_id)
             tokens += 1
             yield tok_id
+            if tok_id in eos:
+                break
 
         # Update frequency heuristic after generation
         if scheduler is not None:
@@ -354,6 +412,84 @@ class ChronosMLXInferenceEngine:
             **self.store.stats(),
         }
 
+    def _generate_speculative(self, input_ids, *, max_new_tokens, temperature, top_p, top_k, draft_depth, gamma,
+                              gamma_max, adaptive_gamma, seed, eos_token_id) -> Iterator[int]:
+        """Self-speculative decoding with the same residency work as plain decoding.
+
+        Every forward (draft or verify) runs with the current availability
+        masks.  After it, the experts its last position routed to (all virtual
+        layers) are unioned with the LookaheadRouter prediction and prefetched,
+        so experts a draft touches are being loaded before the verify forward
+        that re-reads them."""
+        from chronos.mlx.speculative import SpecStats, speculative_tokens
+        t0 = time.monotonic()
+        setup_mem = self._memory_snapshot()
+        self._last_predicted, self._last_current = set(), []
+        with self._stats_lock:
+            fast = self._all_resident_fast_path_enabled()
+            self._runtime_stats = self._new_runtime_stats(fast)
+        if fast:
+            self._clear_runtime_hooks()
+            self.store.set_protected_experts([])
+        else:
+            self._install_runtime_hooks()
+        warm_cap = int(getattr(self.store, "_warm_capacity", self.config.num_experts) or self.config.num_experts)
+        hot_cap = int(getattr(self.store, "_capacity", 1) or 1)
+        timing = {"first": None}
+
+        def forward_fn(ids, cache, depth):
+            masks = None if fast else self._build_avail_masks(None)
+            logits, lookahead, new_cache = self.model(ids, cache=cache, available_expert_masks=masks,
+                                                      recurrent_depth=depth)
+            mx.eval(logits)
+            if not fast:
+                self._last_current = self._current_virtual_ids()
+                predicted = (self._predict_future_experts(lookahead, capacity=warm_cap)
+                             if lookahead is not None else [])
+                window = list(dict.fromkeys(list(self._last_current) + predicted))[:max(warm_cap, 1)]
+                self._last_predicted = set(window)
+                self._protect_prediction_window(window)
+                self._prefetch_and_promote_window(window, promote_ids=window[:max(hot_cap, 1)])
+            return logits, lookahead, new_cache
+
+        stats = SpecStats()
+        from chronos.config_schema import resolve_recurrent_attention_mode
+        cfg = self.model.config
+        full_depth = int(getattr(cfg, "max_inference_depth", None) or cfg.recurrent_depth)
+        recurrent = bool(getattr(cfg, "recurrent_enabled", False)) and int(cfg.recurrent_depth) > 1
+        eff_draft = max(1, min(int(draft_depth), full_depth))
+        if not recurrent or resolve_recurrent_attention_mode(cfg) == "per_iteration":
+            eff_draft = full_depth                     # mirrors speculative_tokens' fallback
+        do_sample = float(temperature) > 0
+        try:
+            for tok in speculative_tokens(
+                    self.model, input_ids, stats, max_new_tokens=int(max_new_tokens), draft_depth=draft_depth,
+                    gamma=gamma, adaptive_gamma=adaptive_gamma, gamma_max=gamma_max, do_sample=do_sample,
+                    temperature=max(float(temperature), 1e-6), top_k=int(top_k or 0),
+                    top_p=float(top_p) if do_sample else 1.0, eos_token_id=eos_token_id, seed=seed,
+                    forward_fn=forward_fn):
+                if timing["first"] is None:
+                    timing["first"] = time.monotonic()
+                yield int(tok)
+        finally:
+            end = time.monotonic()
+            first = timing["first"] or end
+            end_mem = self._memory_snapshot()
+            self.last_stats = {
+                "tokens_generated": stats.generated,
+                "elapsed_s": round(end - t0, 3),
+                "tokens_per_sec": round(stats.generated / max(end - t0, 1e-6), 2),
+                "prefill_time_s": round(first - t0, 3),
+                "decode_time_s": round(max(0.0, end - first), 3),
+                "speculative": stats.as_dict() | {
+                    "draft_depth": eff_draft, "full_depth": full_depth, "enabled": eff_draft < full_depth,
+                    "gamma_final": (stats.gamma_history or [int(gamma)])[-1]},
+                **self._memory_fields(setup_mem, "after_setup"),
+                **self._memory_fields(end_mem, "after_decode"),
+                **self._runtime_stat_fields(),
+                **self.store.stats(),
+            }
+
     def _predict_future_experts(
         self,
         lookahead_probs: mx.array,
@@ -361,28 +497,23 @@ class ChronosMLXInferenceEngine:
         max_steps: Optional[int] = None,
     ) -> List[int]:
         """Extract bounded top-k expert IDs for future steps."""
-        # lookahead_probs: [B, S, K+1, E] — take last token, steps 1..K
-        future = lookahead_probs[0, -1, 1:, :]         # [K, E]
+        # This store pages an expert ID across physical layers. Preserve
+        # each prediction head until admission, then rank the union of IDs.
+        future = lookahead_probs[:, -1, 1:, ...]
         if max_steps is not None:
-            future = future[:max(0, int(max_steps))]
-        if future.shape[0] <= 0:
+            future = future[:, :max(0, int(max_steps))]
+        if future.shape[1] <= 0:
             return []
-        num_experts = int(getattr(self.config, "num_experts", future.shape[-1]) or future.shape[-1])
-        top_k = max(1, min(
-            int(getattr(self.config, "num_experts_per_tok", 1) or 1),
-            num_experts,
-        ))
-        budget = num_experts if capacity is None else max(1, min(num_experts, int(capacity)))
-        scores = mx.zeros((num_experts,), dtype=mx.float32)
-        for offset in range(future.shape[0]):
-            step = future[offset].astype(mx.float32)
-            if top_k >= num_experts:
-                scores = scores + step / float(offset + 1)
-                continue
-            step_ids = mx.argpartition(-step, kth=top_k - 1, axis=-1)[:top_k]
-            step_vals = mx.take(step, step_ids) / float(offset + 1)
-            one_hot = (step_ids[:, None] == mx.arange(num_experts)).astype(mx.float32)
-            scores = scores + (one_hot * step_vals[:, None]).sum(axis=0)
+        e = int(self.config.num_experts)
+        top_k = max(1, min(int(self.config.num_experts_per_tok), e))
+        budget = e if capacity is None else max(1, min(e, int(capacity)))
+        scores = mx.zeros((e,), dtype=mx.float32)
+        for offset in range(future.shape[1]):
+            step = future[:, offset, ...].reshape(-1, e).astype(mx.float32)
+            ids = mx.argpartition(-step, kth=top_k-1, axis=-1)[..., :top_k]
+            vals = mx.take_along_axis(step, ids, axis=-1) / float(offset + 1)
+            one_hot = (ids[..., None] == mx.arange(e)).astype(mx.float32)
+            scores = scores + (one_hot*vals[..., None]).sum(axis=(0, 1))
         mx.eval(scores)
         scored = [(idx, float(value)) for idx, value in enumerate(scores.tolist()) if float(value) > 0.0]
         scored.sort(key=lambda item: (-item[1], item[0]))
@@ -439,6 +570,7 @@ class ChronosMLXInferenceEngine:
             "on_demand_loads": int(stats.get("resident_misses", 0)),
             "on_demand_load_time_s": round(float(stats.get("on_demand_load_time_s", 0.0)), 4),
             "fallback_weight_rate": 0.0,
+            "virtual_dispatches": int(stats.get("virtual_dispatches", 0)),
         }
 
     @staticmethod
