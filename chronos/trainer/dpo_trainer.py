@@ -42,6 +42,7 @@ from chronos.trainer.device_utils import (
     optimizer_step_with_scaler,
     runtime_summary,
 )
+from chronos.trainer.paged_store import PagedTrainingController
 
 
 def _logits_to_log_probs(logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
@@ -81,9 +82,9 @@ class ChronosDPOTrainer:
             f"device={summary.device} type={summary.device_type} dtype={summary.dtype} "
             f"cpu_threads={summary.cpu_threads} autocast={summary.autocast} scaler={summary.scaler}"
         )
-        from chronos.trainer.optim_utils import build_optimizer
-        self.optimizer = build_optimizer(
-            model, lr=args.learning_rate,
+        from chronos.trainer.optim_utils import build_configured_optimizer
+        self.optimizer = build_configured_optimizer(
+            model, config, lr=args.learning_rate,
             weight_decay=float(getattr(args, "weight_decay", 0.01)),
         )
 
@@ -95,11 +96,18 @@ class ChronosDPOTrainer:
         self.ref_model.eval().requires_grad_(False)
 
         self._router_ref = None
+        # One compute dtype end to end; FP32 masters live in the optimizer.
+        from chronos.trainer.precision_training import apply_training_precision
+        apply_training_precision(self, models=(self.ref_model,))
+        self.paged_training = PagedTrainingController(self.model, config)
 
     def set_calibration_batch(self, x_calib: torch.Tensor):
         self._router_ref = capture_reference_routing(self.model, x_calib, self.device)
 
     def train_step(self, batch, step, total_steps):
+        controller = getattr(getattr(self.model, "model", None), "recurrent_controller", None)
+        if controller is not None:
+            controller.set_training_progress(step, total_steps)
         x_c = batch["x_chosen"].to(self.device)
         x_r = batch["x_rejected"].to(self.device)
         y_c = batch["y_chosen"].to(self.device)
@@ -116,11 +124,13 @@ class ChronosDPOTrainer:
 
         with self.autocast_ctx:
             with torch.no_grad():
-                ref_out = self.ref_model(x)
+                ref_out = self.ref_model(x, logits_dtype=torch.float32)
                 ref_logits = ref_out[0].logits if isinstance(ref_out, tuple) else ref_out.logits
             ref_lp = _logits_to_log_probs(ref_logits, y)
 
-            outputs, lookahead_probs = self.model(x)
+            paged_masks = self.paged_training.masks_for_forward(self.device)
+            result = self.model(x, available_expert_masks=paged_masks)
+            outputs, lookahead_probs = result.legacy_tuple()
             pol_lp = _logits_to_log_probs(outputs.logits, y)
             base = dpo_loss(ref_lp, pol_lp, m, beta=self.beta)
 
@@ -165,6 +175,7 @@ class ChronosDPOTrainer:
                 self.model.parameters(),
                 self.args.grad_clip,
             )
+            self.paged_training.observe()
 
         return (
             loss.item() * self.args.accumulation_steps,

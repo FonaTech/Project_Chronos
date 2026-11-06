@@ -24,10 +24,38 @@ from chronos.io.storage import MANIFEST_FILENAME, KEY_SEP, ClusterManifest
 
 try:
     from safetensors import safe_open as _safe_open
-    from safetensors.numpy import save_file as _np_save_file
     _HAS_SAFETENSORS = True
 except ImportError:  # pragma: no cover
     _HAS_SAFETENSORS = False
+
+
+# Expert pages cross the SSD boundary through MLX's own safetensors / npy IO:
+# numpy has no bfloat16, so ``np.array(bf16)`` and safetensors' ``mlx``
+# framework (which round-trips through numpy) both fail on BF16 pages.  The
+# file format is unchanged (.ctsr is plain safetensors; torch-written BF16/FP16
+# shards load directly).
+
+def save_pages(path: str, tensors: Dict[str, mx.array]) -> None:
+    """Atomic safetensors write in the arrays' own dtype."""
+    tmp = path + ".tmp"
+    mx.save_safetensors(tmp, tensors)          # appends ".safetensors"
+    os.replace(tmp + ".safetensors", path)
+
+
+def load_pages(path: str) -> Dict[str, mx.array]:
+    return mx.load(path, format="safetensors")
+
+
+def _materialize(layer_states: Dict[int, Dict[str, mx.array]]) -> None:
+    """Evaluate SSD pages in the thread that loaded them.
+
+    MLX 0.32 binds a lazy ``mx.load`` to the creating thread's stream; a page
+    loaded by the prefetch thread and first evaluated by the decode thread
+    raises "There is no Stream(cpu, N) in current thread".  Evaluating here
+    also keeps the SSD read on the prefetch thread, off the decode path."""
+    arrays = [a for params in layer_states.values() for a in params.values()]
+    if arrays:
+        mx.eval(*arrays)
 
 
 class MLXExpertStore:
@@ -69,13 +97,32 @@ class MLXExpertStore:
         if warm_requested in (None, "", 0):
             warm_requested = min(self.num_experts, max(capacity, capacity * 2))
         self._warm_capacity = max(capacity, min(self.num_experts, int(warm_requested)))
+        # Hard budget (unified memory: hot experts also live in RAM, so the
+        # RAM budget bounds both tiers).  One page = one expert, all layers.
+        from chronos.io.expert_store import expert_budget_pages
+        h = int(getattr(config, "hidden_size", 0) or 0)
+        i = int(getattr(config, "moe_intermediate_size", 0) or 0)
+        itemsize = int(getattr(model.embed_tokens.weight.dtype, "size", 4) or 4)
+        self.page_bytes = max(1, 3 * h * i * itemsize * max(1, self.num_layers))
+        self.max_resident_pages, self.ram_budget_pages = expert_budget_pages(config, self.page_bytes)
+        if self.max_resident_pages is not None:
+            self._capacity = min(self._capacity, self.max_resident_pages)
+        if self.ram_budget_pages is not None:
+            self._capacity = min(self._capacity, self.ram_budget_pages)
+            self._warm_capacity = min(self._warm_capacity, self.ram_budget_pages)
+        self._warm_capacity = max(self._capacity, self._warm_capacity)
+        self._peak_rss_bytes = 0
         self._warm_lru: collections.OrderedDict = collections.OrderedDict()
         self._cluster_manifest: ClusterManifest | None = None
         self._loaded_clusters: set[int] = set()
         self._protected_experts: set[int] = set()
         self.storage_format = "npy"
-        self.attach_cluster_manifest(ssd_dir)
+        # Pages live in the trunk's compute dtype (one precision policy end
+        # to end); a cache written in another dtype is converted once per SSD
+        # read, never per forward.
+        self.page_dtype = model.embed_tokens.weight.dtype
         self._stats = collections.Counter()
+        self.attach_cluster_manifest(ssd_dir)
 
     # ── SSD serialisation ─────────────────────────────────────────
 
@@ -97,7 +144,7 @@ class MLXExpertStore:
                     arr = getattr(expert, proj).weight
                     path = self._ssd_path(ei, li, f"{proj}.weight")
                     if not os.path.exists(path):
-                        np.save(path, np.array(arr))
+                        mx.save(path, arr)            # dtype-preserving (BF16 safe)
 
     def _cluster_cache_complete(self) -> bool:
         return self.attach_cluster_manifest(self.ssd_dir)
@@ -124,9 +171,9 @@ class MLXExpertStore:
                     expert = moe.experts[int(eid)]
                     for proj in ("gate_proj", "up_proj", "down_proj"):
                         key = f"l{li}_e{int(eid)}{KEY_SEP}{proj}.weight"
-                        tensors[key] = np.array(getattr(expert, proj).weight)
+                        tensors[key] = getattr(expert, proj).weight
             file_name = f"cluster_{cid}.ctsr"
-            _np_save_file(tensors, os.path.join(self.ssd_dir, file_name))
+            save_pages(os.path.join(self.ssd_dir, file_name), tensors)
             manifest_clusters[cid] = (file_name, [int(e) for e in cluster])
         manifest = ClusterManifest(
             version=1,
@@ -159,9 +206,10 @@ class MLXExpertStore:
                     fname = f"{name}.{subname}"
                     path = self._ssd_path(expert_id, li, fname)
                     if os.path.exists(path):
-                        params[fname] = mx.array(np.load(path))
+                        params[fname] = self._as_page(mx.load(path))
             if params:
                 layer_states[li] = params
+        _materialize(layer_states)
         return layer_states
 
     def attach_cluster_manifest(self, manifest_dir: Optional[str] = None) -> bool:
@@ -219,6 +267,12 @@ class MLXExpertStore:
             return False
         return True
 
+    def _as_page(self, arr: mx.array) -> mx.array:
+        if arr.dtype != self.page_dtype:
+            self._stats["page_dtype_conversions"] += 1
+            return arr.astype(self.page_dtype)
+        return arr
+
     def _parse_cluster_key(self, key: str):
         if KEY_SEP not in key:
             return None
@@ -246,13 +300,14 @@ class MLXExpertStore:
         file_name = manifest.cluster_file(cid)
         path = os.path.join(self.ssd_dir, file_name)
         nested: Dict[int, Dict[int, Dict[str, mx.array]]] = {}
-        with _safe_open(path, framework="mlx", device="cpu") as f:
-            for key in f.keys():
-                parsed = self._parse_cluster_key(key)
-                if parsed is None:
-                    continue
-                li, eid, pname = parsed
-                nested.setdefault(eid, {}).setdefault(li, {})[pname] = f.get_tensor(key)
+        for key, value in load_pages(path).items():
+            parsed = self._parse_cluster_key(key)
+            if parsed is None:
+                continue
+            li, eid, pname = parsed
+            nested.setdefault(eid, {}).setdefault(li, {})[pname] = self._as_page(value)
+        for layer_states in nested.values():
+            _materialize(layer_states)
         ordered = sorted(nested.items(), key=lambda item: int(item[0]) == int(expert_id))
         with self._lock:
             for eid, layer_states in ordered:
@@ -265,7 +320,7 @@ class MLXExpertStore:
 
     def prefetch_to_ram(self, expert_ids: List[int]):
         """
-        Load expert weights from SSD into mx.array (not yet eval'd).
+        Load expert weights from SSD into evaluated mx.arrays (RAM tier).
         Call from a background thread for async prefetch.
         """
         for eid in expert_ids:
@@ -316,6 +371,13 @@ class MLXExpertStore:
             if evict_id is None:
                 for candidate in self._warm_lru.keys():
                     if candidate != protected_expert_id and candidate not in self._protected_experts:
+                        evict_id = candidate
+                        break
+            if evict_id is None:
+                # Every other page is protected: the hard capacity still wins
+                # (oldest first); only the page being inserted is kept.
+                for candidate in self._warm_lru.keys():
+                    if candidate != protected_expert_id:
                         evict_id = candidate
                         break
             if evict_id is None:
@@ -524,9 +586,19 @@ class MLXExpertStore:
             self.promote_to_vram(int(eid))
 
     def stats(self) -> dict:
+        from chronos.io.expert_store import _process_rss_bytes
         hot_ids = self.hot_expert_ids()
+        rss = _process_rss_bytes()
+        self._peak_rss_bytes = max(self._peak_rss_bytes, rss)
         return {
             "backend": "mlx",
+            "rss_mb": round(rss / 2 ** 20, 1),
+            "peak_rss_mb": round(self._peak_rss_bytes / 2 ** 20, 1),
+            "page_bytes": self.page_bytes,
+            "max_resident_pages": self.max_resident_pages,
+            "ram_budget_pages": self.ram_budget_pages,
+            "protected_pages": len(self._protected_experts),
+            "resident_experts": len(hot_ids),
             "hot_experts": len(hot_ids),
             "hot_capacity": self._capacity,
             "warm_experts": len(self._warm),

@@ -116,6 +116,13 @@ def _load_existing():
 
 
 def build_benchmark_tab():
+    # Resolve the initial state before constructing components.  Assigning a
+    # pandas DataFrame to ``component.value`` after construction bypasses
+    # Gradio's postprocessing step (notably in Gradio 5.x), causing the
+    # nativeplot frontend to receive a string representation of the frame and
+    # fail during hydration (the whole UI remains stuck on "Loading...").
+    initial_results, initial_markdown, initial_df, initial_log = _load_existing()
+
     with gr.Tab(t("tab.benchmark")) as tab:
         register_translatable(tab, "tab.benchmark")
 
@@ -123,11 +130,11 @@ def build_benchmark_tab():
         register_translatable(run_btn, "bench.run")
 
         # Formatted summary
-        summary_md = gr.Markdown(value=_format_table({}))
+        summary_md = gr.Markdown(value=initial_markdown)
 
         # Bar chart — one BarPlot per model so units stack cleanly per metric.
         chart = gr.BarPlot(
-            value=_empty_df(),
+            value=initial_df,
             x="metric", y="value", color="model",
             title="MiniMind vs Chronos — comparison metrics",
             tooltip=["model", "metric", "value", "unit"],
@@ -135,11 +142,12 @@ def build_benchmark_tab():
         )
 
         with gr.Accordion("Raw JSON", open=False):
-            results_box = gr.JSON(label=t("bench.results"))
+            results_box = gr.JSON(label=t("bench.results"), value=initial_results)
             register_translatable(results_box, "bench.results")
 
         log_box = gr.Textbox(
-            label=t("bench.log"), lines=20, interactive=False, autoscroll=True
+            label=t("bench.log"), lines=20, interactive=False, autoscroll=True,
+            value=initial_log,
         )
         register_translatable(log_box, "bench.log")
 
@@ -191,12 +199,5 @@ def build_benchmark_tab():
             fn=run_benchmark,
             outputs=[results_box, summary_md, chart, log_box],
         )
-
-        # Render existing results on tab open
-        d, md, df, log = _load_existing()
-        results_box.value = d
-        summary_md.value = md
-        chart.value = df
-        log_box.value = log
 
     return tab

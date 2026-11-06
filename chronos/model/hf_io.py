@@ -64,6 +64,9 @@ def save_chronos_pretrained(
     if ``expert_cache_dir`` is provided so the offloaded layout travels with
     the checkpoint."""
     os.makedirs(save_directory, exist_ok=True)
+    paging = getattr(model, "_chronos_paged_training_controller", None)
+    if paging is not None:
+        paging.materialize_all()
 
     # MiniMind/Chronos tie ``lm_head.weight`` to ``model.embed_tokens.weight``
     # but doesn't declare it via ``_tied_weights_keys``, which trips

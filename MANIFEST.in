@@ -1,9 +1,13 @@
-include chronos/**/*.py
-include train_chronos.py
-include README.md
-include LICENSE
-include requirements.txt
-exclude **/__pycache__
-exclude **/*.pyc
-exclude expert_cache/
-exclude out/
+include README.md README_zh.md LICENSE THIRD_PARTY_NOTICES.md CHANGELOG.md requirements.txt
+recursive-include chronos/monitor/static *.html *.js *.css
+include ui/event_contract.js
+global-exclude __pycache__ *.py[cod] .DS_Store
+prune runs
+prune out
+prune expert_cache
+prune expert_cache_mlx
+prune results
+prune reports
+prune .archive
+prune Translation?Training?Data
+prune chronos/mlx/training/recipes

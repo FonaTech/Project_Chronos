@@ -9,6 +9,17 @@ mx.compile() traces a single graph — no Python branches on mask values.
 import mlx.core as mx
 import mlx.nn as nn
 
+from chronos.mlx.moe_kernels import (
+    gather_mm_supported, grouped_swiglu, sparse_dispatch_ok, stack_expert_weights, training_availability,
+)
+
+
+def _sparse_ok(dtype) -> bool:
+    """Sorted gather_mm dispatch is used only where it passed the one-time
+    self-check for this device/dtype (CPU: FP32 only).  Otherwise the exact
+    masked-dense path runs: slower, never wrong."""
+    return sparse_dispatch_ok(dtype)
+
 
 class FeedForwardMLX(nn.Module):
     """SwiGLU FFN matching minimind's FeedForward structure."""
@@ -52,13 +63,53 @@ class ChronosMLXMOE(nn.Module):
             FeedForwardMLX(H, I) for _ in range(config.num_shared_experts)
         ]
         object.__setattr__(self, "_last_router_probs", None)  # [B, S, E]
+        # One entry per call: a recurrent block dispatches once per iteration.
+        object.__setattr__(self, "_iteration_router_probs", [])
+        # router_scope="shared": later iterations reuse iteration zero's ids.
+        object.__setattr__(self, "router_scope", str(getattr(config, "router_scope", "per_iteration") or "per_iteration"))
+        object.__setattr__(self, "_shared_topk_idx", None)
+        # Per-forward cache of the stacked [E, out, in] expert weights: a
+        # recurrent block runs this MoE once per iteration, but its weights
+        # only change between optimizer updates.  Opened/closed by the model
+        # forward; outside a scope every call stacks fresh (always correct).
+        object.__setattr__(self, "_pack_scope", None)
         self.runtime_miss_policy = "sync_on_demand"
+        self.fallback_mask_prob = float(getattr(config, "fallback_mask_prob", 0.0) or 0.0)
+        # Sorted gather_mm dispatch (requires mlx >= 0.32.4 on M5-class GPUs).
+        self.sparse_dispatch = bool(getattr(config, "moe_sparse_dispatch", True)) and gather_mm_supported()
         self.runtime_on_demand_loader = None
         self.runtime_touch_expert = None
 
     @property
     def last_router_probs(self):
         return self._last_router_probs
+
+    @property
+    def iteration_router_probs(self):
+        return self._iteration_router_probs
+
+    def reset_iteration_routing(self):
+        object.__setattr__(self, "_iteration_router_probs", [])
+        object.__setattr__(self, "_shared_topk_idx", None)
+
+    def open_pack_scope(self):
+        object.__setattr__(self, "_pack_scope", {})
+
+    def close_pack_scope(self):
+        object.__setattr__(self, "_pack_scope", None)
+
+    def _expert_stacks(self):
+        scope = self._pack_scope
+        if scope is None:
+            return stack_expert_weights(self.experts)
+        # Keyed on the live weight arrays, so an expert swapped in mid-forward
+        # (lazy promotion) can never be served from a stale stack.
+        key = tuple(id(getattr(e, p).weight) for e in self.experts for p in ("gate_proj", "up_proj", "down_proj"))
+        hit = scope.get("w")
+        if hit is None or hit[0] != key:
+            hit = (key, stack_expert_weights(self.experts))
+            scope["w"] = hit
+        return hit[1]
 
     @last_router_probs.setter
     def last_router_probs(self, value):
@@ -82,18 +133,42 @@ class ChronosMLXMOE(nn.Module):
 
         scores = mx.softmax(self.gate(x_flat).astype(mx.float32), axis=-1)  # [N, E]
         object.__setattr__(self, "_last_router_probs", scores.reshape(B, S, self.num_experts))
+        self._iteration_router_probs.append(self._last_router_probs)
 
         # top-k routing
-        topk_idx = mx.argpartition(-scores, kth=self.num_experts_per_tok - 1, axis=-1)
-        topk_idx = topk_idx[:, :self.num_experts_per_tok]              # [N, K]
+        shared_idx = self._shared_topk_idx
+        if (self.router_scope == "shared" and shared_idx is not None
+                and shared_idx.shape[0] == scores.shape[0] and len(self._iteration_router_probs) > 1):
+            topk_idx = shared_idx
+        else:
+            topk_idx = mx.argpartition(-scores, kth=self.num_experts_per_tok - 1, axis=-1)
+            # Routing indices are discrete: gradients flow through topk_weight
+            # (gathered scores) only, never through the integer indices.
+            topk_idx = mx.stop_gradient(topk_idx[:, :self.num_experts_per_tok])  # [N, K]
+            if self.router_scope == "shared":
+                object.__setattr__(self, "_shared_topk_idx", topk_idx)
         topk_weight = mx.take_along_axis(scores, topk_idx, axis=-1)   # [N, K]
         if self.norm_topk_prob:
             topk_weight = topk_weight / (topk_weight.sum(axis=-1, keepdims=True) + 1e-20)
 
         y = mx.zeros_like(x_flat)
 
-        if available_expert_mask is None:
-            # Training: standard MoE scatter
+        if available_expert_mask is None and self.sparse_dispatch and _sparse_ok(x_flat.dtype) and not any(
+            isinstance(e, LazyFeedForwardMLX) for e in self.experts
+        ):
+            # Sparse dispatch: each token runs only its top-k experts.
+            shared = self._shared_out(x_flat) if len(self.shared_experts) > 0 else None
+            fallback = None
+            if self.training and self.fallback_mask_prob > 0.0 and shared is not None:
+                # Cache-miss simulation (PyTorch parity): an unavailable routed
+                # expert is served by the shared expert, as at offload inference.
+                fallback = (training_availability(self.num_experts, self.fallback_mask_prob), shared)
+            y = grouped_swiglu(x_flat, topk_idx, topk_weight, *self._expert_stacks(),
+                               fallback=fallback)
+            if shared is not None:
+                y = y + shared
+        elif available_expert_mask is None:
+            # Masked-dense reference path (old mlx or explicit opt-out).
             for i, expert in enumerate(self.experts):
                 # mask over tokens where expert i is selected
                 sel = (topk_idx == i)            # [N, K] bool
@@ -112,6 +187,12 @@ class ChronosMLXMOE(nn.Module):
             else:
                 avail = available_expert_mask.astype(x_flat.dtype)  # [E] float
             shared_out = self._shared_out(x_flat)               # [N, H]
+            selected_host = None
+            if python_avail is not None:
+                # One host read for every expert's selection (was one
+                # ``.item()`` sync per expert per MoE call during decode).
+                hit = (topk_idx.reshape(-1)[:, None] == mx.arange(self.num_experts)[None, :]).any(axis=0)
+                selected_host = hit.tolist()
 
             for i, expert in enumerate(self.experts):
                 sel = (topk_idx == i)
@@ -119,7 +200,7 @@ class ChronosMLXMOE(nn.Module):
                 w = mx.where(sel, topk_weight, 0.0).sum(axis=-1, keepdims=True)
 
                 if python_avail is not None:
-                    selected = bool(mx.any(tok_mask).item())
+                    selected = bool(selected_host[i])
                     if not selected:
                         continue
                     is_avail = i in python_avail

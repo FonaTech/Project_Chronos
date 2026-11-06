@@ -1,0 +1,24 @@
+# Python / tooling
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.venv/
+.DS_Store
+
+# Training runs, checkpoints, expert caches, bundles (weights are research-only)
+runs/
+out/
+expert_cache/
+expert_cache_mlx/
+*.pth
+*.pkl
+*.ctsr
+*.safetensors
+
+# Local data and archives
+Translation Training Data/
+.archive/

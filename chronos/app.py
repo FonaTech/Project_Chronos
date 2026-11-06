@@ -34,6 +34,7 @@ _BOOT_CPU_THREADS = configure_cpu_thread_env(
 )
 
 from ui.gradio_compat import gr
+from ui.event_contract import UIEventContract, event_contract_app_kwargs
 
 import chronos.deps  # auto-bootstrap minimind
 from ui.i18n import (
@@ -49,6 +50,9 @@ from ui.tabs.autotune_tab  import build_autotune_tab
 from ui.tabs.iomon_tab     import build_iomon_tab
 from ui.tabs.pipeline_tab  import build_pipeline_tab
 from ui.tabs.data_tab      import build_data_tab
+from ui.tabs.monitor_tab   import build_monitor_tab, MONITOR_CSS
+from ui.tabs.tokenizer_tab import build_tokenizer_tab
+from ui.tabs.serve_tab     import build_serve_tab
 
 
 APP_CSS = """
@@ -81,10 +85,12 @@ def _hero_html() -> str:
 
 
 def build_app() -> gr.Blocks:
+    contract = UIEventContract()
     with gr.Blocks(
         title="Project Chronos",
-        css=APP_CSS,
+        css=APP_CSS + MONITOR_CSS,
         fill_width=True,
+        head=contract.head(),
     ) as app:
         gr.HTML(_hero_html())
 
@@ -98,10 +104,13 @@ def build_app() -> gr.Blocks:
 
         config_state, config_inputs, cfg_save_dir = build_config_tab()
         build_data_tab()
+        build_tokenizer_tab()
         build_train_tab(config_state, cfg_save_dir)
+        monitor_tab = build_monitor_tab()
         build_pipeline_tab()
         build_inference_tab(config_state)
         build_export_tab()
+        build_serve_tab()
         build_benchmark_tab()
         build_autotune_tab(config_state, config_inputs)
         build_iomon_tab()
@@ -115,7 +124,13 @@ def build_app() -> gr.Blocks:
             inputs=[language],
             outputs=get_registered_components(),
         )
+        wiring = getattr(monitor_tab, "monitor_wiring", None)
+        if wiring is not None and hasattr(app, "load"):
+            fn, inputs, outputs = wiring
+            app.load(fn=fn, inputs=inputs, outputs=outputs)
 
+    contract.blocks = app
+    app.chronos_event_contract = contract
     return app
 
 
@@ -142,6 +157,7 @@ def main():
         server_port=args.port,
         share=args.share,
         show_error=True,
+        app_kwargs=event_contract_app_kwargs(app),
     )
 
 

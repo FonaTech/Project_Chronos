@@ -36,7 +36,7 @@ except ImportError:  # pragma: no cover
 
 
 MANIFEST_FILENAME = "cluster_manifest.json"
-MANIFEST_VERSION = 1
+MANIFEST_VERSION = 2
 KEY_SEP = "__"  # layer/expert prefix vs param-name separator
 
 
@@ -69,6 +69,9 @@ class ClusterManifest:
     clusters: Dict[int, Tuple[str, List[int]]]
     # expert_id -> cluster_id
     expert_to_cluster: Dict[int, int]
+    # v2 records the recurrent group owning each physical layer.  It is
+    # optional when reading v1 manifests and defaults to identity groups.
+    layer_to_group: Dict[int, int] | None = None
 
     @classmethod
     def from_dict(cls, data: Dict) -> "ClusterManifest":
@@ -79,6 +82,11 @@ class ClusterManifest:
                 [int(e) for e in entry["experts"]],
             )
         e2c = {int(k): int(v) for k, v in data["expert_to_cluster"].items()}
+        raw_l2g = data.get("layer_to_group")
+        layer_to_group = (
+            {int(k): int(v) for k, v in raw_l2g.items()}
+            if isinstance(raw_l2g, dict) else None
+        )
         return cls(
             version=int(data.get("version", MANIFEST_VERSION)),
             num_experts=int(data["num_experts"]),
@@ -86,6 +94,7 @@ class ClusterManifest:
             storage_format=data.get("storage_format", "safetensors"),
             clusters=clusters,
             expert_to_cluster=e2c,
+            layer_to_group=layer_to_group,
         )
 
     def to_dict(self) -> Dict:
@@ -99,7 +108,22 @@ class ClusterManifest:
                 for cid, (fname, eids) in sorted(self.clusters.items())
             ],
             "expert_to_cluster": {str(k): v for k, v in self.expert_to_cluster.items()},
+            "layer_aware": bool(self.layer_to_group),
+            "layer_to_group": {str(k): int(v) for k, v in (self.layer_to_group or {}).items()},
         }
+
+    def validate(self, *, num_layers: int | None = None,
+                 num_experts: int | None = None) -> list[str]:
+        """Return actionable manifest mismatches instead of failing in hot IO."""
+        errors = []
+        if num_layers is not None and int(self.num_layers) != int(num_layers):
+            errors.append(f"num_layers manifest={self.num_layers} runtime={num_layers}")
+        if num_experts is not None and int(self.num_experts) != int(num_experts):
+            errors.append(f"num_experts manifest={self.num_experts} runtime={num_experts}")
+        expected = set(range(int(self.num_experts)))
+        if set(self.expert_to_cluster) != expected:
+            errors.append("expert_to_cluster does not cover every expert")
+        return errors
 
     def cluster_members(self, expert_id: int) -> List[int]:
         cid = self.expert_to_cluster[expert_id]
@@ -120,7 +144,7 @@ class ClusterStorage:
 
     Read path (runtime, hot loop):
         storage = ClusterStorage(output_dir)
-        per_layer = storage.load_cluster(cluster_id, dtype=torch.float16)
+        per_layer = storage.load_cluster(cluster_id)   # pages keep their stored dtype
         # per_layer: {expert_id: {layer_id: {param_name: Tensor}}}
     """
 
@@ -146,6 +170,7 @@ class ClusterStorage:
         self,
         cluster_id: int,
         dtype: Optional[torch.dtype] = None,
+        pages: Optional[set] = None,
     ) -> Dict[int, Dict[int, Dict[str, torch.Tensor]]]:
         """
         mmap a whole cluster file and return nested dict:
@@ -164,6 +189,10 @@ class ClusterStorage:
                 if parsed is None:
                     continue
                 layer_id, expert_id, param_name = parsed
+                # Select before get_tensor: a one-page miss must not materialize
+                # every layer/expert in a large cluster.
+                if pages is not None and (layer_id, expert_id) not in pages:
+                    continue
                 t = f.get_tensor(key)
                 if dtype is not None and t.dtype != dtype:
                     t = t.to(dtype)
@@ -185,11 +214,16 @@ class ClusterStorage:
         output_dir: str,
         num_layers: int,
         num_experts: int,
-        dtype: torch.dtype = torch.float16,
+        dtype: Optional[torch.dtype] = None,
+        layer_to_group: Optional[Dict[int, int]] = None,
     ) -> str:
         """
         Serialize `moe_layers` (list of ChronosMOEFeedForward) into one
         safetensors file per cluster and write the manifest.
+
+        ``dtype=None`` (default) stores each expert in its own dtype, i.e. the
+        trunk compute dtype: BF16 stays BF16 (no FP16 detour that would clip
+        BF16's range), FP32 stays FP32.  Pass a dtype only to convert once.
 
         Returns the path to cluster_manifest.json.
         """
@@ -212,13 +246,21 @@ class ClusterStorage:
                         continue
                     expert = moe_layers[li].experts[eid]
                     for pname, pval in expert.state_dict().items():
-                        tensors[_key(li, int(eid), pname)] = pval.detach().to(dtype=dtype).cpu().contiguous()
+                        t = pval.detach()
+                        if dtype is not None and t.dtype != dtype:
+                            t = t.to(dtype=dtype)
+                        tensors[_key(li, int(eid), pname)] = t.cpu().contiguous()
 
             file_name = f"cluster_{cid}.ctsr"
             file_path = os.path.join(output_dir, file_name)
             _st_save_file(tensors, file_path)
             manifest_clusters[cid] = (file_name, [int(e) for e in cluster])
 
+        layer_to_group = (
+            {int(li): int(gi) for li, gi in layer_to_group.items()}
+            if layer_to_group is not None
+            else {int(li): int(li) for li in range(int(num_layers))}
+        )
         manifest = ClusterManifest(
             version=MANIFEST_VERSION,
             num_experts=num_experts,
@@ -226,6 +268,7 @@ class ClusterStorage:
             storage_format="safetensors",
             clusters=manifest_clusters,
             expert_to_cluster=expert_to_cluster,
+            layer_to_group=layer_to_group,
         )
         manifest_path = os.path.join(output_dir, MANIFEST_FILENAME)
         with open(manifest_path, "w") as f:

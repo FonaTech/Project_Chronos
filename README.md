@@ -60,6 +60,81 @@ Under a simulated 30 ms SSD delay, the new path keeps **35 ms+ per token** of pi
 
 ---
 
+## v3 kernel: recurrent-depth MoE (0.3.0)
+
+v3 reuses a few physical layers many times. A prelude runs once, each shared recurrent group loops `recurrent_depth` times with a contractive update `h ← h + dt·(block(h + e_loop) − h)`, and a coda runs once. The 50M demo has 6 physical layers that execute as 18 virtual layers (prelude 1, 4 recurrent layers × depth 4, coda 1).
+
+```mermaid
+flowchart LR
+    X["tokens"] --> P["Prelude<br/>runs once"]
+    P --> G["Recurrent group<br/>MLA / SWA + top-2 MoE"]
+    G -->|"loop d = 1..D<br/>contractive step, ACT halt"| G
+    G --> C["Coda<br/>runs once"]
+    C --> H["LM head"]
+    P -. "lookahead source" .-> LR["LookaheadRouter<br/>expert prefetch"]
+```
+
+**What changed from v2**
+
+| | v2 | v3 |
+|---|---|---|
+| Attention inside the loop | Iteration 0 only (`first_only`) | Every iteration |
+| KV cache per recurrent layer | 1 slot; the every-iteration attention switch rewrote it each iteration (measured prefill+decode vs full-forward gap 0.94) | `shared_first`: Q recomputed each iteration, K/V from iteration 0, so KV slots = physical layers |
+| Routing | top-1 (gate received no CE gradient) | top-2 + 1 shared expert |
+| MoE dispatch | Python loop over experts with `.item()` syncs | Sorted grouped dispatch: `gather_mm` on MLX, `argsort` + `index_add_` on Torch |
+| Early exit | Host sync every step | Tensor-only ACT, exact and batch-invariant; decode can exit per token without KV gaps |
+| Decoding | Plain autoregressive | Recurrent-depth self-speculative decoding |
+
+`per_iteration` (one KV slot per virtual layer) is kept as an ablation. Old v2 checkpoints load as `first_only`; their logits match a stored golden tensor within 1e-5.
+
+**Self-speculative decoding (no extra parameters).** The same model drafts γ tokens at a shallow depth and verifies them with one full-depth batched forward pass. Greedy output is token-for-token identical to full-depth greedy. Sampling uses rejection sampling, which preserves the full-depth distribution. After a rejection, the cache is truncated: MLA slices `c_kv`, and the sliding-window cache keeps `window + γ_max` entries. Torch (`chronos/runtime/speculative.py`) and MLX (`chronos/mlx/speculative.py`, `ChronosMLXInferenceEngine.generate(speculative=True)`) share the algorithm. Tests cover greedy identity, the rejection distribution and rollback against a fresh prefill on both backends. The Web UI Inference tab has a switch for it, with draft depth and γ.
+
+For the 50M demo it is exact but not faster on any runtime we measured (pretrain step-13,996 checkpoint, greedy, batch 1, FLORES+ dev en→zh, draft depth 1, γ 4; reports in `reports/speculative/`):
+
+| Runtime | Plain tok/s | Speculative tok/s | Ratio | Acceptance |
+|---|---|---|---|---|
+| MLX GPU bf16, all experts in DRAM | 112.0 | 107.4 | 0.96× | 42 % |
+| MLX GPU bf16, lazy experts (12 of 216 pages resident) | 43.7 | 32.0 | 0.73× | 42 % |
+| Torch MPS fp32, all experts | 32.1 | 25.9 | 0.81× | 40 % |
+| Torch MPS fp32, lazy experts | 17.0 | 14.7 | 0.86× | 40 % |
+
+At this size a full-depth step costs about as much as a batched verify pass. With lazy experts, drafts and verify passes also route to different experts, so speculative decoding read 1.4–1.6× more expert pages from SSD. Greedy outputs were identical in CPU fp32 and Torch MPS fp32. In GPU bf16, near-tie tokens flipped in 2 of 24 sentences. The switch therefore stays off by default.
+
+**Precision chain.** One compute dtype runs end to end. FP32 is used only where it pays: RMSNorm statistics, SDPA softmax, RoPE tables, router softmax, LM-head logits and optimizer master weights. The MLX↔Torch bf16 bridge is bit-exact. `auto` picks bf16 on MLX GPU and CUDA, and fp32 on CPU and MPS (MPS bf16 measured slower; see below).
+
+**Tooling added in v3**
+
+| Command | What it does |
+|---|---|
+| `chronos tokenizer` | Self-built byte-fallback BPE with script-aware pre-tokenization and language-balanced merges; writes an HF-compatible `tokenizer.json` + chat template |
+| `chronos corpus download / build / shards` | Pinned downloads, cleaning, global dedup, eval-set leak removal, uint16 shards |
+| `chronos longrun --spec recipe.json` (alias `run`) | Time-budgeted MLX run: warmup + cosine per phase wall-clock budget, NaN rollback, bit-exact resume, validation and translation probes |
+| `chronos serve` | Ollama/OpenAI protocol server on the native runtime (see below) |
+| `chronos monitor` | Read-only training monitor page + JSON API (see below) |
+
+`chronos.model.factory.fit_config` searches for a configuration that matches total and active parameter targets.
+
+**Status of the 50M en→zh demo (in progress).**
+- Model: 49.69M total / 12.09M active parameters, 36 experts, MLA latent 128, SWA window 128, 16k self-built vocabulary.
+- Run: a 72-hour MLX bf16 run (pretrain, then SFT) started on 2026-11-05.
+- Interim measurement: valid CE 2.477 at pretrain step 13,996 of about 24.7k planned (it was 3.012 at step 1,656). That checkpoint is packaged as `chronos-enzh-50m-pretrain-s13996` (see Model bundle).
+- BLEU/chrF on FLORES+ and WMT22, and the ablations (attention mode, depth, lazy-expert budget, speculative γ), will be published after the run finishes. No quality numbers are claimed before then.
+
+**Inference and memory options (all off by default).** Each option is a config field and a `chronos serve` / Inference-tab override. Tests compare each one with its reference path on Torch and MLX.
+
+| Field | Values (default first) | Effect |
+|---|---|---|
+| `kv_cache_dtype` | `auto`, `int8` | `int8` stores MLA `c_kv` and SWA k/v per token in groups of 32 with a scale; rollback and speculative decoding work on it |
+| `mla_decode` | `expanded`, `absorbed`, `auto` | `absorbed` scores against `c_kv` without expanding K/V. `auto` absorbs only short cached chunks; it is opt-in because a bf16 prefill (expanded) followed by absorbed decode drifted from the full forward pass (max logit gap 0.06, measured) |
+| `mla_cache_rope` | `false`, `true` | Also caches the roped key, trading memory for decode speed |
+| `router_scope` | `per_iteration`, `shared` | `shared` reuses iteration 0's experts for the rest of the loop, so fewer experts are resident per token |
+| `draft_exit_kl_coef`, `draft_exit_depth` | `0`, `1` | Training term: KL from the shallow exit to the detached full-depth logits, which raises speculative acceptance |
+| `max_resident_experts`, `ram_budget_mb` | unset | Hard caps on the fast tier and the RAM tier. LRU eviction never evicts experts the lookahead router predicts. Prefetch covers every loop iteration of a virtual layer |
+
+Web UI: the Tokenizer tab (extract → train → evaluate) and the Serve tab (start/stop `chronos serve`; the API key goes through the environment, never argv).
+
+---
+
 ## Three-tier storage (M1: cluster-aware safetensors)
 
 ```mermaid
@@ -189,7 +264,7 @@ flowchart LR
 
 Training dtype and resource policy:
 
-- `--dtype auto` is the default. MPS/MLX resolve to BF16-first for training stability, CUDA/XPU resolve to FP16, and CPU resolves to FP32 unless `--dtype float16` or `--dtype bfloat16` is set explicitly.
+- `--dtype auto` is the default. One compute dtype covers weights, activations, KV cache and expert pages; FP32 is kept only inside fused kernels (SDPA softmax, RMSNorm statistics), for RoPE tables, router softmax, loss logits and the optimizer's FP32 masters/moments. `auto` resolves to BF16 on MLX GPU, BF16 on CUDA (FP16 if unsupported, with loss scaling), and FP32 on CPU and MPS. On MPS, native BF16 measured slower than FP32 (Chronos 50M on an M5 Max with torch 2.10: 0.749 vs 0.619 s per training step, 49.1 vs 37.3 ms per decoded token). Pass `--dtype bfloat16` explicitly to trade speed for half the weight and KV memory.
 - CPU training configures PyTorch to use physical cores by default. Override with `--cpu_threads` or `--cpu_budget_percent`.
 - On macOS, MPS/MLX training forces DataLoader workers to `0` by default to avoid Metal command-buffer crashes from multiprocessing. CPU/CUDA still use worker processes; advanced users can override the guard with `CHRONOS_ALLOW_METAL_DATALOADER_WORKERS=1`.
 - Native MLX training pushes UI logs, scalar readouts, and chart points every `log_interval` steps, and Web UI Stop is checked at each batch boundary.
@@ -200,7 +275,7 @@ The six-stage MLX trainer mirrors the PyTorch loss stack in `chronos.mlx.*`:
 masked CE, DPO/ORPO/GRPO/distillation losses, load balance, temporal locality,
 lookahead soft-target supervision, lookahead top-k hit loss, and router KL
 anchor. Numerically sensitive pieces run in FP32 even when model weights use
-BF16/FP16, which is why `auto` prefers BF16 on MLX/MPS: FP16 has too little
+BF16/FP16, which is why `auto` prefers BF16 over FP16 on MLX GPU: FP16 has too little
 exponent range for router softmax, CE, and Adam moments on small unstable
 training runs.
 
@@ -371,6 +446,13 @@ pip install -e ".[dev]"
 pip install "Project_Chronos[mlx]"
 ```
 
+**Optional extras** (versions pinned):
+
+```bash
+pip install "Project_Chronos[serve]"      # chronos serve / chronos monitor (fastapi, uvicorn)
+pip install "Project_Chronos[translate]"  # corpus detokenization + BLEU/chrF probes (sacremoses, sacrebleu)
+```
+
 **vLLM serving (optional, Linux + CUDA only):**
 
 ```bash
@@ -378,16 +460,17 @@ pip install vllm
 ```
 
 > **minimind dependency**: Project Chronos uses [minimind](https://github.com/jingyaogong/minimind) as its MoE kernel.
-> If it is not found locally, Chronos clones it automatically into `~/.cache/chronos/minimind-master/` on first import.
+> If it is not found locally, Chronos clones it automatically into `~/.cache/chronos/minimind-master/` on first import (this needs `git` and network access).
+> Set `CHRONOS_MINIMIND_DIR=/path/to/minimind` to use a local copy instead; model bundles ship one under `third_party/minimind` and their launcher sets the variable.
 > minimind is licensed under **Apache-2.0**. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for attribution details.
 
-**Requirements**: Python 3.10+, PyTorch 2.4+
+**Requirements**: Python 3.10+, PyTorch 2.6+
 
 ---
 
 ## Quick start
 
-### Web UI (M6: 8 tabs, 4 languages)
+### Web UI (12 tabs, 4 languages)
 
 ```bash
 chronos-ui
@@ -397,16 +480,126 @@ python chronos_app.py
 
 Tabs included:
 
-- `Config` with a live parameter / memory estimator merged in from the old Designer
-- `Train` with its own `data_path`
+- `Config`: v3 presets, the auto planner (below) and a live parameter / memory estimator
+- `Data` for dataset scanning and conversion
+- `Tokenizer`: extract text from datasets, train the Chronos BPE, evaluate and save
+- `Train` with its own `data_path`; applies the selected stage's overrides
+- `Training Monitor` (read-only view of `runs/`; see below)
 - `6-Stage Pipeline` with per-stage dataset paths
 - `Inference`
 - `Export` for FP16/Q8_0 safetensors and GGUF deployment artifacts
+- `Serve`: start and stop `chronos serve` and view its log
 - `Benchmark` with Markdown table + comparison plots
 - `Auto-Tune` with persistent logs and one-click `Apply Best -> Config`
 - `IO Monitor`
 
+At a 1280 px wide window, Gradio moves the last tabs (Auto-Tune, IO Monitor) into its "…" overflow menu.
+
+### Presets and the auto planner
+
+The Config tab ships five v3 presets. Each one is generated by the planner and stored in `ui/presets_v3.json`; regenerate the file with `python -m ui.presets`. Parameter counts are measured with a meta-device model; peak memory is an estimate.
+
+| Preset | Total / active params (measured) | Shape | Memory level | Est. training peak |
+|---|---|---|---|---|
+| Chronos-v3 Tiny (smoke / CI) | 1.51M / 1.29M | E4 top-2, vocab 6400, seq 128, depth 2 | none | 2.13 GB |
+| Chronos-v3 50M (en→zh recipe) | 49.69M / 12.09M | h384, L6, E36 top-2, vocab 16384, seq 512 | none | 16.4 GB (the live run measures 8.72 GB peak) |
+| Chronos-v3 200M (32 GB) — default | 200.72M / 28.20M | h576, E32 top-2 | balanced | 10.14 GB |
+| Chronos-v3 500M (32 GB) | 499.53M / 61.59M | E48 top-3 | aggressive | 9.26 GB |
+| Chronos-v3 1B (64 GB) | 1002.17M / 99.74M | E64 top-4, seq 2048 | aggressive | 18.92 GB |
+
+The old preset names (Recommended-CN, Tiny/Small/Medium/Large) still load; they map to the closest v3 tier.
+
+**Auto planner** (Config tab → "Auto plan"). Inputs:
+- target total parameters, and whether to use MoE;
+- the expert count, plus either the number of active experts or an active-parameter target;
+- a memory-saving level: `none`, `balanced`, `aggressive` or `extreme`;
+- optional dataset paths, RAM, token budget, vocabulary size and sequence length.
+
+`chronos.model.planner.plan_training` then does the following:
+1. **Profiles the datasets.** It reads the shard manifest or samples the files, classifies records as pretrain, SFT, preference or RL, and reads the tokenizer report. The vocabulary size, sequence length (p95 / cap), token count and tokenizer path come from the data when available.
+2. **Searches the architecture.** It looks for the hidden size, layer count, expert width and GQA heads whose meta-device count is closest to the target.
+3. **Sets LR and batch size** from the DeepSeek LLM compute-optimal fits (η = 0.3118·C^−0.125, B = 0.2920·C^0.3271), capped for wide models.
+4. **Fits memory.** It picks micro-batch, accumulation, int8 KV, router scope, activation checkpointing, optimizer paging and an expert RAM budget for the memory level.
+5. **Writes per-stage values.** Pretrain, SFT, DPO, ORPO, GRPO and distill each get their own learning rate, batch, epochs, save interval and stage-specific terms (β, temperature, α).
+
+The stage table is editable; the Train tab merges the selected stage's row over the shared values, and the pretrain row stays in sync with the shared widgets. "Save plan" writes the config, stage values and report to JSON. Every number in the report is labelled measured or estimated.
+
 Built-in i18n: `zh-Hans`, `zh-Hant`, `en`, `ja`
+
+### Training monitor (console tab + standalone page/API)
+
+A `chronos longrun` run directory holds `run_spec.json`, `metrics.jsonl`,
+`status.json` (heartbeat), `runtime.json` (precision policy, device, versions,
+code hash), `parameters.jsonl` (per-tensor weight/grad/update statistics and
+per-virtual-layer routing), `samples.jsonl`, `inspections/` and checkpoints.
+The console's **Training Monitor** tab and a standalone page both read these
+files and never touch the training device. Runs started before telemetry
+existed still show progress; their status is derived from `metrics.jsonl` and
+the process table.
+
+```bash
+chronos monitor --runs-dir runs                    # http://127.0.0.1:7870/
+chronos serve --models-dir exports --monitor-runs-dir runs   # same page at /monitor/
+```
+
+JSON API (read-only): `GET /api/state?run=&history=1`, `/api/metrics?run=&phase=&since=`,
+`/api/parameters`, `/api/tensors`, `/api/tensor?name=`, `/api/log?bytes=`, `/api/runs`.
+
+Security: the default bind is 127.0.0.1 with no authentication. Any other
+address requires `--allow-remote` and `--api-key` (or `CHRONOS_MONITOR_KEY`).
+Browsers sign in once and get an HttpOnly, SameSite=Strict session cookie;
+scripts send `Authorization: Bearer <key>`. Failed logins are rate-limited.
+Off loopback, add `--ssl-certfile/--ssl-keyfile` or a TLS reverse proxy,
+otherwise the key crosses the network in clear text.
+
+### Ollama / OpenAI protocol server
+
+`chronos serve` runs the native Chronos runtime behind the Ollama and OpenAI HTTP APIs. The kernel is not converted to another architecture, so recurrent depth, SSD-lazy experts with lookahead prefetch, compressed KV and self-speculative decoding stay active.
+
+```bash
+pip install "Project_Chronos[serve]"
+chronos serve --models-dir ./exports --port 11435        # 11434 would collide with a running Ollama
+OLLAMA_HOST=127.0.0.1:11435 ollama list
+OLLAMA_HOST=127.0.0.1:11435 ollama run <model-name> "Hello"
+```
+
+- Endpoints: `/api/version`, `/api/tags`, `/api/show`, `/api/ps`, `/api/pull`, `/api/generate` and `/api/chat` (streaming NDJSON), `/v1/models`, `/v1/chat/completions` (SSE).
+- Models are `<name>.pth` + `<name>.config.json` pairs found under `--models-dir`.
+- Chronos options go in the request `options`: `chronos_speculative`, `chronos_draft_depth`, `chronos_gamma`, `chronos_miss_policy`.
+- Stock `ollama` / llama.cpp cannot execute Chronos GGUF files (MLA+SWA hybrid layers and the contractive recurrence have no stock equivalent); use this server instead.
+- Security: binds 127.0.0.1 without authentication by default. Other addresses require `--allow-remote` and `--api-key`; clients then send `Authorization: Bearer <key>`.
+
+### Model bundle (ready-to-run pretrained model)
+
+`chronos bundle build` packages one exported checkpoint of a `chronos longrun` run into a folder that works right after unpacking. Building only reads the run directory.
+
+```bash
+chronos bundle build --run-dir runs/enzh_50m_v1 --which best --wheel dist/project_chronos-0.3.0-py3-none-any.whl --pack
+```
+
+| Bundle path | Content |
+|---|---|
+| `model/` | weights + `.config.json` sidecar, tokenizer (`model/tokenizer/`) |
+| `eval/` | FLORES+ dev/devtest (CC BY-SA 4.0) for `bundle eval` / `probe` |
+| `data/sft_valid/` | the run's SFT validation shards |
+| `third_party/minimind/` | vendored minimind (Apache-2.0), so no git clone is needed |
+| `wheels/`, `bin/setup.sh`, `bin/chronos` | offline install into `.venv`, launcher that sets `CHRONOS_BUNDLE` / `CHRONOS_MINIMIND_DIR` |
+| `recipes/source_run_spec.json`, `recommended.json` | the recipe that produced the weights; fine-tune tiers `smoke` / `quick` / `standard` / `full` |
+| `bundle.json` | provenance (step, tokens, valid CE), measured quality probe, SHA-256 of every file |
+
+On the recipient side:
+
+```bash
+bin/setup.sh                                              # venv + wheel + `bundle check`
+bin/chronos bundle translate "The weather is very nice today."
+bin/chronos bundle translate --backend mlx --speculative --file examples/translate_en.txt
+bin/chronos bundle eval --split devtest -n 200
+bin/chronos bundle prepare-data my_pairs.jsonl --out work/data      # FLORES+ is removed from your data
+bin/chronos bundle finetune --data work/data --run-dir work/ft --tier quick --mode sft
+bin/chronos bundle serve -- --port 11435
+```
+
+`--speculative` needs `--repetition-penalty 1.0` (its default), because the penalty changes the target distribution at every position. `finetune` writes a `chronos longrun` spec with `init_checkpoint` set to the bundle weights and refuses a run directory that already holds a run. Bundles built from data with unknown licences (WMT19, OPUS-100) say in `NOTICE.md` that the weights are for research only.
 
 ### Deployment export
 
@@ -540,7 +733,10 @@ Project_Chronos/
 │   ├── deps.py                    # Auto-download minimind if missing
 │   ├── __init__.py                # AutoConfig / AutoModelForCausalLM registration
 │   ├── model/
-│   │   ├── config.py              # ChronosConfig
+│   │   ├── config.py              # ChronosConfig (v3 fields, v2 migration)
+│   │   ├── recurrent.py           # Loop/group embeddings, contractive step, tensor-only ACT
+│   │   ├── precision_ops.py       # RMSNorm/SDPA/RoPE with one compute dtype
+│   │   ├── factory.py             # Parameter-budget config search
 │   │   ├── hybrid_attention.py    # MLAAttention + SlidingWindowAttention
 │   │   ├── lookahead_router.py    # Per-token lookahead predictor
 │   │   ├── moe_chronos.py         # ChronosMOEFeedForward + shared experts + soft gating
@@ -559,7 +755,11 @@ Project_Chronos/
 │   │   └── prefill_scheduler.py   # Prefill-time expert preloader
 │   ├── mlx/
 │   │   ├── attention.py / moe.py / model.py / expert_store.py / inference.py
+│   │   ├── moe_kernels.py         # Sorted gather_mm dispatch (mlx >= 0.32.4)
+│   │   ├── speculative.py         # MLX self-speculative decoding (Torch parity)
+│   │   └── training/              # longrun.py, telemetry.py, recipes/
 │   ├── runtime/
+│   │   ├── speculative.py         # Recurrent-depth self-speculative decoding
 │   │   ├── cache_manager.py       # prefetch_for_next_step / ensure_resident
 │   │   ├── inference_engine.py    # End-to-end inference engine
 │   │   └── metrics.py             # MetricsBus for the IO Monitor
@@ -578,14 +778,19 @@ Project_Chronos/
 │   │   ├── io_profiler.py         # Lookahead validation
 │   │   └── benchmark.py           # End-to-end benchmarking
 │   ├── data/
-│   │   └── flexible_dataset.py    # Flexible JSONL dataset loader
+│   │   ├── flexible_dataset.py    # Flexible JSONL dataset loader
+│   │   └── corpus/                # download / clean / dedup / leak filter / shards
+│   ├── tokenizer/                 # Chronos BPE builder (extract, normalize, train, evaluate)
+│   ├── monitor/                   # Read-only run monitor: snapshot, API server, static page
 │   ├── backend/
 │   │   ├── __init__.py            # BackendDispatcher (cpu/mps/cuda/mlx)
 │   │   ├── dispatcher.py          # Capability probing + priority logic
 │   │   └── ext/opencl.py          # Third-party OpenCL extension hook
 │   ├── _backend_legacy.py         # Backward-compatible older APIs
+│   ├── bundle/                    # chronos bundle: build/check/translate/finetune
 │   ├── serving/
-│   │   ├── __init__.py
+│   │   ├── ollama_server.py       # chronos serve: Ollama/OpenAI protocol layer
+│   │   ├── runtime.py             # Model discovery, lazy experts, speculative generation
 │   │   └── vllm_adapter.py        # Optional vLLM registration
 │   └── cli.py                     # Unified CLI
 ├── ui/                            # Gradio Web UI (zh-Hans / zh-Hant / en / ja)
@@ -593,7 +798,9 @@ Project_Chronos/
 │   ├── estimator.py               # Live parameter / memory estimator
 │   └── tabs/
 │       ├── config_tab.py          # Config + Designer merged together
+│       ├── data_tab.py
 │       ├── train_tab.py           # Owns data_path
+│       ├── monitor_tab.py         # Training Monitor (shares chronos.monitor)
 │       ├── pipeline_tab.py        # Per-stage datasets across all 6 stages
 │       ├── inference_tab.py
 │       ├── benchmark_tab.py       # Markdown table + gr.BarPlot
@@ -611,8 +818,9 @@ Project_Chronos/
 │   ├── compare_minimind_chronos_v2.py
 │   └── compare_minimind_chronos_v3.py
 ├── tests/
-│   ├── test_smoke.py
-│   ├── test_smoke_cuda.py
+│   ├── test_smoke.py / test_smoke_cuda.py
+│   ├── test_v3_kernel.py / test_speculative.py / test_moe_dispatch.py / test_precision_chain.py
+│   ├── test_tokenizer_builder.py / test_longrun.py / test_monitor.py
 │   └── fixtures/
 ├── docs/
 │   └── vllm_integration.md
@@ -654,7 +862,19 @@ timeline
         : HF IO, vLLM adapter, multi-backend dispatch
         : Stage 6 distillation and pluggable rewards
         : Web UI v2, benchmark plots, IO Monitor
+    v3 (0.3.0)
+        : Recurrent-depth kernel with shared_first KV
+        : top-2 + shared expert, grouped MoE dispatch
+        : Self-speculative decoding (Torch and MLX)
+        : Ollama/OpenAI protocol server
+        : Ready-to-run model bundles (chronos bundle)
+        : Chronos tokenizer, corpus pipeline, long-run trainer
+        : Training monitor page, API and console tab
+        : int8 KV, MLA absorbed decode, shared router scope (opt-in)
+        : Auto planner, v3 presets, tokenizer and serve tabs
     Next
+        : 50M en-zh results and ablations
+        : Speculative decoding: a draft path that pays off on larger models and lazy experts
         : Train IntentClassifier on large activation corpora
         : Benchmark 7B+ checkpoints
         : Inject masks on the vLLM worker path

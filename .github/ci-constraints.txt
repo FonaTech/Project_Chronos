@@ -1,0 +1,21 @@
+# Versions CI installs (resolved and tested together on Python 3.10 and 3.11).
+# transformers >= 5 disables its PyTorch backend below torch 2.6, so torch and
+# transformers move together.  Newer transformers / numpy / flake8 dropped 3.10.
+torch==2.10.0
+transformers==5.22.1; python_version >= "3.11"
+transformers==5.20.2; python_version < "3.11"
+numpy==2.4.6; python_version >= "3.11"
+numpy==2.2.6; python_version < "3.11"
+flake8==7.5.0; python_version >= "3.11"
+flake8==7.4.1; python_version < "3.11"
+datasets==5.1.0
+tokenizers==0.23.3
+safetensors==0.8.0
+optuna==5.0.0
+tqdm==4.70.1
+psutil==7.2.2
+fastapi==0.115.9
+uvicorn==0.34.3
+httpx==0.28.1
+pytest==9.2.0
+ruff==0.17.4

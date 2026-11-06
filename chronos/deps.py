@@ -26,6 +26,14 @@ _CANDIDATE_PATHS = [
 
 
 def _find_local() -> Path | None:
+    # A bundle ships a vendored copy (``<bundle>/third_party/minimind``) and
+    # points here, so a recipient never needs git or network access.
+    override = os.environ.get("CHRONOS_MINIMIND_DIR", "").strip()
+    if override:
+        p = Path(override).expanduser()
+        if not (p / "model" / "model_minimind.py").exists():
+            raise FileNotFoundError(f"CHRONOS_MINIMIND_DIR={override!r} has no model/model_minimind.py")
+        return p
     for p in _CANDIDATE_PATHS:
         if (p / "model" / "model_minimind.py").exists():
             return p

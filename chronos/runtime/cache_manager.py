@@ -35,7 +35,12 @@ class CacheManager:
     def __init__(self, model, config, ssd_dir: str = "./expert_cache"):
         self.config = config
         self.expert_store = ExpertStore(model, config, ssd_dir=ssd_dir)
-        self.prefetcher = AsyncPrefetcher(self.expert_store)
+        # The queue is part of the memory budget: a large lookahead queue can
+        # retain many decoded expert ids and defeat the RAM cap.  Tie it to
+        # the canonical prefetch_depth setting while keeping a small minimum
+        # so a zero-depth diagnostic configuration remains usable.
+        queue_depth = max(1, int(getattr(config, "prefetch_depth", 2) or 0) * 2)
+        self.prefetcher = AsyncPrefetcher(self.expert_store, queue_depth=queue_depth)
         self.scheduler = PrefetchScheduler(self.prefetcher, self.expert_store)
         self._num_layers = len(self.expert_store.moe_layers)
 
@@ -62,9 +67,9 @@ class CacheManager:
         Defaults to experts 0..vram_capacity-1.
         """
         if initial_expert_ids is None:
-            initial_expert_ids = list(range(
-                min(self.config.num_experts, self.expert_store.vram_capacity)
-            ))
+            initial_expert_ids = self.expert_store._expand_keys(
+                list(range(self.config.num_experts))
+            )[:self.expert_store.vram_capacity]
         self.expert_store.prefetch_to_ram(initial_expert_ids)
         for eid in initial_expert_ids:
             self.expert_store.promote_to_vram(eid)
@@ -76,9 +81,8 @@ class CacheManager:
         return self.expert_store.vram_availability_mask()
 
     def availability_masks_all_layers(self) -> List[torch.Tensor]:
-        """Returns the same mask replicated for each MoE layer."""
-        mask = self.availability_mask()
-        return [mask] * self._num_layers
+        """Return actual per-layer masks (v1 stores return cloned globals)."""
+        return self.expert_store.vram_availability_masks()
 
     def step(self, lookahead_probs, current_expert_ids: List[int]):
         """
@@ -99,7 +103,13 @@ class CacheManager:
 
     def prefetch_experts_to_ram(self, expert_ids: List[int]) -> List[int]:
         """Queue exact expert IDs for SSD->RAM prefetch without touching VRAM."""
-        expert_ids = list(dict.fromkeys(int(eid) for eid in expert_ids or []))
+        normalized = []
+        for eid in expert_ids or []:
+            if isinstance(eid, (tuple, list)):
+                normalized.append(tuple(int(x) for x in eid))
+            else:
+                normalized.append(int(eid))
+        expert_ids = list(dict.fromkeys(normalized))
         if expert_ids:
             self.prefetcher.submit(expert_ids)
         return expert_ids
@@ -114,7 +124,7 @@ class CacheManager:
         # The compute stream waits on each newly-promoted expert's event;
         # already-resident experts contribute no event, so this only blocks
         # on the truly necessary transfers.
-        self.expert_store.wait_for_experts(newly)
+        self.expert_store.wait_for_experts(expert_ids)
         return newly
 
     def stats(self) -> dict:

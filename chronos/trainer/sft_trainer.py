@@ -28,7 +28,9 @@ from torch.utils.data import DataLoader
 import chronos.deps  # ensure minimind on sys.path
 
 from trainer.trainer_utils import Logger, is_main_process  # type: ignore
-from chronos.data.flexible_dataset import StreamingSFTDataset
+from chronos.data.flexible_dataset import (
+    StreamingSFTDataset, MultimodalStreamingSFTDataset, multimodal_collate,
+)
 
 from chronos.model.config import ChronosConfig
 from chronos.model.model_chronos import ChronosForCausalLM
@@ -49,6 +51,7 @@ from chronos.trainer.device_utils import (
     optimizer_step_with_scaler,
     runtime_summary,
 )
+from chronos.trainer.paged_store import PagedTrainingController
 
 
 class ChronosSFTTrainer:
@@ -73,32 +76,51 @@ class ChronosSFTTrainer:
             f"device={summary.device} type={summary.device_type} dtype={summary.dtype} "
             f"cpu_threads={summary.cpu_threads} autocast={summary.autocast} scaler={summary.scaler}"
         )
-        from chronos.trainer.optim_utils import build_optimizer
-        self.optimizer = build_optimizer(
-            model, lr=args.learning_rate,
+        from chronos.trainer.optim_utils import build_configured_optimizer
+        self.optimizer = build_configured_optimizer(
+            model, config, lr=args.learning_rate,
             weight_decay=float(getattr(args, "weight_decay", 0.01)),
         )
+        # One compute dtype end to end; FP32 masters live in the optimizer.
+        from chronos.trainer.precision_training import apply_training_precision
+        apply_training_precision(self, models=())
+        self.paged_training = PagedTrainingController(self.model, config)
 
         # Router anchor reference — captured at the start of a stage
         self._router_ref = None
         self._calib_batch = None
 
-    def set_calibration_batch(self, input_ids: torch.Tensor):
+    def set_calibration_batch(self, input_ids: torch.Tensor, *, modality_inputs=None, modality_mask=None):
         """Provide a representative input_ids batch; at stage start the
         current (pre-SFT) model's router is frozen as the anchor teacher."""
         self._calib_batch = input_ids
-        self._router_ref = capture_reference_routing(self.model, input_ids, self.device)
+        self._router_ref = capture_reference_routing(
+            self.model, input_ids, self.device,
+            modality_inputs=modality_inputs, modality_mask=modality_mask,
+        )
 
-    def train_step(self, input_ids, labels, step, total_steps):
+    def train_step(self, input_ids, labels, step, total_steps, *, modality_inputs=None, modality_mask=None):
+        if hasattr(self.model.model, "recurrent_controller"):
+            self.model.model.recurrent_controller.set_training_progress(step, total_steps)
         input_ids = input_ids.to(self.device)
         labels = labels.to(self.device)
+        if modality_inputs:
+            modality_inputs = {k: v.to(self.device) for k, v in modality_inputs.items()}
+        if modality_mask is not None:
+            modality_mask = modality_mask.to(self.device)
 
         lr = get_lr(step, total_steps, self.args.learning_rate)
         for pg in self.optimizer.param_groups:
             pg['lr'] = lr
 
         with self.autocast_ctx:
-            outputs, lookahead_probs = self.model(input_ids, labels=labels)
+            paged_masks = self.paged_training.masks_for_forward(self.device)
+            result = self.model(
+                input_ids, labels=labels,
+                modality_inputs=modality_inputs, modality_mask=modality_mask,
+                available_expert_masks=paged_masks,
+            )
+            outputs, lookahead_probs = result.legacy_tuple()
             ce_loss = outputs.loss
             aux_loss = outputs.aux_loss
 
@@ -148,6 +170,7 @@ class ChronosSFTTrainer:
                 self.model.parameters(),
                 self.args.grad_clip,
             )
+            self.paged_training.observe()
 
         return (
             loss.item() * self.args.accumulation_steps,
@@ -163,14 +186,21 @@ class ChronosSFTTrainer:
         cap = int(max_steps) if max_steps is not None else None
         total_steps = cap or (self.args.epochs * iters)
 
-        for local_step, (input_ids, labels) in enumerate(loader, start=1):
+        for local_step, batch in enumerate(loader, start=1):
             if local_step > iters:
                 break
             step = int(start_step) + local_step
             if cap is not None and step > cap:
                 break
+            if isinstance(batch, dict):
+                input_ids, labels = batch["input_ids"], batch["labels"]
+                media, media_mask = batch.get("modality_inputs"), batch.get("modality_mask")
+            else:
+                input_ids, labels = batch
+                media = media_mask = None
             loss, ce, aux, la, anc = self.train_step(
                 input_ids, labels, step, total_steps,
+                modality_inputs=media, modality_mask=media_mask,
             )
             if local_step % self.args.log_interval == 0 or local_step == iters:
                 elapsed = time.time() - start_time
@@ -201,10 +231,20 @@ class ChronosSFTTrainer:
         self.model.train()
 
 
-def build_sft_loader(data_path, tokenizer, max_seq_len, batch_size, device="cpu", num_workers="auto"):
-    ds = StreamingSFTDataset(data_path, tokenizer, max_length=max_seq_len)
+def build_sft_loader(data_path, tokenizer, max_seq_len, batch_size, device="cpu", num_workers="auto", *,
+                     modalities=None, image_size=224, audio_sample_rate=16000,
+                     max_audio_seconds=30.0, media_error_policy="warn"):
+    enabled = {str(m).lower() for m in (modalities or []) if str(m).lower() != "text"}
+    ds_cls = MultimodalStreamingSFTDataset if enabled else StreamingSFTDataset
+    ds = ds_cls(
+        data_path, tokenizer, max_length=max_seq_len,
+        **({"image_size": image_size, "audio_sample_rate": audio_sample_rate,
+            "max_audio_seconds": max_audio_seconds, "media_error_policy": media_error_policy}
+           if enabled else {}),
+    )
     return DataLoader(
         ds,
         batch_size=batch_size,
+        collate_fn=multimodal_collate if enabled else None,
         **dataloader_kwargs(device=device, num_workers=num_workers, shuffle=True),
     )

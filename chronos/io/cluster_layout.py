@@ -349,17 +349,33 @@ def repack_expert_weights_safetensors(
         output_dir=output_dir,
         num_layers=num_layers,
         num_experts=num_experts,
-        dtype=dtype if dtype is not None else _torch.float16,
+        dtype=dtype,
+        layer_to_group={
+            int(li): int(li - int(getattr(model.config, "prelude_layers", 0)))
+            if int(getattr(model.config, "prelude_layers", 0)) <= li < (
+                int(getattr(model.config, "prelude_layers", 0))
+                + int(getattr(model.config, "recurrent_groups", num_layers))
+            ) else -1
+            for li in range(num_layers)
+        },
     )
     return manifest_path
 
 
-def _parse_torch_dtype(dtype: str | torch.dtype | None) -> torch.dtype:
+def _model_dtype(model) -> torch.dtype:
+    from chronos.precision import torch_model_dtype
+    return torch_model_dtype(model)
+
+
+def _parse_torch_dtype(dtype: str | torch.dtype | None) -> torch.dtype | None:
+    """``None`` / ``"auto"`` -> keep the model's own dtype (no conversion)."""
     if isinstance(dtype, torch.dtype):
         return dtype
     if dtype is None:
-        return torch.float16
+        return None
     normalized = str(dtype).lower().replace("torch.", "")
+    if normalized in {"auto", "native", "keep"}:
+        return None
     if normalized in {"fp16", "float16", "half"}:
         return torch.float16
     if normalized in {"bf16", "bfloat16"}:
@@ -380,7 +396,7 @@ def build_clustered_expert_cache(
     max_batches: int = 50,
     batch_size: int = 4,
     max_seq_len: int = 256,
-    dtype: str | torch.dtype | None = torch.float16,
+    dtype: str | torch.dtype | None = None,
     source_checkpoint: str | None = None,
 ) -> dict:
     """
@@ -445,7 +461,7 @@ def build_clustered_expert_cache(
         "max_batches": int(max_batches),
         "batch_size": int(batch_size),
         "max_seq_len": int(max_seq_len),
-        "dtype": str(_parse_torch_dtype(dtype)).replace("torch.", ""),
+        "dtype": str(_parse_torch_dtype(dtype) or _model_dtype(model)).replace("torch.", ""),
         "clusters": clusters,
         "cooccurrence_matrix": np.round(C, 6).tolist(),
     }
@@ -467,7 +483,7 @@ def build_clustered_expert_cache_from_checkpoint(
     max_batches: int = 50,
     batch_size: int = 4,
     max_seq_len: int = 256,
-    dtype: str | torch.dtype | None = torch.float16,
+    dtype: str | torch.dtype | None = None,
 ) -> dict:
     from chronos.model.model_chronos import ChronosForCausalLM
     from chronos.model.checkpoint import (
@@ -483,6 +499,11 @@ def build_clustered_expert_cache_from_checkpoint(
     )
     model = ChronosForCausalLM(config)
     weights = load_checkpoint_state_dict(model_path, map_location="cpu")
+    if _parse_torch_dtype(dtype) is None:
+        # Keep the checkpoint's stored precision end to end (BF16 stays BF16).
+        stored = next((v.dtype for v in weights.values()
+                       if torch.is_tensor(v) and v.is_floating_point()), torch.float32)
+        model = model.to(stored)
     load_state_dict_controlled(model, weights)
     return build_clustered_expert_cache(
         model,
@@ -514,6 +535,8 @@ def main():
     parser.add_argument("--max_batches", type=int, default=50)
     parser.add_argument("--batch_size", type=int, default=4)
     parser.add_argument("--max_seq_len", type=int, default=256)
+    parser.add_argument("--dtype", default="auto",
+                        help="expert page dtype: auto (keep checkpoint dtype)|float32|bfloat16|float16")
     args = parser.parse_args()
 
     if args.format == "safetensors":
@@ -527,7 +550,7 @@ def main():
             max_batches=args.max_batches,
             batch_size=args.batch_size,
             max_seq_len=args.max_seq_len,
-            dtype=torch.float16,
+            dtype=args.dtype,
         )
         print(json.dumps(summary, indent=2, ensure_ascii=False))
         return

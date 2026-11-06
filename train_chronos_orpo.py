@@ -3,7 +3,6 @@ import argparse
 
 import chronos.deps  # noqa
 import torch
-from transformers import AutoTokenizer
 
 from chronos.backend import resolve_training_device
 from chronos.model.model_chronos import ChronosForCausalLM
@@ -11,6 +10,7 @@ from chronos.trainer.orpo_trainer import ChronosORPOTrainer, build_orpo_loader
 from chronos.trainer.stage_utils import (
     add_topology_args,
     build_config_from_upstream,
+    load_stage_tokenizer,
     load_required_checkpoint,
 )
 
@@ -54,7 +54,7 @@ def main():
         max_positions=args.max_seq_len,
         lambda_router_anchor=args.lambda_router_anchor,
     )
-    tokenizer = AutoTokenizer.from_pretrained(chronos.deps.get_tokenizer_path())
+    tokenizer = load_stage_tokenizer(args, cfg, ckp_path)
     loader = build_orpo_loader(
         args.data_path,
         tokenizer,

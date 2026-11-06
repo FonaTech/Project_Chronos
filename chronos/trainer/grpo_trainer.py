@@ -53,6 +53,7 @@ from chronos.trainer.device_utils import (
     optimizer_step_with_scaler,
     runtime_summary,
 )
+from chronos.trainer.paged_store import PagedTrainingController
 
 
 from chronos.trainer.reward import ToyReward, build_reward_fn  # noqa: F401
@@ -107,9 +108,9 @@ class ChronosGRPOTrainer:
             f"device={summary.device} type={summary.device_type} dtype={summary.dtype} "
             f"cpu_threads={summary.cpu_threads} autocast={summary.autocast} scaler={summary.scaler}"
         )
-        from chronos.trainer.optim_utils import build_optimizer
-        self.optimizer = build_optimizer(
-            model, lr=args.learning_rate,
+        from chronos.trainer.optim_utils import build_configured_optimizer
+        self.optimizer = build_configured_optimizer(
+            model, config, lr=args.learning_rate,
             weight_decay=float(getattr(args, "weight_decay", 0.01)),
         )
 
@@ -117,6 +118,10 @@ class ChronosGRPOTrainer:
         self.ref_model.load_state_dict(model.state_dict(), strict=False)
         self.ref_model.eval().requires_grad_(False)
         self._router_ref = None
+        # One compute dtype end to end; FP32 masters live in the optimizer.
+        from chronos.trainer.precision_training import apply_training_precision
+        apply_training_precision(self, models=(self.ref_model,))
+        self.paged_training = PagedTrainingController(self.model, config)
 
     def set_calibration_batch(self, x: torch.Tensor):
         self._router_ref = capture_reference_routing(self.model, x, self.device)
@@ -131,7 +136,8 @@ class ChronosGRPOTrainer:
             past = None
             generated: List[int] = []
             for _ in range(self.max_gen_len):
-                past_len = past[0][0].shape[1] if past else 0
+                from chronos.model.model_chronos import cache_sequence_length
+                past_len = cache_sequence_length(past) if past else 0
                 out = self.model(
                     ids[:, past_len:] if past_len > 0 else ids,
                     past_key_values=past, use_cache=True,
@@ -151,6 +157,9 @@ class ChronosGRPOTrainer:
     # ── core step ────────────────────────────────────────────────
 
     def train_step(self, prompt_text: str, step: int, total_steps: int):
+        controller = getattr(getattr(self.model, "model", None), "recurrent_controller", None)
+        if controller is not None:
+            controller.set_training_progress(step, total_steps)
         # Tokenize prompt
         prompt = self.tokenizer.apply_chat_template(
             [{"role": "user", "content": prompt_text}],
@@ -190,14 +199,16 @@ class ChronosGRPOTrainer:
             pg["lr"] = lr
 
         with self.autocast_ctx:
-            outputs, lookahead_probs = self.model(ids_batch)
+            paged_masks = self.paged_training.masks_for_forward(self.device)
+            result = self.model(ids_batch, available_expert_masks=paged_masks)
+            outputs, lookahead_probs = result.legacy_tuple()
             log_probs = F.log_softmax(outputs.logits[:, :-1, :], dim=-1)
             target = ids_batch[:, 1:]
             lp = log_probs.gather(-1, target.unsqueeze(-1)).squeeze(-1)  # [G, L-1]
             mask = response_mask[:, 1:]
 
             with torch.no_grad():
-                ref_out = self.ref_model(ids_batch)
+                ref_out = self.ref_model(ids_batch, logits_dtype=torch.float32)
                 ref_outputs = ref_out[0] if isinstance(ref_out, tuple) else ref_out
                 ref_lp = F.log_softmax(ref_outputs.logits[:, :-1, :], dim=-1).gather(
                     -1, target.unsqueeze(-1)
@@ -251,6 +262,7 @@ class ChronosGRPOTrainer:
                 self.model.parameters(),
                 self.args.grad_clip,
             )
+            self.paged_training.observe()
 
         return {
             "loss": float(loss.item() * self.args.accumulation_steps),

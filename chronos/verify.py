@@ -25,7 +25,7 @@ def _torch_prefill(config, checkpoint_path: str, ids: torch.Tensor, device: str 
     load_state_dict_controlled(model, state)
     model = model.to(device).eval()
     with torch.no_grad():
-        out, _lookahead = model(ids.to(device), use_cache=False)
+        out, _lookahead = model(ids.to(device), use_cache=False, legacy_output=True)
     logits = out.logits[:, -1, :].detach().float().cpu()
     return {
         "logits": logits,
@@ -44,8 +44,8 @@ def _masked_drift(config, checkpoint_path: str, ids: torch.Tensor) -> dict[str, 
         for _ in range(int(config.num_hidden_layers))
     ]
     with torch.no_grad():
-        no_mask, _ = model(ids, use_cache=False)
-        all_avail, _ = model(ids, use_cache=False, available_expert_masks=masks)
+        no_mask, _ = model(ids, use_cache=False, legacy_output=True)
+        all_avail, _ = model(ids, use_cache=False, available_expert_masks=masks, legacy_output=True)
     a = no_mask.logits[:, -1, :].float()
     b = all_avail.logits[:, -1, :].float()
     return {
@@ -62,7 +62,7 @@ def _mlx_prefill(config, checkpoint_path: str, ids: torch.Tensor) -> dict[str, A
     state = load_checkpoint_state_dict(checkpoint_path, map_location="cpu")
     pt = ChronosForCausalLM(config)
     load_state_dict_controlled(pt, state)
-    model = ChronosMLXModel.from_chronos_pytorch(pt, config)
+    model = ChronosMLXModel.from_chronos_pytorch(pt.eval(), config)
     logits, _lookahead, _cache = model(mx.array(ids.numpy()).astype(mx.int32))
     mx.eval(logits)
     last = torch.from_numpy(__import__("numpy").array(logits[:, -1, :], dtype="float32"))

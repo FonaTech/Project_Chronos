@@ -43,7 +43,7 @@ def compute_perplexity(model, dataloader, device, max_batches=50):
             if i >= max_batches:
                 break
             input_ids, labels = input_ids.to(device), labels.to(device)
-            out, _ = model(input_ids, labels=labels)
+            out, _ = model(input_ids, labels=labels, legacy_output=True)
             n_tokens = (labels != -100).sum().item()
             total_loss += out.loss.item() * n_tokens
             total_tokens += n_tokens
@@ -56,25 +56,20 @@ def measure_throughput(model, input_ids, device, max_new_tokens=64):
     input_ids = input_ids.to(device)
     t0 = time.monotonic()
     with torch.no_grad():
-        out, lp = model(input_ids, use_cache=True)
+        out, lp = model(input_ids, use_cache=True, legacy_output=True)
         past_kv = out.past_key_values
         for _ in range(max_new_tokens):
             x = torch.randint(0, model.config.vocab_size, (1, 1), device=device)
-            out2, _ = model(x, past_key_values=past_kv, use_cache=True)
+            out2, _ = model(x, past_key_values=past_kv, use_cache=True, legacy_output=True)
             past_kv = out2.past_key_values
     elapsed = time.monotonic() - t0
     return max_new_tokens / elapsed
 
 
 def kv_cache_memory_bytes(past_key_values, model):
-    """Estimate total KV cache memory in bytes (fp32)."""
-    total = 0
-    for i, kv in enumerate(past_key_values):
-        if kv is None:
-            continue
-        for t in kv:
-            total += t.numel() * t.element_size()
-    return total
+    """Bytes held by the KV cache (any dtype, int8 entries include their scales)."""
+    from chronos.model.kv_quant import entry_nbytes
+    return sum(entry_nbytes(kv) for kv in past_key_values if kv is not None)
 
 
 def run_benchmark(args):
@@ -132,11 +127,11 @@ def run_benchmark(args):
     model.eval()
     with torch.no_grad():
         x = torch.randint(0, config.vocab_size, (1, 32), device=args.device)
-        out, _ = model(x, use_cache=True)
+        out, _ = model(x, use_cache=True, legacy_output=True)
         past_kv = out.past_key_values
         for _ in range(args.max_new_tokens):
             xn = torch.randint(0, config.vocab_size, (1, 1), device=args.device)
-            out2, _ = model(xn, past_key_values=past_kv, use_cache=True)
+            out2, _ = model(xn, past_key_values=past_kv, use_cache=True, legacy_output=True)
             past_kv = out2.past_key_values
 
     kv_bytes = kv_cache_memory_bytes(past_kv, model)
@@ -149,7 +144,7 @@ def run_benchmark(args):
             layer_type = type(model.model.layers[i].self_attn).__name__
             seq_len = kv[0].shape[1]
             print(f"  Layer {i:2d} ({layer_type:25s}): seq_len={seq_len:4d}  "
-                  f"bytes={sum(t.numel()*t.element_size() for t in kv)//1024}KB")
+                  f"bytes={kv_cache_memory_bytes([kv], model)//1024}KB")
 
     print(f"\n=== Summary ===")
     print(f"  PPL={ppl:.2f}  TPS={tps:.1f}  KV={kv_bytes//1024}KB  "

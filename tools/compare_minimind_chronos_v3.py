@@ -57,6 +57,23 @@ from chronos.trainer.grpo_trainer import ChronosGRPOTrainer, load_grpo_prompts
 from chronos.trainer.reward import ToyReward
 
 
+def _as_output(value):
+    """Normalize Chronos/HF/legacy tuple outputs for benchmark code.
+
+    Chronos v2 returns ``ChronosCausalLMOutput`` by default, while older
+    scripts may opt into ``(primary_output, lookahead_probs)``.  The
+    benchmark must exercise the canonical contract without assuming tuple
+    indexing (``ModelOutput[0]`` is the first tensor, not the output object).
+    """
+    if isinstance(value, tuple):
+        return value[0]
+    return value
+
+
+def _logits(value):
+    return _as_output(value).logits
+
+
 def train_chronos_distill_short(student, teacher, cfg, loader, steps, lr, device):
     class _A:
         pass
@@ -80,10 +97,8 @@ def train_chronos_distill_short(student, teacher, cfg, loader, steps, lr, device
     student.eval()
     with torch.no_grad():
         for ids, labels in loader:
-            student_logits = student(ids.to(device))[0].logits
-            teacher_logits = teacher(ids.to(device))
-            teacher_logits = (teacher_logits[0].logits if isinstance(teacher_logits, tuple)
-                              else teacher_logits.logits)
+            student_logits = _logits(student(ids.to(device)))
+            teacher_logits = _logits(teacher(ids.to(device)))
             V = min(student_logits.shape[-1], teacher_logits.shape[-1])
             from chronos.trainer.distill_trainer import distillation_kl
             kd = distillation_kl(
@@ -168,11 +183,11 @@ def main():
         sample = next(iter(loader))[0][:1].to(args.device)
         ch.eval()
         with torch.no_grad():
-            before = ch(sample)[0].logits.detach().clone()
+            before = _logits(ch(sample)).detach().clone()
         ch_loaded, _ = load_chronos_pretrained(hf_dir, device=args.device)
         ch_loaded.eval()
         with torch.no_grad():
-            after = ch_loaded(sample)[0].logits.detach().clone()
+            after = _logits(ch_loaded(sample)).detach().clone()
         delta = float((before - after).abs().max().item())
         ch.train()
     results["hf_roundtrip"] = {"max_logit_delta": delta}

@@ -23,22 +23,27 @@ class LookaheadRouter(nn.Module):
         super().__init__()
         self.lookahead_steps = config.lookahead_steps
         self.num_experts = config.num_experts
+        self.layer_aware = bool(getattr(config, "layer_aware_lookahead", False))
+        self.num_groups = int(getattr(config, "recurrent_groups", 1) or 1)
         H = config.hidden_size
         K = config.lookahead_steps + 1  # current + future steps
 
         # Lightweight 2-layer MLP: H -> H//4 -> E*K
         self.proj = nn.Sequential(
-            nn.Linear(H, H // 4, bias=False),
+            nn.Linear(H, max(1, H // 4), bias=False),
             nn.SiLU(),
-            nn.Linear(H // 4, self.num_experts * K, bias=False),
+            nn.Linear(max(1, H // 4), self.num_experts * K * (self.num_groups if self.layer_aware else 1), bias=False),
         )
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         # hidden_states: [B, S, H]
         B, S, H = hidden_states.shape
         K = self.lookahead_steps + 1
-        logits = self.proj(hidden_states)                    # [B, S, E*K]
-        logits = logits.view(B, S, K, self.num_experts)      # [B, S, K, E]
+        logits = self.proj(hidden_states)
+        if self.layer_aware:
+            logits = logits.view(B, S, K, self.num_groups, self.num_experts)
+        else:
+            logits = logits.view(B, S, K, self.num_experts)
         return F.softmax(logits, dim=-1)                     # [B, S, K, E]
 
     def predict_next_experts(

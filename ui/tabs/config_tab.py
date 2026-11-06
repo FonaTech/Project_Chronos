@@ -15,10 +15,12 @@ from ui.gradio_compat import gr
 from ui.i18n import t, register_translatable
 from ui.estimator import (
     ArchConfig, total_params, active_params, memory_footprint,
-    estimated_decode_tps, fmt_bytes, fmt_params,
+    compute_params, active_param_bounds, parameter_breakdown, estimated_decode_tps, fmt_bytes, fmt_params,
 )
+from ui.planner_panel import build_planner_panel
 from ui.presets import (
-    preset_names, get_preset, values_in_input_order, save_config, load_config,
+    CONFIG_INPUT_ORDER, DEFAULT_PRESET, MINIMIND_MOE_DEFAULTS, preset_names, get_preset, values_in_input_order,
+    save_config, load_config,
 )
 
 
@@ -59,36 +61,65 @@ def _estimate(cfg_dict: dict):
     from hidden_size", matching MiniMindConfig's default rule. This keeps
     the estimator consistent with what the trainer actually builds.
     """
-    mis = int(cfg_dict.get("moe_intermediate_size", 0) or 0)
-    its = int(cfg_dict.get("intermediate_size", 0) or 0)
-    arch = ArchConfig(
-        hidden_size=int(cfg_dict.get("hidden_size", 256)),
-        num_hidden_layers=int(cfg_dict.get("num_hidden_layers", 4)),
-        num_attention_heads=int(cfg_dict.get("num_attention_heads", 8)),
-        num_key_value_heads=int(cfg_dict.get("num_key_value_heads", 4)),
-        vocab_size=int(cfg_dict.get("vocab_size", 6400)),
-        intermediate_size=its if its > 0 else None,
-        moe_intermediate_size=mis if mis > 0 else None,
-        num_experts=int(cfg_dict.get("num_experts", 4)),
-        num_experts_per_tok=int(cfg_dict.get("num_experts_per_tok", 1)),
-        num_shared_experts=int(cfg_dict.get("num_shared_experts", 1)),
-        lookahead_steps=int(cfg_dict.get("lookahead_steps", 2)),
-        kv_latent_dim=int(cfg_dict.get("kv_latent_dim", 64)),
-        rope_dim=int(cfg_dict.get("rope_dim", 32)),
-        sliding_window_size=int(cfg_dict.get("sliding_window_size", 2048)),
-        use_hybrid_attention=bool(cfg_dict.get("use_hybrid_attention", True)),
-        tie_word_embeddings=bool(cfg_dict.get("tie_word_embeddings", True)),
-        dtype=_normalize_dtype_name(str(cfg_dict.get("dtype", "auto"))),
-    )
-    mem = memory_footprint(arch)
+    arch = ArchConfig.from_config(cfg_dict)
+    seq_len = int(cfg_dict.get("max_seq_len", cfg_dict.get("max_position_embeddings", 1024)))
+    mem = memory_footprint(arch, seq_len)
+    low, high = active_param_bounds(arch)
+    detail = {
+        "parameters": parameter_breakdown(arch),
+        "active_unique_min": low, "active_unique_max": high,
+        "physical_blocks": arch.num_hidden_layers,
+        "prelude_groups_coda": [arch.prelude_layers, arch.recurrent_groups, arch.coda_layers],
+        "decode_depth_ceiling": arch.executed_depth,
+        "weight_use_count": compute_params(arch),
+        "inference_batch_size": 1, "context_tokens": seq_len,
+        "dtype_assumption": arch.dtype if arch.dtype != "auto" else "float32 (auto upper-bound scenario)",
+        "memory_bytes": mem,
+        "training_peak_excludes": ["activations", "attention workspace", "rollback snapshots", "allocator pools"],
+    }
     return (
         fmt_params(total_params(arch)),
-        fmt_params(active_params(arch)),
-        fmt_bytes(mem["vram_estimate_bytes"]),
-        fmt_bytes(mem["ssd_estimate_bytes"]),
-        fmt_bytes(mem["kv_cache_bytes"]),
-        f"{estimated_decode_tps(arch):.1f}",
+        fmt_params(low) if low == high else f"{fmt_params(low)} – {fmt_params(high)}",
+        fmt_params(compute_params(arch)),
+        fmt_bytes(mem["vram_estimate_bytes"]), fmt_bytes(mem["ram_estimate_bytes"]),
+        fmt_bytes(mem["ssd_estimate_bytes"]), fmt_bytes(mem["kv_cache_bytes"]),
+        f"{estimated_decode_tps(arch):.1f}", detail,
     )
+
+
+def merge_config_inputs(previous: dict, values: list) -> dict:
+    """Apply editor fields by name while retaining loaded fields without widgets."""
+    if len(values) != len(CONFIG_INPUT_ORDER):
+        raise ValueError(f"Config editor expects {len(CONFIG_INPUT_ORDER)} values, received {len(values)}")
+    cfg = dict(previous or MINIMIND_MOE_DEFAULTS)
+    for key, value in zip(CONFIG_INPUT_ORDER, values):
+        if key == "modalities":
+            value = value if isinstance(value, list) else str(value or "").split(",")
+            value = sorted(set(m.strip().lower() for m in value if m.strip() and m.strip().lower() != "text"))
+        elif key == "dtype":
+            value = _normalize_dtype_name(value)
+        else:
+            default = MINIMIND_MOE_DEFAULTS.get(key)
+            if value is None:
+                value = default
+            if isinstance(default, bool):
+                value = bool(value)
+            elif isinstance(default, int):
+                value = int(value)
+            elif isinstance(default, float):
+                value = float(value)
+        cfg[key] = value
+    # A loaded checkpoint/HF config may contain the canonical alias too.
+    # Keep the visible sequence-length control authoritative when it is edited.
+    if "max_position_embeddings" in cfg:
+        cfg["max_position_embeddings"] = cfg["max_seq_len"]
+    # The shared training widgets are the pretrain row of the per-stage table:
+    # an edited widget must not be silently overridden by a stale plan value.
+    stages = cfg.get("stage_overrides")
+    if isinstance(stages, dict) and isinstance(stages.get("pretrain"), dict):
+        pretrain = {k: (cfg[k] if k in CONFIG_INPUT_ORDER and k in cfg else v) for k, v in stages["pretrain"].items()}
+        cfg["stage_overrides"] = {**stages, "pretrain": pretrain}
+    return cfg
 
 
 def build_config_tab():
@@ -98,7 +129,7 @@ def build_config_tab():
     data_path has been moved to the Train tab, so the tuple now has 3
     elements. Callers must be updated.
     """
-    initial_preset = "Recommended-CN (≈120M)"
+    initial_preset = DEFAULT_PRESET
     initial_cfg = get_preset(initial_preset)
     config_state = gr.State(dict(initial_cfg))
 
@@ -130,6 +161,8 @@ def build_config_tab():
             load_btn = gr.Button(t("config.load_cfg"), variant="primary", scale=1)
             register_translatable(load_btn, "config.load_cfg")
         save_status = gr.Markdown("", visible=True)
+        # Auto-plan accordion; filled in below once the editor outputs exist.
+        planner_slot = gr.Column()
 
         with gr.Row():
             with gr.Column(scale=3):
@@ -209,6 +242,49 @@ def build_config_tab():
                     register_translatable(pinned_frac,     "config.pinned_frac")
                     register_translatable(use_hybrid_attn, "config.hybrid_attn")
                     register_translatable(storage_format,  "config.storage_format")
+
+                gr.Markdown(f"### {t('config.recurrent_section')}")
+                with gr.Row():
+                    recurrent_enabled = gr.Checkbox(value=bool(D.get("recurrent_enabled", True)), label=t("config.recurrent_enabled"))
+                    recurrent_groups = gr.Slider(1, 128, value=int(D.get("recurrent_groups", 2)), step=1, label=t("config.recurrent_groups"))
+                    recurrent_depth = gr.Slider(1, 16, value=int(D.get("recurrent_depth", 4)), step=1, label=t("config.recurrent_depth"))
+                    min_recurrent_depth = gr.Slider(1, 16, value=int(D.get("min_recurrent_depth", 2)), step=1, label=t("config.min_recurrent_depth"))
+                    adaptive_halting = gr.Checkbox(value=bool(D.get("adaptive_halting", True)), label=t("config.adaptive_halting"))
+                with gr.Row():
+                    halting_threshold = gr.Slider(0.5, 1.0, value=float(D.get("halting_threshold", .99)), step=.001, label=t("config.halting_threshold"))
+                    max_inference_depth = gr.Slider(1, 32, value=int(D.get("max_inference_depth", D.get("recurrent_depth", 4))), step=1, label=t("config.max_inference_depth"))
+                    ponder_loss_coef = gr.Number(value=float(D.get("ponder_loss_coef", .001)), label=t("config.ponder_loss_coef"), precision=6)
+                    recurrent_distill_coef = gr.Number(value=float(D.get("recurrent_distill_coef", .05)), label=t("config.recurrent_distill_coef"), precision=6)
+                    recurrent_stability_coef = gr.Number(value=float(D.get("recurrent_stability_coef", .001)), label=t("config.recurrent_stability_coef"), precision=6)
+                    recurrent_latent_refinement = gr.Checkbox(
+                        value=bool(D.get("recurrent_latent_refinement", True)),
+                        label=t("config.recurrent_latent_refinement"),
+                    )
+                    depth_schedule = gr.Dropdown(
+                        choices=["fixed_then_adaptive", "fixed", "adaptive"],
+                        value=str(D.get("depth_schedule", "fixed_then_adaptive")), label=t("config.depth_schedule"),
+                    )
+                    recurrent_strategy = gr.Dropdown(
+                        choices=["fixed", "scheduled", "adaptive"],
+                        value=str(D.get("recurrent_strategy", "scheduled")),
+                        label="recurrent strategy",
+                    )
+                    recurrent_depth_jitter = gr.Slider(
+                        0.0, 1.0, value=float(D.get("recurrent_depth_jitter", 0.0)),
+                        step=.05, label="depth jitter",
+                    )
+                with gr.Row():
+                    depth_schedule_warmup_fraction = gr.Slider(
+                        0.0, 1.0, value=float(D.get("depth_schedule_warmup_fraction", .25)), step=.01,
+                        label=t("config.depth_schedule_warmup_fraction"),
+                    )
+                    layer_aware_cache = gr.Checkbox(value=bool(D.get("layer_aware_cache", True)), label=t("config.layer_aware_cache"))
+                    prefetch_depth = gr.Slider(0, 64, value=int(D.get("prefetch_depth", 2)), step=1, label=t("config.prefetch_depth"))
+                    training_paging = gr.Checkbox(value=bool(D.get("training_paging", False)), label=t("config.training_paging"))
+                    optimizer_paging = gr.Checkbox(value=bool(D.get("optimizer_paging", False)), label=t("config.optimizer_paging"))
+                    page_size_mb = gr.Number(value=int(D.get("page_size_mb", 64)), precision=0, label=t("config.page_size_mb"))
+                    optimizer_page_dir = gr.Textbox(value=str(D.get("optimizer_page_dir", "./optimizer_pages")), label=t("config.optimizer_page_dir"))
+                    modalities = gr.Textbox(value=",".join(D.get("modalities", [])), label=t("config.modalities"))
 
                 gr.Markdown(f"### {t('config.train')}")
                 with gr.Row():
@@ -297,13 +373,19 @@ def build_config_tab():
                 gr.Markdown(f"### 🧬 {t('designer.title')}")
                 total_box  = gr.Textbox(label=t("designer.total"),  interactive=False)
                 active_box = gr.Textbox(label=t("designer.active"), interactive=False)
+                compute_box = gr.Textbox(label=t("designer.compute"), interactive=False)
                 vram_box   = gr.Textbox(label=t("designer.vram"),   interactive=False)
+                ram_box    = gr.Textbox(label=t("designer.ram"),    interactive=False)
                 ssd_box    = gr.Textbox(label=t("designer.ssd"),    interactive=False)
                 kv_box     = gr.Textbox(label=t("designer.kv"),     interactive=False)
                 tps_box    = gr.Textbox(label=t("designer.tps"),    interactive=False)
+                gr.Markdown(t("designer.notes"))
+                detail_box = gr.JSON(label=t("designer.details"))
                 register_translatable(total_box,  "designer.total")
                 register_translatable(active_box, "designer.active")
+                register_translatable(compute_box, "designer.compute")
                 register_translatable(vram_box,   "designer.vram")
+                register_translatable(ram_box,    "designer.ram")
                 register_translatable(ssd_box,    "designer.ssd")
                 register_translatable(kv_box,     "designer.kv")
                 register_translatable(tps_box,    "designer.tps")
@@ -311,111 +393,139 @@ def build_config_tab():
         # IMPORTANT: this list also defines the order Autotune uses to push
         # best-params back via gr.update(). Don't reorder without updating
         # ui/tabs/autotune_tab.py.
-        all_inputs = [
-            hidden_size, num_layers, num_experts, experts_per_tok,
-            num_shared, lookahead, kv_latent_dim, sliding_window,
-            num_heads, num_kv_heads, rope_dim, moe_intermediate,
-            vocab_size, dtype, tie_word_embeddings,
-            lambda_balance, lambda_temporal, lambda_lookahead, lambda_lookahead_topk, lambda_router_anchor,
-            fallback_mask_prob,
-            vram_budget, pinned_frac, use_hybrid_attn, storage_format,
-            learning_rate, batch_size, accum_steps, max_seq_len,
-            epochs, max_steps, save_interval, log_interval, save_dir,
-            weight_decay, grad_clip,
-            cpu_threads, cpu_budget_percent, num_workers,
-            reward_spec, max_gen_len, num_generations, temperature,
-            beta, alpha, lambda_or,
-        ]
-        estimator_outs = [total_box, active_box, vram_box, ssd_box, kv_box, tps_box]
+        config_components = {
+            "hidden_size": hidden_size,
+            "num_hidden_layers": num_layers,
+            "num_experts": num_experts,
+            "num_experts_per_tok": experts_per_tok,
+            "num_shared_experts": num_shared,
+            "lookahead_steps": lookahead,
+            "kv_latent_dim": kv_latent_dim,
+            "sliding_window_size": sliding_window,
+            "num_attention_heads": num_heads,
+            "num_key_value_heads": num_kv_heads,
+            "rope_dim": rope_dim,
+            "moe_intermediate_size": moe_intermediate,
+            "vocab_size": vocab_size,
+            "dtype": dtype,
+            "tie_word_embeddings": tie_word_embeddings,
+            "lambda_balance": lambda_balance,
+            "lambda_temporal": lambda_temporal,
+            "lambda_lookahead": lambda_lookahead,
+            "lambda_lookahead_topk": lambda_lookahead_topk,
+            "lambda_router_anchor": lambda_router_anchor,
+            "fallback_mask_prob": fallback_mask_prob,
+            "vram_budget_gb": vram_budget,
+            "pinned_memory_max_fraction": pinned_frac,
+            "use_hybrid_attention": use_hybrid_attn,
+            "storage_format": storage_format,
+            "learning_rate": learning_rate,
+            "batch_size": batch_size,
+            "accumulation_steps": accum_steps,
+            "max_seq_len": max_seq_len,
+            "epochs": epochs,
+            "max_steps": max_steps,
+            "save_interval": save_interval,
+            "log_interval": log_interval,
+            "save_dir": save_dir,
+            "weight_decay": weight_decay,
+            "grad_clip": grad_clip,
+            "cpu_threads": cpu_threads,
+            "cpu_budget_percent": cpu_budget_percent,
+            "num_workers": num_workers,
+            "reward_spec": reward_spec,
+            "max_gen_len": max_gen_len,
+            "num_generations": num_generations,
+            "temperature": temperature,
+            "beta": beta,
+            "alpha": alpha,
+            "lambda_or": lambda_or,
+            "recurrent_enabled": recurrent_enabled,
+            "recurrent_groups": recurrent_groups,
+            "recurrent_depth": recurrent_depth,
+            "min_recurrent_depth": min_recurrent_depth,
+            "adaptive_halting": adaptive_halting,
+            "halting_threshold": halting_threshold,
+            "max_inference_depth": max_inference_depth,
+            "ponder_loss_coef": ponder_loss_coef,
+            "recurrent_distill_coef": recurrent_distill_coef,
+            "recurrent_stability_coef": recurrent_stability_coef,
+            "recurrent_latent_refinement": recurrent_latent_refinement,
+            "depth_schedule": depth_schedule,
+            "recurrent_strategy": recurrent_strategy,
+            "recurrent_depth_jitter": recurrent_depth_jitter,
+            "depth_schedule_warmup_fraction": depth_schedule_warmup_fraction,
+            "layer_aware_cache": layer_aware_cache,
+            "prefetch_depth": prefetch_depth,
+            "training_paging": training_paging,
+            "optimizer_paging": optimizer_paging,
+            "page_size_mb": page_size_mb,
+            "optimizer_page_dir": optimizer_page_dir,
+            "modalities": modalities,
+        }
+        if set(config_components) != set(CONFIG_INPUT_ORDER):
+            raise RuntimeError("Config component registry differs from CONFIG_INPUT_ORDER")
+        all_inputs = [config_components[key] for key in CONFIG_INPUT_ORDER]
+        estimator_outs = [total_box, active_box, compute_box, vram_box, ram_box, ssd_box, kv_box, tps_box, detail_box]
 
-        def update_config(*vals):
-            (hs, nl, ne, ept, ns, la, kv, sw,
-             nh, nkv, rd, moe_i,
-             vs, dt, tie,
-             lb, lt, ll, llt, lra, fmp,
-             vb, pf, ha, sf,
-             lr, bs, ac, msl, ep, max_st, si, li, sd,
-             wd, gc, ct, cbp, nw,
-             reward, mgl, ng, temp, beta, alpha, lor) = vals
-            cfg = {
-                "hidden_size": int(hs), "num_hidden_layers": int(nl),
-                "num_experts": int(ne), "num_experts_per_tok": int(ept),
-                "num_shared_experts": int(ns), "lookahead_steps": int(la),
-                "kv_latent_dim": int(kv), "sliding_window_size": int(sw),
-                "num_attention_heads": int(nh), "num_key_value_heads": int(nkv),
-                "rope_dim": int(rd), "moe_intermediate_size": int(moe_i),
-                "vocab_size": int(vs), "dtype": _normalize_dtype_name(str(dt)),
-                "tie_word_embeddings": bool(tie),
-                "lambda_balance": float(lb), "lambda_temporal": float(lt),
-                "lambda_lookahead": float(ll), "lambda_lookahead_topk": float(llt),
-                "lambda_router_anchor": float(lra),
-                "fallback_mask_prob": float(fmp),
-                "vram_budget_gb": float(vb), "pinned_memory_max_fraction": float(pf),
-                "use_hybrid_attention": bool(ha),
-                "storage_format": str(sf),
-                "learning_rate": float(lr), "batch_size": int(bs),
-                "accumulation_steps": int(ac), "max_seq_len": int(msl),
-                "epochs": int(ep), "max_steps": max(0, int(max_st or 0)),
-                "save_interval": int(si),
-                "weight_decay": float(wd),
-                "grad_clip": float(gc),
-                "log_interval": int(li),
-                "reward_spec": str(reward or "toy"),
-                "max_gen_len": int(mgl),
-                "num_generations": int(ng),
-                "temperature": float(temp),
-                "beta": float(beta),
-                "alpha": float(alpha),
-                "lambda_or": float(lor),
-                "save_dir": sd,
-                "cpu_threads": str(ct or "auto"),
-                "cpu_budget_percent": float(cbp or 100),
-                "num_workers": str(nw or "auto"),
-            }
-            est = _estimate(cfg)
-            return (cfg, cfg) + est
+        def estimator_values(cfg):
+            try:
+                return list(_estimate(cfg))
+            except (ValueError, TypeError, ZeroDivisionError) as exc:
+                return ["—"] * 8 + [{"configuration_error": str(exc)}]
 
+        def update_config(previous, *values):
+            cfg = merge_config_inputs(previous, values)
+            return [cfg, cfg] + estimator_values(cfg)
+
+        # User input only: preset/load updates must not trigger 68 competing
+        # change handlers that overwrite each other's state.
         for inp in all_inputs:
-            inp.change(
-                fn=update_config,
-                inputs=all_inputs,
-                outputs=[config_state, config_display] + estimator_outs,
-            )
+            inp.input(fn=update_config, inputs=[config_state] + all_inputs,
+                      outputs=[config_state, config_display] + estimator_outs)
 
-        # ── Preset / Save / Load wiring ───────────────────────
+        # External producers (autotune) update the state as well as widgets.
+        config_state.change(fn=lambda cfg: [cfg] + estimator_values(cfg),
+                            inputs=[config_state], outputs=[config_display] + estimator_outs)
+
+        config_outputs = [config_state, config_display] + all_inputs + estimator_outs
+
+        def config_result(cfg):
+            return [dict(cfg), dict(cfg)] + [gr.update(value=v) for v in values_in_input_order(cfg)] + estimator_values(cfg)
+
         def apply_preset(name):
-            cfg = get_preset(name)
-            return [dict(cfg), dict(cfg)] + [gr.update(value=v) for v in values_in_input_order(cfg)]
+            return config_result(get_preset(name))
 
         def reset_minimind():
-            cfg = get_preset("MiniMind-MoE (default)")
-            return [dict(cfg), dict(cfg)] + [gr.update(value=v) for v in values_in_input_order(cfg)]
+            return config_result(get_preset("MiniMind-MoE (default)"))
 
-        def do_save(cfg, path):
+        def do_save(previous, path, *values):
             try:
-                abs_path = save_config(cfg or {}, path)
+                # Read the widgets at click time; a pending input event must
+                # not cause Save to write a stale or default configuration.
+                cfg = merge_config_inputs(previous, values)
+                abs_path = save_config(cfg, path or "./out/chronos_config.json")
                 return f"✅ Saved to `{abs_path}`"
-            except Exception as e:
-                return f"❌ Save failed: {e}"
+            except Exception as exc:
+                return f"❌ Save failed: {exc}"
 
         def do_load(path):
             try:
                 cfg = load_config(path)
-                vals = values_in_input_order(cfg)
-                return [f"✅ Loaded from `{path}`", dict(cfg), dict(cfg)] + [gr.update(value=v) for v in vals]
-            except FileNotFoundError:
-                return [f"❌ Not found: `{path}`", gr.update(), gr.update()] + [gr.update() for _ in all_inputs]
-            except Exception as e:
-                return [f"❌ Load failed: {e}", gr.update(), gr.update()] + [gr.update() for _ in all_inputs]
+                return [f"✅ Loaded from `{path}`"] + config_result(cfg)
+            except Exception as exc:
+                return [f"❌ Load failed: {exc}"] + [gr.update() for _ in config_outputs]
 
-        apply_preset_btn.click(fn=apply_preset, inputs=[preset_dd], outputs=[config_state, config_display] + all_inputs)
-        # Selecting a preset in the dropdown should sync immediately;
-        # the explicit "Load Preset" button stays as a re-apply affordance.
-        preset_dd.change(fn=apply_preset, inputs=[preset_dd], outputs=[config_state, config_display] + all_inputs)
-        reset_btn.click(fn=reset_minimind, outputs=[config_state, config_display] + all_inputs)
-        save_btn.click(fn=do_save, inputs=[config_state, cfg_path], outputs=[save_status])
-        load_btn.click(fn=do_load, inputs=[cfg_path], outputs=[save_status, config_state, config_display] + all_inputs)
+        with planner_slot:
+            build_planner_panel(config_state, config_result, config_outputs)
 
-        total_box.value, active_box.value, vram_box.value, ssd_box.value, kv_box.value, tps_box.value = _estimate(initial_cfg)
+        apply_preset_btn.click(fn=apply_preset, inputs=[preset_dd], outputs=config_outputs)
+        preset_dd.input(fn=apply_preset, inputs=[preset_dd], outputs=config_outputs)
+        reset_btn.click(fn=reset_minimind, outputs=config_outputs)
+        save_btn.click(fn=do_save, inputs=[config_state, cfg_path] + all_inputs, outputs=[save_status])
+        load_btn.click(fn=do_load, inputs=[cfg_path], outputs=[save_status] + config_outputs)
+
+        for box, value in zip(estimator_outs, estimator_values(initial_cfg)):
+            box.value = value
 
     return config_state, all_inputs, save_dir

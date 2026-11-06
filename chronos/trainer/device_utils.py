@@ -61,10 +61,11 @@ def torch_dtype_from_name(name: str | None) -> TorchDType:
 def resolve_dtype_name(device: str | TorchDevice | None, dtype_name: str | None) -> str:
     """Resolve user-facing dtype policy to a concrete dtype string.
 
-    `auto` is intentionally backend-specific. Apple MPS/MLX default to bf16:
-    it keeps the fp32 exponent range and avoids the fp16 overflows that show up
-    in router softmax, CE, and Adam moments. CUDA/XPU keep the existing fp16
-    default, while CPU stays fp32 unless the user explicitly requests fp16/bf16.
+    `auto` is backend-specific and, for torch devices, identical to the
+    run's precision policy (``chronos.precision.resolve_torch``) so the UI,
+    the trainers and serving agree: CPU and MPS FP32 (measured faster than
+    BF16 on MPS), CUDA BF16 (FP16 when the GPU lacks BF16).  MLX GPU keeps
+    BF16 (FP32 masters in the optimizer); XPU keeps FP16.
     """
     value = (dtype_name or "auto").strip().lower()
     if value in {"fp16", "float16", "half"}:
@@ -74,20 +75,30 @@ def resolve_dtype_name(device: str | TorchDevice | None, dtype_name: str | None)
     if value in {"fp32", "float32", "full"}:
         return "float32"
     device_type = torch_device_type(device)
-    if device_type in {"mps", "mlx"}:
+    if device_type == "mlx":
         return "bfloat16"
-    if device_type in {"cuda", "xpu"}:
+    if device_type == "xpu":
         return "float16"
+    if device_type in {"cpu", "mps", "cuda"}:
+        try:
+            from chronos.precision import resolve_torch
+            return resolve_torch("auto", device_type).compute
+        except Exception:
+            return "float16" if device_type == "cuda" else "float32"
     return "float32"
 
 
-def autocast_context(device: str | TorchDevice | None, dtype_name: str | None):
+def autocast_context(device: str | TorchDevice | None, dtype_name: str | None, model=None):
     """Return an autocast context suitable for CPU/CUDA/MPS/XPU.
 
-    MPS supports torch.autocast, but GradScaler is not used there. If the user
-    requests float32, autocast is disabled explicitly.
+    When ``model`` was placed by ``prepare_torch_training`` /
+    ``place_torch_model`` it already computes natively in the policy dtype,
+    so autocast is disabled (no per-op weight casts).  Otherwise this is the
+    legacy autocast path.  float32 disables autocast explicitly.
     """
     torch = _torch()
+    if model is not None and getattr(model, "_chronos_precision", None) is not None:
+        return contextlib.nullcontext()
     device_type = torch_device_type(device)
     dtype = torch_dtype_from_name(resolve_dtype_name(device, dtype_name))
     if device_type == "mlx" or dtype == torch.float32:
@@ -121,12 +132,26 @@ def optimizer_step_with_scaler(
     parameters,
     grad_clip: float,
 ) -> None:
+    """Unscale -> clip -> step -> zero.
+
+    With FP32 masters (``prepare_torch_training``) the gradients live on the
+    masters, so clipping uses the optimizer's own parameters and the updated
+    masters are copied back to the low-precision model once.
+    """
     torch = _torch()
+    masters = getattr(optimizer, "chronos_masters", None)
+    if masters is not None:
+        parameters = [p for g in optimizer.param_groups for p in g["params"] if p.grad is not None]
     scaler.unscale_(optimizer)
     torch.nn.utils.clip_grad_norm_(parameters, grad_clip)
     scaler.step(optimizer)
     scaler.update()
     optimizer.zero_grad(set_to_none=True)
+    if masters is not None:
+        masters.sync_to_model()
+    evict = getattr(optimizer, "evict_expert_moments", None)
+    if callable(evict):
+        evict()
 
 
 def _physical_cores() -> int:

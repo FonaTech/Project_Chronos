@@ -57,7 +57,10 @@ class AsyncPrefetcher:
         self._done_lock = threading.Lock()
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
-        self._stats = {"prefetch_hits": 0, "prefetch_misses": 0, "total_requests": 0}
+        self._stats = {
+            "prefetch_hits": 0, "prefetch_misses": 0, "total_requests": 0,
+            "queue_drops": 0, "wait_time_s": 0.0,
+        }
 
     def start(self):
         self._stop_event.clear()
@@ -78,7 +81,7 @@ class AsyncPrefetcher:
         if self._thread:
             self._thread.join(timeout=2.0)
 
-    def submit(self, expert_ids: List[int]):
+    def submit(self, expert_ids):
         """
         Submit a list of expert IDs to prefetch (non-blocking).
         Called after each decode step with LookaheadRouter predictions.
@@ -93,23 +96,27 @@ class AsyncPrefetcher:
                 self._request_queue.get_nowait()
                 self._request_queue.put_nowait(expert_ids)
             except (queue.Empty, queue.Full):
-                pass
+                with self._done_lock:
+                    self._stats["queue_drops"] += 1
 
     def wait_for(self, expert_id: int, timeout: float = 0.05) -> bool:
         """
         Wait until expert_id is in RAM (or VRAM). Returns True if ready.
         In practice this should return immediately if prefetch worked.
         """
-        deadline = time.monotonic() + timeout
+        started = time.monotonic()
+        deadline = started + timeout
         while time.monotonic() < deadline:
             if (self.store.ram_lru.contains(expert_id) or
                     self.store.vram_lru.contains(expert_id)):
                 with self._done_lock:
                     self._stats["prefetch_hits"] += 1
+                    self._stats["wait_time_s"] += time.monotonic() - started
                 return True
             time.sleep(0.001)
         with self._done_lock:
             self._stats["prefetch_misses"] += 1
+            self._stats["wait_time_s"] += time.monotonic() - started
         return False
 
     def _prefetch_loop(self):
@@ -142,8 +149,12 @@ class AsyncPrefetcher:
         with self._done_lock:
             s = dict(self._stats)
         total = s["prefetch_hits"] + s["prefetch_misses"]
-        s["hit_rate"] = s["prefetch_hits"] / max(total, 1)
-        _metric("prefetch_hit_rate", s["hit_rate"])
+        s["prefetch_observations"] = total
+        s["hit_rate"] = s["prefetch_hits"] / total if total else None
+        s["prefetch_queue_drops"] = int(s.pop("queue_drops", 0))
+        s["prefetch_wait_time_s"] = float(s.pop("wait_time_s", 0.0))
+        if total:
+            _metric("prefetch_hit_rate", s["hit_rate"])
         return s
 
 
@@ -189,13 +200,15 @@ class PrefetchScheduler:
         (already-resident experts are skipped).
         """
         newly = []
-        for eid in current_step_expert_ids:
+        for eid in self.store._expand_keys(current_step_expert_ids):
             if not self.store.vram_lru.contains(eid):
                 if self.store.promote_to_vram(eid, blocking=blocking):
                     newly.append(eid)
+            else:
+                self.store.touch_expert(eid)
         return newly
 
-    def prefetch_only(self, lookahead_probs) -> List[int]:
+    def prefetch_only(self, lookahead_probs):
         """
         Submit future expert predictions to the async prefetcher.
         Does NOT touch VRAM. Safe to call *before* the forward pass so the
@@ -208,13 +221,35 @@ class PrefetchScheduler:
         import torch
         top_k = int(getattr(self.store.config, "num_experts_per_tok", 1) or 1)
         top_k = max(1, min(top_k, lookahead_probs.shape[-1]))
-        # lookahead_probs: [B, S, K+1, E] — take last token, steps 1..K.
+        layer_aware = lookahead_probs.dim() == 5 and bool(getattr(self.store.config, "layer_aware_cache", False))
+        # v1: [B,S,K+1,E]. v2: [B,S,K+1,G,E].
         # We submit t+1 first (highest priority), then t+2, etc., so the
         # FIFO queue naturally orders them by recency.
-        last_token_probs = lookahead_probs[:, -1, 1:, :]  # [B, K, E]
+        if layer_aware:
+            last_token_probs = lookahead_probs[:, -1, 1:, :, :]  # [B,K,G,E]
+        else:
+            if lookahead_probs.dim() == 5:
+                last_token_probs = lookahead_probs[:, -1, 1:, :, :].mean(dim=2)
+            else:
+                last_token_probs = lookahead_probs[:, -1, 1:, :]
         K = last_token_probs.shape[1]
-        all_submitted: List[int] = []
+        all_submitted = []
         for k in range(K):
+            if layer_aware:
+                for group in range(last_token_probs.shape[2]):
+                    ids_k = torch.topk(last_token_probs[:, k, group, :], k=top_k, dim=-1).indices
+                    ids_k = ids_k.reshape(-1).unique().cpu().tolist()
+                    layer_ids = [
+                        int(li) for li, gi in getattr(self.store, "_layer_to_group", {}).items()
+                        if int(gi) == group
+                    ]
+                    if not layer_ids:
+                        layer_ids = [group]
+                    keys = [(li, group, int(eid)) for li in layer_ids for eid in ids_k]
+                    if keys:
+                        self.prefetcher.submit(keys)
+                        all_submitted.extend(keys)
+                continue
             ids_k = torch.topk(last_token_probs[:, k, :], k=top_k, dim=-1).indices
             ids_k = ids_k.reshape(-1).unique().cpu().tolist()
             if ids_k:

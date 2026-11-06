@@ -44,7 +44,7 @@ def collect_ground_truth_routing(model, input_ids, device):
     model.eval()
     input_ids = input_ids.to(device)
     with torch.no_grad():
-        _, _ = model(input_ids, use_cache=False)
+        _, _ = model(input_ids, use_cache=False, legacy_output=True)
 
     layers = [l for l in model.model.layers if isinstance(l.mlp, ChronosMOEFeedForward)]
     if not layers:
