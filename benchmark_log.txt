@@ -1,30 +1,30 @@
-[22:49:16] Starting benchmark comparison...
-[22:49:16] === Benchmark 1: MiniMind (pure RAM) ===
-[22:49:17]   params=91.4M  RAM delta=0.394GB
-[22:49:17]   step 1/5 loss=8.9385
-[22:49:17]   step 2/5 loss=8.9239
-[22:49:17]   step 3/5 loss=8.8833
-[22:49:18]   step 4/5 loss=8.8745
-[22:49:18]   step 5/5 loss=8.8777
-[22:49:18]   TPS=167.4  RAM_train=2.156GB  RAM_infer=1.907GB
-[22:49:19] === Benchmark 2: Chronos (SSD+DRAM hybrid) ===
-[22:49:19]   params=111.1M  RAM delta=0.097GB
-[22:49:19]   step 1/5 loss=8.9743
-[22:49:19]   step 2/5 loss=8.9233
-[22:49:20]   step 3/5 loss=9.0412
-[22:49:20]   step 4/5 loss=8.9433
-[22:49:20]   step 5/5 loss=8.9354
-[22:49:21]   TPS=100.4  RAM_train=0.848GB  RAM_infer=0.972GB
-[22:49:21]   cache_stats={'device': 'cpu', 'vram_experts': 3, 'vram_capacity': 3, 'ram_experts': 4, 'ram_capacity_dynamic': 4, 'expert_size_kb': 9984, 'cache_page_bytes': 81788928, 'resident_expert_bytes': 245366784, 'ram_buffer_bytes': 327155712, 'unique_expert_bytes': 327155712, 'pinned_ram_used_gb': 0.0, 'available_ram_gb': 86.1, 'pinned_ram_fraction': 0.0, 'h2d_stream': 'default', 'storage_format': 'safetensors', 'cluster_aware': True, 'layer_aware': False, 'num_clusters': 4, 'ssd_page_reads': 32, 'expert_evictions': 0, 'prefetch_hits': 48, 'prefetch_misses': 0, 'total_requests': 59, 'prefetch_observations': 48, 'hit_rate': 1.0, 'prefetch_queue_drops': 0, 'prefetch_wait_time_s': 0.0013231200573500246}
-[22:49:21] 
+[05:45:46] Starting benchmark comparison...
+[05:45:46] === Benchmark 1: MiniMind (pure RAM) ===
+[05:45:46]   params=91.4M  RAM delta=0.399GB
+[05:45:46]   step 1/5 loss=8.9834
+[05:45:46]   step 2/5 loss=8.9272
+[05:45:46]   step 3/5 loss=8.9045
+[05:45:47]   step 4/5 loss=8.8138
+[05:45:47]   step 5/5 loss=8.9289
+[05:45:47]   TPS=349.9  RAM_train=2.250GB  RAM_infer=2.250GB
+[05:45:47] === Benchmark 2: Chronos (SSD+DRAM hybrid) ===
+[05:45:47]   params=111.1M  RAM delta=0.016GB
+[05:45:47]   step 1/5 loss=8.9058
+[05:45:47]   step 2/5 loss=8.8842
+[05:45:48]   step 3/5 loss=8.9566
+[05:45:48]   step 4/5 loss=9.0308
+[05:45:48]   step 5/5 loss=8.8993
+[05:45:48]   TPS=224.3  RAM_train=2.443GB  RAM_infer=2.631GB
+[05:45:48]   cache_stats={'vram_experts': 4, 'vram_capacity': 52, 'ram_experts': 4, 'ram_capacity_dynamic': 208, 'expert_size_kb': 4992, 'pinned_ram_used_gb': 0.152, 'available_ram_gb': 57.0, 'pinned_ram_fraction': 0.0027, 'h2d_stream': 'default', 'storage_format': 'safetensors', 'cluster_aware': True, 'num_clusters': 1, 'prefetch_hits': 0, 'prefetch_misses': 0, 'total_requests': 58, 'hit_rate': 0.0}
+[05:45:48] 
 === COMPARISON SUMMARY ===
-[22:49:21] MiniMind (pure RAM):
-[22:49:21]   tokens/s     : 167.4
-[22:49:21]   RAM (train)  : 2.156 GB
-[22:49:21]   RAM (infer)  : 1.907 GB
-[22:49:21] Chronos (SSD+DRAM hybrid, async):
-[22:49:21]   tokens/s     : 100.4
-[22:49:21]   RAM (train)  : 0.848 GB
-[22:49:21]   RAM (infer)  : 0.972 GB
-[22:49:21]   KV cache     : MLA(latent)+SlidingWindow
-[22:49:21] Results saved to /Users/Fona/Downloads/Project_Chronos/benchmark_results.json
+[05:45:48] MiniMind (pure RAM):
+[05:45:48]   tokens/s     : 349.9
+[05:45:48]   RAM (train)  : 2.25 GB
+[05:45:48]   RAM (infer)  : 2.25 GB
+[05:45:48] Chronos (SSD+DRAM hybrid):
+[05:45:48]   tokens/s     : 224.3
+[05:45:48]   RAM (train)  : 2.443 GB
+[05:45:48]   RAM (infer)  : 2.631 GB
+[05:45:48]   KV cache     : MLA(latent)+SlidingWindow
+[05:45:48] Results saved to /Users/Fona/Downloads/Hybrid_LLM/Project_Chronos/benchmark_results.json
