@@ -13,10 +13,10 @@ import time
 
 from .evaluate import evaluate_tokenizer
 from .extract import ExtractConfig, extract_texts
-from .model import DEFAULT_SPECIAL_TOKENS, ChronosTokenizer
+from .model import DEFAULT_SPECIAL_TOKENS, ChronosTokenizer, special_tokens_with
 from .trainer import BPETrainerConfig, train_bpe
 
-__all__ = ["build_tokenizer", "ChronosTokenizer", "BPETrainerConfig", "ExtractConfig"]
+__all__ = ["build_tokenizer", "ChronosTokenizer", "BPETrainerConfig", "ExtractConfig", "special_tokens_with"]
 
 
 def build_tokenizer(paths: list[str], out_dir: str, *, vocab_size: int = 16384,
@@ -61,11 +61,14 @@ def main(argv=None) -> int:
     parser.add_argument("--per-source", type=int, default=400_000)
     parser.add_argument("--fields", nargs="*", default=None)
     parser.add_argument("--temperature", type=float, default=0.5)
+    parser.add_argument("--extra-special", nargs="*", default=(), metavar="TOKEN",
+                        help="task control tokens placed at ids 3, 4, … (e.g. language tags)")
     args = parser.parse_args(argv)
     build_tokenizer(
         args.paths, args.out, vocab_size=args.vocab_size,
         extract=ExtractConfig(per_source_texts=args.per_source, fields=args.fields),
         trainer=BPETrainerConfig(vocab_size=args.vocab_size, language_temperature=args.temperature),
+        special_tokens=special_tokens_with(args.extra_special),
         log=lambda m: print(m, flush=True),
     )
     return 0

@@ -203,7 +203,7 @@ class ChronosConfig(MiniMindConfig):
         # λ > 0).  The class default stays 0 so a stored recipe or checkpoint
         # that predates the field keeps its training objective; every entry
         # point that creates a new training config (planner, presets, CLI,
-        # bundle finetune) turns it on at the measured
+        # task extensions) turns it on at the measured
         # ``chronos.expert_clusters.DEFAULT_LAMBDA``.
         self.lambda_cluster_locality: float = kwargs.pop("lambda_cluster_locality", 0.0)
         self.cluster_locality_clusters: int = kwargs.pop("cluster_locality_clusters", 0)

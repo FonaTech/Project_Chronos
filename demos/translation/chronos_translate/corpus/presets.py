@@ -1,4 +1,4 @@
-"""Corpus presets and the ``python -m chronos.data.corpus.presets`` CLI.
+"""Corpus presets and the ``python -m chronos_translate.corpus.presets`` CLI.
 
 A preset is only a list of ``PairSource`` objects plus evaluation sets; the
 pipeline itself is task-agnostic.

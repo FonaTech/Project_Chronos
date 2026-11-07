@@ -206,8 +206,8 @@ V3_TIER_REQUESTS = [
     ("Chronos-v3 Tiny (smoke / CI)", "1.5M smoke test; trains in minutes on CPU.",
      dict(target_total=1.5e6, num_experts=4, active_experts=2, vocab_size=6400, seq_len=128, recurrent_depth=2,
           memory_saving="none", token_budget=2e6, ram_gb=16)),
-    ("Chronos-v3 50M (en→zh recipe)", "Exactly the enzh_50m_72h recipe (16k Chronos tokenizer, shards_v1).",
-     dict(target_total=50e6, num_experts=36, active_experts=2, data_paths=("Translation Training Data/shards_v1",),
+    ("Chronos-v3 50M (16k vocab)", "50M MoE (36 experts, top-2) for a 16k Chronos tokenizer; no memory saving.",
+     dict(target_total=50e6, num_experts=36, active_experts=2, vocab_size=16384, seq_len=512,
           memory_saving="none", ram_gb=32)),
     ("Chronos-v3 200M (32 GB)", "General 200M MoE, balanced memory saving, minimind 6400 vocab.",
      dict(target_total=200e6, num_experts=32, active_experts=2, vocab_size=6400, seq_len=1024,
@@ -228,8 +228,6 @@ def build_v3_presets() -> dict:
     for name, blurb, request in V3_TIER_REQUESTS:
         plan = plan_training(PlanRequest(**request))
         cfg = dict(plan["config"])
-        if "tokenizer_path" in cfg:
-            cfg["tokenizer_path"] = "./Translation Training Data/tokenizer_v1"   # repo-relative
         presets[name] = {k: v for k, v in cfg.items() if MINIMIND_MOE_DEFAULTS.get(k, object()) != v}
         arch, mem = plan["report"]["architecture"], plan["report"]["memory"]
         meta[name] = dict(
@@ -268,7 +266,8 @@ _PRESET_ALIASES = {
     "Recommended-CN (≈120M)": "Chronos-v3 200M (32 GB)",
     "Recommended-CN (≈192M)": "Chronos-v3 200M (32 GB)",
     "Tiny (smoke / CI)": "Chronos-v3 Tiny (smoke / CI)",
-    "Small (256H × 4L × 4E)": "Chronos-v3 50M (en→zh recipe)",
+    "Small (256H × 4L × 4E)": "Chronos-v3 50M (16k vocab)",
+    "Chronos-v3 50M (en\u2192zh recipe)": "Chronos-v3 50M (16k vocab)",   # 0.3.1a1 tier name
     "Medium (512H × 8L × 8E)": "Chronos-v3 200M (32 GB)",
     "Large (1024H × 16L × 16E)": "Chronos-v3 1B (64 GB)",
 }

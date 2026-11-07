@@ -144,9 +144,12 @@ def _planner_preset(vocab_size: int, hidden_size: int) -> dict | None:
 
 
 def build_bundle(run_dir: str, out_dir: str | None = None, *, phase: str = "pretrain", which: str = "best",
-                 name: str | None = None, minimind_dir: str | None = None, wheel: str | None = None,
+                 name: str | None = None, minimind_dir: str | None = None, wheel=None,
                  include_sft_valid: bool = True, status: str = "interim", log=print) -> str:
-    """Assemble a bundle from a ``chronos longrun`` run directory (read-only on the run)."""
+    """Assemble a bundle from a run directory (read-only on the run).
+
+    ``wheel``: one path or a list of paths (the kernel and the
+    ``chronos_translate`` wheels) copied to ``wheels/`` for ``bin/setup.sh``."""
     from chronos.model.checkpoint import checkpoint_config_path, tokenizer_metadata
     from . import docs, recommend
     run_dir = os.path.abspath(run_dir)
@@ -211,8 +214,8 @@ def build_bundle(run_dir: str, out_dir: str | None = None, *, phase: str = "pret
         elif os.path.isfile(src):
             _copy(src, os.path.join(out_dir, "third_party", "minimind", part))
     mm_rev = _git_head(mm)
-    if wheel:
-        _copy(wheel, os.path.join(out_dir, "wheels", os.path.basename(wheel)))
+    for whl in ([wheel] if isinstance(wheel, str) else list(wheel or ())):
+        _copy(whl, os.path.join(out_dir, "wheels", os.path.basename(whl)))
     # Recipes: the exact spec that produced these weights (paths made relative).
     roots = _path_roots(run_dir)
     source_spec = _sanitize(spec, roots)
@@ -237,6 +240,7 @@ def build_bundle(run_dir: str, out_dir: str | None = None, *, phase: str = "pret
         "eval": {"flores_plus": flores, "licence": "CC BY-SA 4.0", "root": "eval"},
         "third_party": {"minimind": {"dir": "third_party/minimind", "licence": "Apache-2.0", "commit": mm_rev}},
         "chronos_version": _chronos_version(),
+        "chronos_translate_version": _extension_version(),
     }
     with open(os.path.join(out_dir, MANIFEST), "w", encoding="utf-8") as fh:
         json.dump(manifest, fh, ensure_ascii=False, indent=2)
@@ -262,6 +266,11 @@ def _git_head(path: str) -> str | None:
 def _chronos_version() -> str:
     import chronos
     return getattr(chronos, "__version__", "unknown")
+
+
+def _extension_version() -> str:
+    from .. import __version__
+    return __version__
 
 
 def _rewrite_manifest(bundle_dir: str, manifest: dict) -> None:

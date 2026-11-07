@@ -2,12 +2,12 @@
 
 Trainers record whatever they measure as numeric keys on ``validation`` and
 ``final`` events: ``valid_ce`` for every run, plus task metrics such as
-``probe_en_zh_bleu``, ``accuracy``, ``pass_at_1`` or ``reward_mean``.  This
-module discovers them; the pages never hard-code a task or a language pair.
+``dev_bleu``, ``accuracy``, ``pass_at_1`` or ``reward_mean``.  This
+module discovers them; the pages never hard-code a task.
 
 A key ``<subject>_<metric>`` whose last token is a known metric name is grouped
-by that metric, so ``probe_en_zh_bleu`` and ``probe_zh_en_bleu`` share one
-chart with series ``probe en_zh`` / ``probe zh_en``.  Everything else gets a
+by that metric, so ``probe_math_accuracy`` and ``probe_code_accuracy`` share
+one chart with series ``probe math`` / ``probe code``.  Everything else gets a
 chart of its own.  Bookkeeping keys (sample counts, durations, token counts)
 are listed as context, never charted.
 """
@@ -44,8 +44,8 @@ def is_context_key(key: str) -> bool:
 def split_key(key: str) -> tuple[str, str]:
     """Map a key to (metric family, series label).
 
-    ``probe_en_zh_bleu`` → (``bleu``, ``probe en_zh``); ``bleu_zh`` → (``bleu``,
-    ``bleu_zh``); ``accuracy`` → (``accuracy``, ``accuracy``); unknown keys
+    ``probe_math_accuracy`` → (``accuracy``, ``probe math``); ``bleu_dev`` →
+    (``bleu``, ``bleu_dev``); ``accuracy`` → (``accuracy``, ``accuracy``); unknown keys
     form a family of their own.
     """
     head, sep, last = key.rpartition("_")

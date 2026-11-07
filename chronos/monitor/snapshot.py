@@ -306,7 +306,7 @@ class RunMonitor:
     @staticmethod
     def _inspections(path: str) -> list[dict]:
         """Offline reports: identity fields plus every numeric leaf, flattened
-        (``held_out.valid_ce``, ``translation.en_zh.bleu``, ``qa.accuracy`` …)."""
+        (``held_out.valid_ce``, ``probe.dev.bleu``, ``qa.accuracy`` …)."""
         meta = ("time", "phase", "step", "tokens_seen", "device", "compute_dtype", "train_dtype", "elapsed_s")
         out = []
         for file in sorted(glob.glob(os.path.join(path, "inspections", "*.json")))[-12:]:
@@ -318,11 +318,16 @@ class RunMonitor:
         return out
 
     # Columns the monitor table shows per probe variant (the full result stays in lazy_probe.jsonl).
-    PROBE_MEASURED = ("tokens_per_s", "decode_tokens_per_s", "resident_hit_rate", "prediction_hit_rate",
-                      "cold_miss_predict_hit_rate", "on_demand_loads", "prefetch_wait_time_s", "peak_rss_gb",
-                      "spec_acceptance_rate", "speed_vs_full", "paging_resolved", "num_pages",
-                      "effective_expert_budget", "tokens")
-    PROBE_FIDELITY = ("exact_match_rate", "positionwise_agreement", "min_matching_prefix")
+    PROBE_MEASURED = ("tokens_per_s", "decode_tokens_per_s", "speed_vs_full", "tokens",
+                      "prefill_time_s", "decode_time_s",
+                      "resident_hit_rate", "cache_hits", "cache_misses",
+                      "prediction_hit_rate", "prediction_hits", "prediction_total",
+                      "cold_miss_predict_hit_rate", "cold_prediction_hits", "cold_prediction_total",
+                      "on_demand_loads", "on_demand_load_time_s", "sync_ssd_loads", "cluster_loads",
+                      "prefetch_wait_time_s", "peak_rss_gb", "spec_acceptance_rate",
+                      "paging_resolved", "num_pages", "num_clusters", "storage_format", "eviction_policy",
+                      "effective_expert_budget", "ideal_active_experts")
+    PROBE_FIDELITY = ("exact_match_rate", "positionwise_agreement", "min_matching_prefix", "reference_tokens")
 
     def _lazy_probes(self, path: str, limit: int = 20) -> list[dict]:
         """Mid-training lazy-expert probe results (``lazy_probe.jsonl``), newest last.
@@ -342,8 +347,12 @@ class RunMonitor:
                 entry.update({k: result.get(k) for k in ("trained_with_clusters", "auto_paging", "num_experts",
                                                           "top_k", "truncated", "variants_requested", "elapsed_s",
                                                           "conditions")})
-                entry["references"] = {b: (r.get("measured") or {}).get("tokens_per_s")
-                                       for b, r in (result.get("references") or {}).items()}
+                refs = result.get("references") or {}
+                entry["references"] = {b: (r.get("measured") or {}).get("tokens_per_s") for b, r in refs.items()}
+                entry["reference_measured"] = {
+                    b: ({"error": r["error"]} if "error" in r else
+                        {k: (r.get("measured") or {}).get(k) for k in self.PROBE_MEASURED})
+                    for b, r in refs.items()}
                 entry["variants"] = [{
                     "label": v.get("label"), "settings": v.get("settings"),
                     **({"error": v["error"]} if "error" in v else {}),

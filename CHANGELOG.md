@@ -2,6 +2,39 @@
 
 ## [Unreleased]
 
+## [0.3.1a2] — 2026-11-07 (beta)
+
+Kernel/extension split: the `chronos` kernel trains general models and holds no translation-specific code. The en↔zh demo moved to `demos/translation` (`chronos-translate`), which imports the kernel and is not part of the `Project_Chronos` wheel. The extension is not published on PyPI; install it from a checkout with `pip install -e demos/translation` (see `demos/translation/README.md`).
+
+### Moved (to `demos/translation/chronos_translate/`)
+- `chronos.data.corpus.*` → `chronos_translate.corpus.*` (WMT19/OPUS-100/FLORES+ download, cleaning, dedup, en–zh shards, doc-mix sets).
+- `chronos.bundle.*` → `chronos_translate.bundle.*`; `chronos bundle …` → `chronos-translate bundle …`. A bundle's `bin/chronos bundle …` still works: the launcher sends `bundle` to `chronos-translate`. `bin/setup.sh` installs both wheels from `wheels/`; `bundle build --wheel` can be repeated.
+- `chronos.mlx.training.doc_run` → `chronos_translate.doc_run` (`chronos-translate doc-run`).
+- `inspect_checkpoint.translation_probe` → `chronos_translate.probe` (`chronos-translate inspect`).
+- `chronos.model.factory.ENZH_DEMO_BASE` → `chronos_translate.model_presets.ENZH_50M_BASE`.
+- `chronos/mlx/training/recipes/enzh_50m_72h.json` → `demos/translation/recipes/`, with paths relative to the file.
+
+### Added
+- Monitor (`chronos monitor`): a "Lazy experts / 懒加载" tab shows every metric the lazy-expert probe records after each validation. It has four tables (efficiency with the full-memory reference row; paging and loads; hit rates; fidelity), per-variant history charts (hit rate, fidelity, speed, loads, peak RSS) and the full probe log with skip and failure reasons. New endpoint: `GET /api/lazy_probes?run=…&limit=…`.
+- Web UI monitor page: the probe card shows the same four grouped tables and four history charts in all four UI languages. Previously it showed a subset of the columns and no load, timing or reference metrics.
+- The run snapshot's `lazy_probe` entries carry every measured probe field plus `reference_measured` (the full-memory reference per backend).
+- Probes run from Web UI training jobs. For a CLI run (`chronos longrun`, `chronos-translate run`), start `chronos lazy-probe --watch <run_dir>` next to it, or the tab stays empty.
+
+### Changed
+- `LongRun` has task hooks: `task_eval(phase, n, final=)` (returns `{}` in the kernel), `eval_samples_for`, `generate`, `write_samples`, `pinned_modules`. The kernel `RunSpec` keeps `eval_samples` / `final_eval_samples` (default 0) and `export_prefix` (default `chronos`); `bleu_samples` and `probe_samples` moved to `TranslationRunSpec`. Run translation recipes with `chronos-translate run --spec …`; the kernel runner rejects unknown keys and names the task runner.
+- `chronos longrun` and `load_spec` resolve relative recipe paths against the recipe's folder (they resolved against the working directory before). `--max-steps` and `--run-dir` give a short smoke run.
+- Task-eval exceptions during SFT validation and the final evaluation are logged as `task_eval_error` instead of stopping the run (pretrain probes were already logged). The smoke path still raises.
+- Tokenizer special tokens: the kernel default is `<|endoftext|>`, `<|im_start|>`, `<|im_end|>`, `<|pad|>` and reserved slots up to 64. Task tokens come from `special_tokens_with(extra)` or `chronos tokenizer --extra-special …`. `special_tokens_with(["<|en|>", "<|zh|>", "<|translate|>"])` reproduces the 0.3.1a1 order, so existing tokenizers and checkpoints are unchanged.
+- The shard readers (`PackedTokenStream`, `SFTRecords`, `dtype_for`, `manifest_dtype`) live in `chronos.data.shards`. `median_record_tokens` and `cluster_locality_config` moved to `chronos.expert_clusters`.
+- Preset "Chronos-v3 50M (en→zh recipe)" is now "Chronos-v3 50M (16k vocab)" (the old name is an alias) and uses the default 20 tokens/param schedule instead of the production-shard measurement. Same shape: 49,691,717 total / 12,090,437 active parameters (measured, meta device).
+
+### Fixed
+- Web UI monitor page: a card with nothing to show no longer prints a stray "null".
+
+### Removed
+- `chronos corpus`, `chronos bundle` and the `translate` extra (`sacrebleu`, `sacremoses` are dependencies of `chronos-translate`).
+- Translation metric labels (`bleu_zh`, `flores_devtest_n`) from the Web UI i18n files; the monitor still shows any numeric metric a task writes.
+
 ## [0.3.1a1] — 2026-11-07 (beta)
 
 Web UI half of 0.3.1: the rewritten Web UI, file picking and upload, LAN access, and the lazy-expert probe.

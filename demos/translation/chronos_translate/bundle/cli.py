@@ -1,4 +1,4 @@
-"""``chronos bundle {build|pack|check|probe|translate|eval|prepare-data|finetune|serve}``."""
+"""``chronos-translate bundle {build|pack|check|probe|translate|eval|prepare-data|finetune|serve}``."""
 from __future__ import annotations
 
 import argparse
@@ -50,17 +50,18 @@ def _bundle_model(bundle: str, a):
 
 
 def main(argv=None) -> int:
-    p = argparse.ArgumentParser(prog="chronos bundle", description=__doc__)
+    p = argparse.ArgumentParser(prog="chronos-translate bundle", description=__doc__)
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    b = sub.add_parser("build", help="assemble a bundle from a chronos longrun run directory (read-only on the run)")
+    b = sub.add_parser("build", help="assemble a bundle from a run directory (read-only on the run)")
     b.add_argument("--run-dir", required=True)
     b.add_argument("--out", default=None)
     b.add_argument("--phase", default="pretrain", choices=["pretrain", "sft"])
     b.add_argument("--which", default="best", choices=["best", "final"])
     b.add_argument("--name", default=None)
     b.add_argument("--status", default="interim", choices=["interim", "final"])
-    b.add_argument("--wheel", default=None, help="a project_chronos wheel to ship under wheels/")
+    b.add_argument("--wheel", action="append", default=None,
+                   help="a wheel to ship under wheels/ (repeat: the project_chronos and chronos_translate wheels)")
     b.add_argument("--probe-n", type=int, default=50, help="FLORES+ dev sentences for the quality probe (0 = skip)")
     b.add_argument("--pack", action="store_true", help="also write <out>.tar.gz + .sha256")
 
@@ -116,7 +117,7 @@ def main(argv=None) -> int:
     d.add_argument("--detokenize-en", action="store_true", help="undo Moses tokenization on the English side")
     d.add_argument("--workers", type=int, default=4)
 
-    f = sub.add_parser("finetune", help="write a chronos longrun spec that starts from the bundle weights (MLX)")
+    f = sub.add_parser("finetune", help="write a run spec that starts from the bundle weights (MLX)")
     f.add_argument("--bundle", default=None)
     f.add_argument("--data", required=True, help="the --out of prepare-data (or a shards dir)")
     f.add_argument("--run-dir", required=True)
@@ -223,7 +224,7 @@ def _run(a) -> int:
                                    clusters=a.clusters)
         print(f"[finetune] spec: {spec}")
         if a.dry_run:
-            print(f"[finetune] start it with: chronos longrun --spec {spec}")
+            print(f"[finetune] start it with: chronos-translate run --spec {spec}")
             return 0
         return launch(spec)
     if a.cmd == "serve":

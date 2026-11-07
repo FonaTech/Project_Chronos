@@ -28,10 +28,31 @@ CHAT_TEMPLATE = (
     "{% if add_generation_prompt %}{{ '<|im_start|>assistant\n' }}{% endif %}"
 )
 
-DEFAULT_SPECIAL_TOKENS = (
-    "<|endoftext|>", "<|im_start|>", "<|im_end|>",
-    "<|en|>", "<|zh|>", "<|translate|>", "<|pad|>",
-) + tuple(f"<|reserved_{i}|>" for i in range(57))
+#: Ids 0–2 are fixed (EOS / chat start / chat end); the rest of the 64
+#: control slots are ``<|reserved_i|>`` until a task claims them.
+CORE_SPECIAL_TOKENS = ("<|endoftext|>", "<|im_start|>", "<|im_end|>", "<|pad|>")
+SPECIAL_SLOTS = 64
+
+
+def special_tokens_with(extra=(), *, slots: int = SPECIAL_SLOTS) -> tuple[str, ...]:
+    """Core control tokens, then ``extra`` task tokens, padded with reserved slots.
+
+    ``extra`` tokens go right after ``<|im_end|>`` (ids 3, 4, …) in the given
+    order; a token already in the core set keeps its core position.
+    """
+    head = list(CORE_SPECIAL_TOKENS[:3])
+    for tok in extra:
+        if tok not in head:
+            head.append(tok)
+    for tok in CORE_SPECIAL_TOKENS[3:]:
+        if tok not in head:
+            head.append(tok)
+    if len(head) > slots:
+        raise ValueError(f"{len(head)} special tokens exceed the {slots} control slots")
+    return tuple(head) + tuple(f"<|reserved_{i}|>" for i in range(slots - len(head)))
+
+
+DEFAULT_SPECIAL_TOKENS = special_tokens_with()
 
 
 def tokenizer_normalize(text: str) -> str:

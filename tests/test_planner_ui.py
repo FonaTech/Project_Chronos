@@ -12,7 +12,7 @@ from chronos.model.planner import (
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FIXTURES = os.path.join(ROOT, "tests", "fixtures")
-SHARDS = os.path.join(ROOT, "Translation Training Data", "shards_v1")
+ARCH_50M = os.path.join(FIXTURES, "arch_50m.json")   # 50M shape + meta-device counts
 
 
 def _plan(**kw):
@@ -21,8 +21,8 @@ def _plan(**kw):
 
 
 # ── architecture search ────────────────────────────────────────────────
-def test_search_reproduces_the_50m_recipe_by_experts_and_by_params():
-    recipe = json.load(open(os.path.join(ROOT, "chronos/mlx/training/recipes/enzh_50m_72h.json")))["extra"]["params"]
+def test_search_reproduces_the_50m_shape_by_experts_and_by_params():
+    recipe = json.load(open(ARCH_50M))["params"]
     for kw in (dict(active_experts=2), dict(active_params=12.09e6)):
         arch = search_architecture(50e6, use_moe=True, num_experts=36, vocab_size=16384, depth=4, **kw)
         assert (arch.hidden_size, arch.num_hidden_layers, arch.ffn_width, arch.num_experts_per_tok) == (384, 6, 160, 2)
@@ -130,14 +130,6 @@ def test_profile_manifest_and_tokenizer(tmp_path):
     assert plan["report"]["scaling"]["tokens"] == 3e9
 
 
-@pytest.mark.skipif(not os.path.isfile(os.path.join(SHARDS, "shards_manifest.json")), reason="local shards absent")
-def test_planner_on_production_shards_matches_recipe():
-    plan = _plan(target_total=50e6, num_experts=36, active_experts=2, data_paths=(SHARDS,), ram_gb=128)
-    arch = plan["report"]["architecture"]
-    assert (arch["total_params"], arch["active_params"]) == (49_691_717, 12_090_437)
-    assert plan["config"]["max_seq_len"] == 512 and plan["config"]["vocab_size"] == 16384
-
-
 # ── presets ────────────────────────────────────────────────────────────
 def test_v3_presets_build_and_fill_every_widget():
     from chronos.config_schema import model_config_kwargs
@@ -168,10 +160,8 @@ def test_v3_presets_file_matches_the_planner():
     from ui.presets import V3_PRESETS_PATH, build_v3_presets
     stored = json.load(open(V3_PRESETS_PATH, encoding="utf-8"))
     fresh = build_v3_presets()
+    assert set(stored["presets"]) == set(fresh["presets"])
     for name, cfg in fresh["presets"].items():
-        if any("shards_v1" in p for p in fresh["_meta"][name]["request"].get("data_paths", ())) \
-                and not os.path.isdir(SHARDS):
-            continue
         assert stored["presets"][name] == cfg, name
 
 
@@ -216,7 +206,7 @@ def test_estimator_derives_recurrent_groups_like_the_model():
     from chronos.config_schema import model_config_kwargs
     from chronos.model.factory import count_parameters
     from ui.estimator import ArchConfig, active_param_bounds, compute_params, total_params
-    model = json.load(open(os.path.join(ROOT, "chronos/mlx/training/recipes/enzh_50m_72h.json")))["model_config"]
+    model = json.load(open(ARCH_50M))["model_config"]
     arch = ArchConfig.from_config(model)
     counted = count_parameters(model_config_kwargs(model))
     assert (arch.prelude_layers, arch.recurrent_groups, arch.coda_layers) == (1, 4, 1)
@@ -281,9 +271,9 @@ def test_inference_overrides_validate():
                         num_experts=4)
     assert apply_inference_overrides(cfg, {"kv_cache_dtype": "int8", "ram_budget_mb": None}) == {"kv_cache_dtype": "int8"}
     assert cfg.kv_cache_dtype == "int8"
-    # Regression: the 50M recipe shape (6 heads / 2 KV) was validated against
+    # Regression: the 50M shape (6 heads / 2 KV) was validated against
     # class-default KV heads (4) and every override raised.
-    recipe = json.load(open(os.path.join(ROOT, "chronos/mlx/training/recipes/enzh_50m_72h.json")))["model_config"]
+    recipe = json.load(open(ARCH_50M))["model_config"]
     big = ChronosConfig(**recipe)
     assert apply_inference_overrides(big, {"router_scope": "shared", "ram_budget_mb": 64}) == {
         "router_scope": "shared", "ram_budget_mb": 64}

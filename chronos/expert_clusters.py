@@ -119,3 +119,64 @@ def recommended_window(median_record_tokens: Optional[float], seq_len: int) -> i
         return min(DEFAULT_WINDOW, seq_len)
     w = 1 << int(round(math.log2(float(median_record_tokens))))
     return int(max(min(16, seq_len), min(w, seq_len)))
+
+
+def median_record_tokens(shards_dir: str, max_files: int = 8) -> float | None:
+    """Median SFT record length (tokens) from the ``.idx`` offsets under ``<shards>/sft/train``.
+
+    Reads at most ``max_files`` index files (offsets only, no token data).
+    Returns None when the shards have no SFT records (packed pretrain text
+    has no record boundaries)."""
+    import glob
+    import os
+
+    import numpy as np
+    files = sorted(glob.glob(os.path.join(shards_dir, "sft", "train", "*.idx")))[:max_files]
+    lengths = [np.diff(np.fromfile(f, dtype=np.int64)) for f in files]
+    lengths = [x for x in lengths if x.size]
+    if not lengths:
+        return None
+    return float(np.median(np.concatenate(lengths)))
+
+
+def cluster_locality_config(model_config: dict, shards_dir: str | None, *, enabled: bool = True,
+                            lambda_cluster: float | None = None, window: int | None = None,
+                            clusters: int | None = None, seq_len: int | None = None) -> dict:
+    """Cluster-locality fields for a fine-tune and where each value comes from.
+
+    On by default at ``DEFAULT_LAMBDA`` (measured sweep on a synthetic
+    multi-topic task, from-scratch training; its effect on a fine-tune of
+    weights trained without the constraint has not been measured).  Off for
+    dense models and when there are fewer than two clusters."""
+    from chronos.model.config import ChronosConfig      # lazy: this module stays torch/mlx-free
+    # The values training will use: longrun builds ChronosConfig(**model_config).
+    cfg = ChronosConfig(**{k: v for k, v in model_config.items() if v is not None})
+    e = int(getattr(cfg, "num_experts", 0) or 0)
+    k = int(getattr(cfg, "num_experts_per_tok", 1) or 1)
+    seq = int(seq_len or getattr(cfg, "max_position_embeddings", 512) or 512)
+    usable = bool(getattr(cfg, "use_moe", True)) and e > 2 * k
+    lam = 0.0 if not (enabled and usable) else float(DEFAULT_LAMBDA if lambda_cluster is None else lambda_cluster)
+    if lam < 0:
+        raise ValueError("lambda_cluster must be >= 0")
+    median = median_record_tokens(shards_dir) if (shards_dir and window is None) else None
+    win = int(window) if window is not None else recommended_window(median, seq)
+    if win < 0:
+        raise ValueError("cluster_window must be >= 0 (0 = whole sequence)")
+    values = {"lambda_cluster_locality": lam, "cluster_locality_window": win,
+              "cluster_locality_clusters": int(clusters or 0)}
+    if not enabled:
+        why = "off (disabled by the caller)"
+    elif not usable:
+        why = "off: dense model or fewer than two clusters"
+    elif lambda_cluster is None:
+        why = f"default {DEFAULT_LAMBDA} (measured sweep, synthetic task; not measured for fine-tuning)"
+    else:
+        why = "user value"
+    if window is not None:
+        wsrc = "user value"
+    elif median is not None:
+        wsrc = f"rule: power of two nearest the median SFT record ({median:.0f} tokens), clamped to [16, {seq}]"
+    else:
+        wsrc = "default (no SFT record lengths in the data)"
+    return {"values": values, "source": {"lambda_cluster_locality": why, "cluster_locality_window": wsrc,
+                                         "cluster_locality_clusters": "user value" if clusters else "ceil(E / 2k)"}}

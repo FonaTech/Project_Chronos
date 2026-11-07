@@ -125,7 +125,7 @@ def test_class_default_is_off_and_new_config_entry_points_turn_it_on(monkeypatch
 
 
 def test_finetune_spec_turns_cluster_locality_on_by_default(tmp_path):
-    from chronos.bundle.recommend import cluster_locality_config
+    from chronos.expert_clusters import cluster_locality_config
     import numpy as np
     moe = {"num_experts": 36, "num_experts_per_tok": 2, "hidden_size": 64, "num_hidden_layers": 4}
     sft = tmp_path / "shards" / "sft" / "train"

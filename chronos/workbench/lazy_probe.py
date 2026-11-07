@@ -32,7 +32,7 @@ from dataclasses import asdict, dataclass, field
 # results from different validation points are comparable.
 _SYNTHETIC_PROMPTS = ((5, 17, 33, 2, 61, 9, 40, 12), (7, 3, 29, 44, 18, 6, 51, 23, 11, 2))
 DEFAULT_PROMPTS = (
-    "Translate to Chinese: The weather is nice today.",
+    "Summarize in one sentence: the weather is nice today and the park is busy.",
     "Explain what a mixture-of-experts layer does in one sentence.",
 )
 

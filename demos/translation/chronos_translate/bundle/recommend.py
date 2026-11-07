@@ -10,13 +10,16 @@ Every value carries a ``source``:
 
 Nothing here is a measured optimum.  The tiers trade wall time for quality
 on a single Apple-silicon or CUDA machine; ``chronos bundle finetune --tier``
-turns a tier into a ``chronos longrun`` spec.
+turns a tier into a ``chronos-translate run`` spec.
 """
 from __future__ import annotations
 
 import copy
 import json
 import os
+
+# Generic helpers (kernel); re-exported for existing imports.
+from chronos.expert_clusters import cluster_locality_config, median_record_tokens  # noqa: F401
 
 # Wall-clock budgets per tier (hours) and the reason for each.
 TIERS = {
@@ -98,71 +101,11 @@ def tier_phases(recipe: dict, tier: str, mode: str = "sft") -> list[dict]:
     raise ValueError(f"unknown mode {mode!r}; choose sft, pretrain or pretrain+sft")
 
 
-def median_record_tokens(shards_dir: str, max_files: int = 8) -> float | None:
-    """Median SFT record length (tokens) from the ``.idx`` offsets under ``<shards>/sft/train``.
-
-    Reads at most ``max_files`` index files (offsets only, no token data).
-    Returns None when the shards have no SFT records (packed pretrain text
-    has no record boundaries)."""
-    import glob
-    import numpy as np
-    files = sorted(glob.glob(os.path.join(shards_dir, "sft", "train", "*.idx")))[:max_files]
-    lengths = [np.diff(np.fromfile(f, dtype=np.int64)) for f in files]
-    lengths = [x for x in lengths if x.size]
-    if not lengths:
-        return None
-    return float(np.median(np.concatenate(lengths)))
-
-
-def cluster_locality_config(model_config: dict, shards_dir: str | None, *, enabled: bool = True,
-                            lambda_cluster: float | None = None, window: int | None = None,
-                            clusters: int | None = None, seq_len: int | None = None) -> dict:
-    """Cluster-locality fields for a fine-tune and where each value comes from.
-
-    On by default at ``DEFAULT_LAMBDA`` (measured sweep on a synthetic
-    multi-topic task, from-scratch training; its effect on a fine-tune of
-    weights trained without the constraint has not been measured).  Off for
-    dense models and when there are fewer than two clusters."""
-    from chronos.expert_clusters import DEFAULT_LAMBDA, recommended_window
-    from chronos.model.config import ChronosConfig
-    # The values training will use: longrun builds ChronosConfig(**model_config).
-    cfg = ChronosConfig(**{k: v for k, v in model_config.items() if v is not None})
-    e = int(getattr(cfg, "num_experts", 0) or 0)
-    k = int(getattr(cfg, "num_experts_per_tok", 1) or 1)
-    seq = int(seq_len or getattr(cfg, "max_position_embeddings", 512) or 512)
-    usable = bool(getattr(cfg, "use_moe", True)) and e > 2 * k
-    lam = 0.0 if not (enabled and usable) else float(DEFAULT_LAMBDA if lambda_cluster is None else lambda_cluster)
-    if lam < 0:
-        raise ValueError("lambda_cluster must be >= 0")
-    median = median_record_tokens(shards_dir) if (shards_dir and window is None) else None
-    win = int(window) if window is not None else recommended_window(median, seq)
-    if win < 0:
-        raise ValueError("cluster_window must be >= 0 (0 = whole sequence)")
-    values = {"lambda_cluster_locality": lam, "cluster_locality_window": win,
-              "cluster_locality_clusters": int(clusters or 0)}
-    if not enabled:
-        why = "off (--no-cluster-locality)"
-    elif not usable:
-        why = "off: dense model or fewer than two clusters"
-    elif lambda_cluster is None:
-        why = f"default {DEFAULT_LAMBDA} (measured sweep, synthetic task; not measured for fine-tuning)"
-    else:
-        why = "user value"
-    if window is not None:
-        wsrc = "user value"
-    elif median is not None:
-        wsrc = f"rule: power of two nearest the median SFT record ({median:.0f} tokens), clamped to [16, {seq}]"
-    else:
-        wsrc = "default (no SFT record lengths in the data)"
-    return {"values": values, "source": {"lambda_cluster_locality": why, "cluster_locality_window": wsrc,
-                                         "cluster_locality_clusters": "user value" if clusters else "ceil(E / 2k)"}}
-
-
 def longrun_spec(bundle_dir: str, recipe: dict, *, run_dir: str, shards_dir: str, tier: str,
                  mode: str = "sft", budget_hours: float | None = None, seed: int | None = None,
                  cluster_locality: bool = True, lambda_cluster: float | None = None,
                  cluster_window: int | None = None, clusters: int | None = None) -> dict:
-    """A ``chronos longrun`` RunSpec (as a dict) that starts from the bundle weights.
+    """A ``TranslationRunSpec`` (as a dict) that starts from the bundle weights.
 
     The cluster-locality constraint is on by default (``cluster_locality_config``)."""
     from .builder import load_bundle_manifest
@@ -253,7 +196,7 @@ def build_recommendations(recipe: dict, planner_preset: dict | None, decode: dic
                       "zh_fullwidth_punct": True},
             "min_pairs_hint": "below ~5k pairs prefer tier 'quick' with mode 'sft'; the 50M model overfits "
                               "small sets quickly — watch valid_ce in metrics.jsonl",
-        }, "recipe", "defaults of chronos.data.corpus (build_corpus / build_shards) used for the bundled weights"),
+        }, "recipe", "defaults of chronos_translate.corpus (build_corpus / build_shards) used for the bundled weights"),
     }
     if decode:
         out["decode"] = decode

@@ -25,7 +25,7 @@ const STR = {
     sub_ppl: "困惑度 {v}", sub_at: "第 {s} 步", sub_proc: "含填充 {v} tok/s", sub_footprint: "进程物理占用 (phys_footprint)", sub_peak: "MLX 峰值 {v} · 活跃 {a}",
     sub_clip: "裁剪阈值 {v}", sub_maxdepth: "最大 {v}", sub_entmax: "上限 {v}", sub_left: "剩余 {v}",
     t_overview: "总览", t_loss: "损失分量", t_recurrent: "循环深度", t_routing: "MoE 路由", t_params: "参数统计",
-    t_evals: "评测与样例", t_config: "训练参数", t_log: "日志", t_ckpt: "检查点",
+    t_evals: "评测与样例", t_lazy: "懒加载", t_config: "训练参数", t_log: "日志", t_ckpt: "检查点",
     window: "窗口", w_all: "全部", w_last: "最近 {n} 点", phase_all: "全部阶段", events_on: "显示验证/回滚标记",
     c_loss: "训练损失", c_primary: "主损失 (CE)", c_valid: "验证 CE", c_lr: "学习率", c_grad: "梯度范数（裁剪前）",
     c_tps: "吞吐 (tok/s)", c_step: "单步耗时 (s)", c_mem: "MLX 内存 (GB)", c_tokens: "累计 token",
@@ -67,7 +67,7 @@ const STR = {
     sub_ppl: "perplexity {v}", sub_at: "step {s}", sub_proc: "{v} tok/s incl. padding", sub_footprint: "process phys_footprint", sub_peak: "MLX peak {v} · active {a}",
     sub_clip: "clip at {v}", sub_maxdepth: "max {v}", sub_entmax: "max {v}", sub_left: "{v} left",
     t_overview: "Overview", t_loss: "Loss terms", t_recurrent: "Recurrence", t_routing: "MoE routing", t_params: "Parameters",
-    t_evals: "Evals & samples", t_config: "Training parameters", t_log: "Log", t_ckpt: "Checkpoints",
+    t_evals: "Evals & samples", t_lazy: "Lazy experts", t_config: "Training parameters", t_log: "Log", t_ckpt: "Checkpoints",
     window: "Window", w_all: "All", w_last: "Last {n} points", phase_all: "All phases", events_on: "Show validation/rollback marks",
     c_loss: "Training loss", c_primary: "Primary loss (CE)", c_valid: "Validation CE", c_lr: "Learning rate", c_grad: "Grad norm (pre-clip)",
     c_tps: "Throughput (tok/s)", c_step: "Step time (s)", c_mem: "MLX memory (GB)", c_tokens: "Tokens seen",
@@ -248,6 +248,7 @@ async function refresh() {
     S.error = null;
     if (snap.run) S.run = snap.run;
     if (S.tab === "log" && S.logAuto) await loadLog();
+    if (S.tab === "lazy") await loadLazy();
     renderAll(false);
   } catch (e) {
     if (e instanceof AuthError) showLogin("");
@@ -379,7 +380,7 @@ function renderTiles() {
 }
 
 // ---- tabs ----------------------------------------------------------------------------
-const TABS = ["overview", "loss", "recurrent", "routing", "params", "evals", "config", "log", "ckpt"];
+const TABS = ["overview", "loss", "recurrent", "routing", "params", "evals", "lazy", "config", "log", "ckpt"];
 function renderTabs() {
   const nav = clear($("tabs"));
   if (!TABS.includes(S.tab)) S.tab = "overview";
@@ -405,6 +406,7 @@ function selectTab(id) {
   renderTabs();
   renderPanel(true);
   if (id === "log") loadLog().then(() => renderPanel(true));
+  if (id === "lazy") loadLazy().then(() => renderPanel(true));
 }
 // ---- tooltip -------------------------------------------------------------------------
 const tip = {
@@ -441,7 +443,7 @@ function bisect(xs, x) {
 
 // ---- line chart (small multiple; one y axis; crosshair tooltip) ---------------------------
 const pendingDraws = [];
-function lineChart({ title, series, events = [], fmtY = fmt, note }) {
+function lineChart({ title, series, events = [], fmtY = fmt, note, yRange }) {
   const live = series.map((sr, i) => ({ ...sr, cls: sr.cls || `s${i + 1}`,
     pts: (sr.rows || []).filter((r) => isNum(r[sr.key]) && isNum(r.step)).map((r) => ({ x: r.step, y: r[sr.key], t: r.time })) }))
     .filter((sr) => sr.pts.length);
@@ -456,10 +458,10 @@ function lineChart({ title, series, events = [], fmtY = fmt, note }) {
   const svg = s("svg", { role: "img", "aria-label": `${title}: ${lastPts ? fmtY(lastPts.y) : ""}` });
   card.append(svg);
   if (note) card.append(h("figcaption", { class: "sub muted", text: note }));
-  pendingDraws.push(() => drawLines(card, svg, live, events, fmtY));
+  pendingDraws.push(() => drawLines(card, svg, live, events, fmtY, yRange));
   return card;
 }
-function drawLines(card, svg, live, events, fmtY) {
+function drawLines(card, svg, live, events, fmtY, yRange) {
   const W = Math.max(240, Math.round(svg.getBoundingClientRect().width || card.clientWidth - 28)), H = 170;
   const m = { l: 52, r: 10, t: 8, b: 22 };
   clear(svg);
@@ -470,6 +472,8 @@ function drawLines(card, svg, live, events, fmtY) {
   if (x0 === x1) { x0 -= 1; x1 += 1; }
   if (y0 === y1) { const d = Math.abs(y0) * 0.05 || 1; y0 -= d; y1 += d; }
   const pad = (y1 - y0) * 0.06; y0 -= pad; y1 += pad;
+  if (yRange) { y0 = Math.max(y0, yRange[0]); y1 = Math.min(y1, yRange[1]); }   // rates stay in [0, 1]
+  if (yRange && y0 >= y1) { y0 = yRange[0]; y1 = yRange[1]; }
   const X = (v) => m.l + (v - x0) / (x1 - x0) * (W - m.l - m.r);
   const Y = (v) => m.t + (1 - (v - y0) / (y1 - y0)) * (H - m.t - m.b);
   const grid = s("g", { class: "grid" }), axis = s("g", { class: "axis" });
@@ -957,6 +961,162 @@ function panelLog() {
     h("label", { class: "field" }, auto, tr("log_auto"))), pre];
 }
 
+// ---- lazy experts (lazy_probe.jsonl) ---------------------------------------------------------------------
+Object.assign(STR.zh, {
+  ev_lazy_probe: "懒加载探针",
+  lz_none: "这个运行还没有懒加载探针结果（lazy_probe.jsonl）。Web UI 启动的训练默认在每次验证后探测；命令行训练可另开 `chronos lazy-probe --watch <运行目录>`。",
+  lz_latest: "最近一次探针", lz_meta: "{phase} · 第 {step} 步 · {t} · 耗时 {s}", lz_cond: "贪心解码，{n} 条提示，每条最多 {k} 个 token；全部为实测值。全内存参考 = 同一后端的全内存解码。",
+  lz_trained: "使用簇局部性训练", lz_auto: "自动分页", lz_experts: "专家 / top-k", lz_capped: "变体数被限制：请求 {n}，实测 {c}",
+  lz_skipped: "已跳过：{r}", lz_failed: "失败：{r}", yes: "是", no: "否",
+  lz_skip_dense: "稠密模型，没有可分页的路由专家", lz_skip_no_ckpt: "磁盘上还没有检查点",
+  lz_skip_busy: "上一次探测仍在运行", lz_skip_writing: "检查点仍在写入",
+  lz_skip_superseded: "已被第 {step} 步的新验证取代",
+  lz_eff: "效率", lz_paging: "分页与加载", lz_hit: "命中率", lz_fid: "保真度（对照全内存参考）", lz_ref: "全内存参考",
+  lz_variant: "组合", lz_backend: "后端", lz_tps: "token/秒", lz_dtps: "解码 token/秒", lz_vsfull: "相对全内存速度", lz_prefill: "预填充 (s)", lz_decode: "解码 (s)",
+  lz_rss: "峰值 RSS", lz_wait: "预取等待 (s)", lz_loads: "按需加载次数", lz_load_s: "加载耗时 (s)", lz_sync: "同步 SSD 读", lz_cluster_loads: "簇加载",
+  lz_pages: "分页 · 页数", lz_budget: "专家预算", lz_ideal: "理想激活专家", lz_evict: "淘汰策略", lz_accept: "草稿接受率",
+  lz_res_hit: "常驻命中率", lz_hits: "命中 / 未命中", lz_pred_hit: "预测命中率", lz_pred_n: "预测命中 / 总数", lz_cold: "冷未命中预测率", lz_cold_n: "冷未命中预测 / 总数",
+  lz_exact: "完全一致", lz_agree: "token 一致率", lz_prefix: "最短一致前缀", lz_ref_tokens: "参照 token", lz_error: "错误",
+  lz_pick: "组合", lz_c_hit: "命中率 · {p}", lz_c_fid: "保真度 · {p}", lz_c_speed: "解码速度（token/秒）· {p}",
+  lz_c_load: "加载次数 · {p}", lz_c_rss: "峰值 RSS (GB) · {p}", lz_history_note: "每次验证后运行一次；步数在每个阶段重新计数，所以只画当前阶段。",
+  lz_all: "全部探针记录", lz_status: "状态", lz_variants_n: "组合数", lz_ok: "完成",
+});
+Object.assign(STR.en, {
+  ev_lazy_probe: "Lazy-expert probe",
+  lz_none: "No lazy-expert probe results for this run yet (lazy_probe.jsonl). Web UI training probes after each validation by default; for a command-line run, start `chronos lazy-probe --watch <run dir>`.",
+  lz_latest: "Latest probe", lz_meta: "{phase} · step {step} · {t} · took {s}", lz_cond: "Greedy decoding, {n} prompts, up to {k} tokens each; all values measured. Reference = full-memory decode on the same backend.",
+  lz_trained: "Trained with cluster locality", lz_auto: "Auto paging layout", lz_experts: "Experts / top-k", lz_capped: "Variants capped: {n} requested, {c} measured",
+  lz_skipped: "Skipped: {r}", lz_failed: "Failed: {r}", yes: "yes", no: "no",
+  lz_skip_dense: "dense model, no routed experts to page", lz_skip_no_ckpt: "no checkpoint on disk yet",
+  lz_skip_busy: "previous probe still running", lz_skip_writing: "checkpoint still being written",
+  lz_skip_superseded: "superseded by the validation at step {step}",
+  lz_eff: "Efficiency", lz_paging: "Paging and loads", lz_hit: "Hit rates", lz_fid: "Fidelity (vs the full-memory reference)", lz_ref: "Full-memory reference",
+  lz_variant: "Variant", lz_backend: "Backend", lz_tps: "Tokens/s", lz_dtps: "Decode tokens/s", lz_vsfull: "Speed vs full memory", lz_prefill: "Prefill (s)", lz_decode: "Decode (s)",
+  lz_rss: "Peak RSS", lz_wait: "Prefetch wait (s)", lz_loads: "On-demand loads", lz_load_s: "Load time (s)", lz_sync: "Sync SSD reads", lz_cluster_loads: "Cluster loads",
+  lz_pages: "Paging · pages", lz_budget: "Expert budget", lz_ideal: "Ideal active experts", lz_evict: "Eviction", lz_accept: "Draft acceptance",
+  lz_res_hit: "Resident hit rate", lz_hits: "Hits / misses", lz_pred_hit: "Prediction hit rate", lz_pred_n: "Predicted hits / total", lz_cold: "Cold-miss predicted", lz_cold_n: "Cold hits / total",
+  lz_exact: "Exact match", lz_agree: "Token agreement", lz_prefix: "Shortest matching prefix", lz_ref_tokens: "Reference tokens", lz_error: "Error",
+  lz_pick: "Variant", lz_c_hit: "Hit rates · {p}", lz_c_fid: "Fidelity · {p}", lz_c_speed: "Decode speed (tokens/s) · {p}",
+  lz_c_load: "Loads · {p}", lz_c_rss: "Peak RSS (GB) · {p}", lz_history_note: "One probe after each validation; steps restart in every phase, so only the current phase is plotted.",
+  lz_all: "All probes", lz_status: "Status", lz_variants_n: "Variants", lz_ok: "done",
+});
+// Results of chronos/workbench/lazy_probe.py after each validation: the checkpoint is
+// decoded with experts paged from SSD and compared with a full-memory decode.
+const fmtPct = (v) => (isNum(v) ? (v * 100).toFixed(1) + "%" : "—");
+const fmtSec = (v) => (isNum(v) ? (Math.abs(v) >= 10 ? v.toFixed(1) : v.toFixed(3)) : "—");
+const pair = (a, b) => (isNum(a) || isNum(b) ? `${fmtInt(a)} / ${fmtInt(b)}` : "—");
+const yesNo = (v) => (v === null || v === undefined ? "—" : tr(v ? "yes" : "no"));
+async function loadLazy() {
+  try { const r = await api("api/lazy_probes", { run: S.run, limit: 500 }); S.lazy = r.probes || []; S.lazyFor = S.run; }
+  catch (e) { if (e instanceof AuthError) showLogin(""); else S.lazy = null; }
+}
+function lazyProbes() { return (S.lazy && S.lazyFor === S.run ? S.lazy : (S.snap && S.snap.lazy_probe)) || []; }
+const lzm = (label, key, f) => ({ label, get: (v) => (v.measured || {})[key], num: true, fmt: f });
+const lzf = (label, key, f) => ({ label, get: (v) => (v.fidelity || {})[key], num: true, fmt: f });
+// Skip reasons come from chronos.workbench.lazy_probe / train_worker in English; unknown ones pass through.
+const LZ_SKIPS = [[/^dense model/, "lz_skip_dense"], [/^no checkpoint/, "lz_skip_no_ckpt"],
+  [/^previous probe/, "lz_skip_busy"], [/^checkpoint still/, "lz_skip_writing"],
+  [/^superseded by step (\d+)/, "lz_skip_superseded"]];
+function lazySkipText(reason) {
+  for (const [re, key] of LZ_SKIPS) {
+    const m = re.exec(String(reason || ""));
+    if (m) return tr(key, { step: m[1] || "" });
+  }
+  return String(reason || "");
+}
+function lazyStatus(p) {
+  if (p.error) return tr("lz_failed", { r: p.error });
+  if (p.skipped) return tr("lz_skipped", { r: lazySkipText(p.skipped) });
+  return tr("lz_ok");
+}
+function lazyLatest(latest) {
+  const c = latest.conditions || {};
+  const refs = Object.entries(latest.reference_measured || {}).map(([b, m]) => ({
+    label: `${tr("lz_ref")} · ${b}`, measured: m && !m.error ? m : {}, error: m && m.error }));
+  const variants = latest.variants || [];
+  const name = { label: tr("lz_variant"), get: (v) => v.label, keep: true };
+  const err = { label: tr("lz_error"), get: (v) => v.error || "" };
+  const box = (title, columns, rows) => h("div", { class: "box card" }, h("h3", { text: title }), table(columns, rows, { hideEmpty: true }));
+  const facts = [`${tr("lz_trained")}: ${yesNo(latest.trained_with_clusters)}`, `${tr("lz_auto")}: ${latest.auto_paging ?? "—"}`,
+    `${tr("lz_experts")}: ${latest.num_experts ?? "—"} / ${latest.top_k ?? "—"}`,
+    latest.truncated ? tr("lz_capped", { n: fmtInt(latest.variants_requested), c: fmtInt(variants.length) }) : null].filter(Boolean);
+  return [
+    h("div", { class: "box card" }, h("h3", { text: tr("lz_latest") }),
+      h("p", { class: "caption", text: tr("lz_meta", { phase: phaseName(latest.phase), step: fmtInt(latest.step),
+        t: fmtTime(latest.time), s: fmtDur(latest.elapsed_s ?? latest.wall_s) }) }),
+      h("p", { class: "caption muted", text: facts.join(" · ") }),
+      h("p", { class: "caption muted", text: tr("lz_cond", { n: fmtInt(c.prompts), k: fmtInt(c.max_new_tokens) }) })),
+    box(tr("lz_eff"), [name, lzm(tr("lz_tps"), "tokens_per_s", (v) => fmt(v, 4)), lzm(tr("lz_dtps"), "decode_tokens_per_s", (v) => fmt(v, 4)),
+      lzm(tr("lz_vsfull"), "speed_vs_full", (v) => (isNum(v) ? `${v.toFixed(2)}×` : "—")),
+      lzm(tr("lz_prefill"), "prefill_time_s", fmtSec), lzm(tr("lz_decode"), "decode_time_s", fmtSec),
+      lzm(tr("lz_rss"), "peak_rss_gb", fmtGB), lzm(tr("lz_accept"), "spec_acceptance_rate", fmtPct), err], [...variants, ...refs]),
+    box(tr("lz_paging"), [name, lzm(tr("lz_loads"), "on_demand_loads", fmtInt), lzm(tr("lz_load_s"), "on_demand_load_time_s", fmtSec),
+      lzm(tr("lz_sync"), "sync_ssd_loads", fmtInt), lzm(tr("lz_cluster_loads"), "cluster_loads", fmtInt),
+      lzm(tr("lz_wait"), "prefetch_wait_time_s", fmtSec),
+      { label: tr("lz_pages"), get: (v) => ((v.measured || {}).paging_resolved ? `${v.measured.paging_resolved} · ${fmtInt(v.measured.num_pages)}` : null) },
+      lzm(tr("lz_budget"), "effective_expert_budget", fmtInt), lzm(tr("lz_ideal"), "ideal_active_experts", fmtInt),
+      { label: tr("lz_evict"), get: (v) => (v.measured || {}).eviction_policy }], variants),
+    box(tr("lz_hit"), [name, lzm(tr("lz_res_hit"), "resident_hit_rate", fmtPct),
+      { label: tr("lz_hits"), num: true, get: (v) => (v.measured && (isNum(v.measured.cache_hits) || isNum(v.measured.cache_misses)) ? pair(v.measured.cache_hits, v.measured.cache_misses) : null) },
+      lzm(tr("lz_pred_hit"), "prediction_hit_rate", fmtPct),
+      { label: tr("lz_pred_n"), num: true, get: (v) => (v.measured && v.measured.prediction_total ? pair(v.measured.prediction_hits, v.measured.prediction_total) : null) },
+      lzm(tr("lz_cold"), "cold_miss_predict_hit_rate", fmtPct),
+      { label: tr("lz_cold_n"), num: true, get: (v) => (v.measured && v.measured.cold_prediction_total ? pair(v.measured.cold_prediction_hits, v.measured.cold_prediction_total) : null) }],
+      variants),
+    box(tr("lz_fid"), [name, lzf(tr("lz_exact"), "exact_match_rate", fmtPct), lzf(tr("lz_agree"), "positionwise_agreement", fmtPct),
+      lzf(tr("lz_prefix"), "min_matching_prefix", fmtInt), lzf(tr("lz_ref_tokens"), "reference_tokens", fmtInt), err], variants),
+  ];
+}
+// One chosen variant across the probes of the newest phase (steps restart per phase).
+function lazyHistory(done) {
+  const phase = done[done.length - 1].phase;
+  const runs = done.filter((p) => p.phase === phase);
+  const labels = [...new Set(runs.flatMap((p) => (p.variants || []).filter((v) => !v.error).map((v) => v.label)))];
+  if (runs.length < 2 || !labels.length) return [];
+  const pick = labels.includes(S.lazyPick) ? S.lazyPick : (labels.find((l) => l.includes("sync_on_demand")) || labels[0]);
+  const rows = runs.map((p) => {
+    const v = (p.variants || []).find((x) => x.label === pick && !x.error);
+    return v ? { step: p.step, time: p.time, ...(v.measured || {}), ...(v.fidelity || {}) } : null;
+  }).filter(Boolean);
+  const sel = h("select", { "aria-label": tr("lz_pick"), onchange: (e) => { S.lazyPick = e.target.value; renderPanel(true); } },
+    labels.map((l) => h("option", { value: l, text: l })));
+  sel.value = pick;
+  const p = phaseName(phase);
+  const line = (title, series, fmtY, yRange) =>
+    lineChart({ title, fmtY, yRange, series: series.map(([key, label]) => ({ key, label, rows })) });
+  return [h("div", { class: "toolbar" }, h("label", { class: "field" }, tr("lz_pick"), sel)),
+    h("p", { class: "caption muted", text: tr("lz_history_note") }),
+    charts(
+      line(tr("lz_c_hit", { p }), [["resident_hit_rate", tr("lz_res_hit")], ["prediction_hit_rate", tr("lz_pred_hit")],
+        ["cold_miss_predict_hit_rate", tr("lz_cold")]], fmtPct, [0, 1]),
+      line(tr("lz_c_fid", { p }), [["exact_match_rate", tr("lz_exact")], ["positionwise_agreement", tr("lz_agree")]], fmtPct, [0, 1]),
+      line(tr("lz_c_speed", { p }), [["tokens_per_s", tr("lz_tps")], ["decode_tokens_per_s", tr("lz_dtps")]], (v) => fmt(v, 4)),
+      line(tr("lz_c_load", { p }), [["on_demand_loads", tr("lz_loads")], ["sync_ssd_loads", tr("lz_sync")], ["cluster_loads", tr("lz_cluster_loads")]], fmtCount),
+      line(tr("lz_c_rss", { p }), [["peak_rss_gb", tr("lz_rss")]], (v) => fmt(v, 3)))];
+}
+function panelLazy() {
+  const probes = lazyProbes();
+  if (!probes.length) return [h("div", { class: "empty", text: tr("lz_none") })];
+  const done = probes.filter((p) => Array.isArray(p.variants));
+  const last = probes[probes.length - 1];
+  const out = [];
+  if (last !== done[done.length - 1]) {
+    out.push(h("div", { class: "notice warn", role: "status" }, h("span", { class: "icon", text: "!" }),
+      h("span", { text: `${phaseName(last.phase)} · ${tr("step")} ${fmtInt(last.step)}: ${lazyStatus(last)}` })));
+  }
+  if (done.length) out.push(...lazyLatest(done[done.length - 1]), ...lazyHistory(done));
+  out.push(h("div", { class: "box card" }, h("h3", { text: tr("lz_all") }), table([
+    { label: tr("time"), key: "time", fmt: fmtTime }, { label: tr("phase"), key: "phase", fmt: phaseName },
+    { label: tr("step"), key: "step", num: true, fmt: fmtInt }, { label: tr("lz_status"), get: lazyStatus },
+    { label: tr("lz_variants_n"), num: true, get: (p) => (Array.isArray(p.variants) ? p.variants.length : null), fmt: fmtInt },
+    { label: tr("lz_res_hit"), num: true, fmt: fmtPct,
+      get: (p) => { const xs = (p.variants || []).map((v) => (v.measured || {}).resident_hit_rate).filter(isNum); return xs.length ? Math.min(...xs) : null; } },
+    { label: tr("lz_exact"), num: true, fmt: fmtPct,
+      get: (p) => { const xs = (p.variants || []).map((v) => (v.fidelity || {}).exact_match_rate).filter(isNum); return xs.length ? Math.min(...xs) : null; } },
+  ], probes.slice().reverse())));
+  return out;
+}
+
 // ---- checkpoints -----------------------------------------------------------------------------------------
 function panelCkpt() {
   const list = (S.snap && S.snap.checkpoints) || [];
@@ -968,7 +1128,7 @@ function panelCkpt() {
 
 // ---- render orchestration -----------------------------------------------------------------------------------
 const PANELS = { overview: panelOverview, loss: panelLoss, recurrent: panelRecurrent, routing: panelRouting, params: panelParams,
-  evals: panelEvals, config: panelConfig, log: panelLog, ckpt: panelCkpt };
+  evals: panelEvals, lazy: panelLazy, config: panelConfig, log: panelLog, ckpt: panelCkpt };
 function panelKey() {
   const snap = S.snap || {};
   if (S.tab === "params") return [snap.run, (snap.parameters || {}).step, S.tensors && S.tensors.step, S.tensorPick, (S.tensorHist || []).length, S.lang].join("|");
@@ -1002,7 +1162,7 @@ function renderFoot() {
 function renderAll(force) { renderChrome(); renderNotices(); renderProgress(); renderTiles(); renderPanel(force); renderFoot(); }
 
 // ---- wiring --------------------------------------------------------------------------------------------------
-function resetRunCaches() { S.params = S.tensors = S.tensorHist = S.log = null; S.tensorPick = null; S.paramsFor = S.tensorsFor = undefined; S.panelKey = null; S.phase = ""; }
+function resetRunCaches() { S.params = S.tensors = S.tensorHist = S.log = S.lazy = null; S.tensorPick = null; S.paramsFor = S.tensorsFor = undefined; S.panelKey = null; S.phase = ""; }
 function init() {
   $("run").addEventListener("change", (e) => { S.run = e.target.value; resetRunCaches(); refresh(); });
   $("lang").addEventListener("click", () => {

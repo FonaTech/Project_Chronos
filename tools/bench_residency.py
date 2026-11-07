@@ -13,7 +13,7 @@ Each prompt starts from the same cold store (the residency state is reset
 between modes), so SSD loads compare like with like.  Every number in the
 report is measured.
 
-    python tools/bench_residency.py --checkpoint path.pth --prompts flores.jsonl --device cpu --out r.json
+    python tools/bench_residency.py --checkpoint path.pth --prompts prompts.jsonl --device cpu --out r.json
 """
 from __future__ import annotations
 
@@ -54,7 +54,7 @@ def main(argv=None) -> int:
     ap.add_argument("--checkpoint", required=True)
     ap.add_argument("--prompts", required=True)
     ap.add_argument("--field", default="en")
-    ap.add_argument("--format", default="tags:<|en|>,<|zh|>")
+    ap.add_argument("--format", default="raw", help="raw | tags:<a>,<b> (wrap each prompt in two control tokens)")
     ap.add_argument("--eos", default="<|endoftext|>")
     ap.add_argument("--n", type=int, default=32)
     ap.add_argument("--max-new", type=int, default=96)

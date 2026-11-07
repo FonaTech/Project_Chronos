@@ -78,17 +78,3 @@ def fit_config(target_total: float, target_active: float, *, vocab_size: int,
     if best is None:
         raise ValueError("no valid configuration in the search space")
     return best
-
-
-ENZH_DEMO_BASE = dict(
-    architecture_version=3, num_hidden_layers=6, prelude_layers=1, coda_layers=1,
-    recurrent_depth=4, min_recurrent_depth=1, max_inference_depth=4,
-    recurrent_attention_mode="shared_first", adaptive_halting=True,
-    depth_schedule="fixed_then_adaptive", depth_schedule_warmup_fraction=0.3,
-    halting_threshold=0.95, num_experts_per_tok=2, num_shared_experts=1,
-    kv_latent_dim=128, rope_dim=32, rope_layout="per_head", sliding_window_size=128,
-    max_position_embeddings=1024,
-    layer_aware_lookahead=True, layer_aware_cache=True, lookahead_steps=2,
-    dropout=0.0, fallback_mask_prob=0.08, rope_theta=1e6,
-    bos_token_id=1, eos_token_id=2, tie_word_embeddings=True,
-)

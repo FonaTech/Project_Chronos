@@ -60,16 +60,21 @@ def write_examples(out_dir: str) -> None:
 
 
 LAUNCHER = """#!/bin/sh
-# Runs `chronos` with this bundle's settings (no git, no network needed).
+# Runs Chronos with this bundle's settings (no git, no network needed).
+# `bin/chronos bundle …` goes to the translation extension (`chronos-translate
+# bundle …`); every other command goes to the Chronos kernel CLI.
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 export CHRONOS_BUNDLE="${CHRONOS_BUNDLE:-$HERE}"
 export CHRONOS_MINIMIND_DIR="${CHRONOS_MINIMIND_DIR:-$HERE/third_party/minimind}"
-if [ -x "$HERE/.venv/bin/chronos" ]; then exec "$HERE/.venv/bin/chronos" "$@"; fi
-exec chronos "$@"
+BIN=chronos
+if [ "${1:-}" = bundle ]; then BIN=chronos-translate; fi
+if [ -x "$HERE/.venv/bin/$BIN" ]; then exec "$HERE/.venv/bin/$BIN" "$@"; fi
+exec "$BIN" "$@"
 """
 
 SETUP = """#!/bin/sh
-# One-time setup: a virtualenv in .venv with Chronos and its pinned extras.
+# One-time setup: a virtualenv in .venv with the Chronos kernel, the
+# translation extension (both from wheels/) and their pinned extras.
 set -eu
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 PY="${PYTHON:-python3}"
@@ -77,13 +82,15 @@ PY="${PYTHON:-python3}"
 [ -d "$HERE/.venv" ] || "$PY" -m venv "$HERE/.venv"
 . "$HERE/.venv/bin/activate"
 python -m pip install --upgrade pip
-EXTRAS="translate,serve"
+EXTRAS="serve"
 if [ "$(uname -s)" = Darwin ] && [ "$(uname -m)" = arm64 ]; then EXTRAS="$EXTRAS,mlx"; fi
-WHEEL="$(ls "$HERE"/wheels/*.whl 2>/dev/null | head -n 1 || true)"
-if [ -n "$WHEEL" ]; then
-  python -m pip install "$WHEEL[$EXTRAS]"
+KERNEL="$(ls "$HERE"/wheels/project_chronos-*.whl 2>/dev/null | head -n 1 || true)"
+EXT="$(ls "$HERE"/wheels/chronos_translate-*.whl 2>/dev/null | head -n 1 || true)"
+if [ -n "$KERNEL" ] && [ -n "$EXT" ]; then
+  python -m pip install "$KERNEL[$EXTRAS]" "$EXT"
 else
-  echo "no wheel in wheels/: install Chronos from source with  pip install -e '<repo>[$EXTRAS]'" >&2
+  echo "wheels/ needs project_chronos-*.whl and chronos_translate-*.whl; from a source tree use" >&2
+  echo "  pip install -e '<repo>[$EXTRAS]' -e '<repo>/demos/translation'" >&2
   exit 1
 fi
 "$HERE/bin/chronos" bundle check
@@ -147,7 +154,7 @@ def _readme_en(m: dict, recs: dict) -> str:
         "## Quick start", "",
         "```sh",
         "tar xzf " + m["name"] + ".tar.gz && cd " + m["name"],
-        "sh bin/setup.sh                      # .venv + pinned extras + `chronos bundle check`",
+        "sh bin/setup.sh                      # .venv + pinned extras + `bin/chronos bundle check`",
         "bin/chronos bundle translate \"The weather is very nice today.\"",
         "bin/chronos bundle translate --direction zh_en \"今天天气很好。\"",
         "bin/chronos bundle translate --file examples/translate_en.txt",
@@ -166,7 +173,7 @@ def _readme_en(m: dict, recs: dict) -> str:
         "The page counts are printed to stderr.", "",
         "`bin/chronos` sets `CHRONOS_BUNDLE` and `CHRONOS_MINIMIND_DIR` (the vendored minimind in "
         "`third_party/`), so nothing is fetched from the network. Without `bin/`, export both variables and call "
-        "`chronos bundle …` directly.", "",
+        "`chronos-translate bundle …` directly.", "",
         "## Next stage: SFT (fine-tuning) on Apple silicon (MLX)", "",
         "```sh",
         "# 1. your pairs: .jsonl {\"en\":…, \"zh\":…} | .csv | .tsv | .parquet",
@@ -181,7 +188,7 @@ def _readme_en(m: dict, recs: dict) -> str:
         "`--mode sft` (default) trains the chat prompt `<|im_start|>user\\n翻译成中文，只输出译文：\\n…`; "
         "`--mode pretrain` continues pretraining on new text; `--mode pretrain+sft` does both (40/60 time split). "
         "Monitor a run with `bin/chronos monitor --runs-dir work`. The fine-tuned checkpoint lands in "
-        "`work/run/*_ft_sft.best.pth`; rebuild a bundle from it with `chronos bundle build --run-dir work/run "
+        "`work/run/*_ft_sft.best.pth`; rebuild a bundle from it with `chronos-translate bundle build --run-dir work/run "
         "--phase sft`.", "",
         "Fine-tuning trains with the expert-cluster locality constraint by default, so the result can be paged "
         "by cluster at inference (`--no-cluster-locality` turns it off). Defaults: `--lambda-cluster 0.3` (from "
@@ -258,7 +265,7 @@ def _readme_zh(m: dict, recs: dict) -> str:
         "可用 `--decay`、`--ram-ratio`、`--decode-wait`、`--verify-wait` 调整，默认值见 `--help`。"
         "页读取统计打印到 stderr。", "",
         "`bin/chronos` 会设置 `CHRONOS_BUNDLE` 和 `CHRONOS_MINIMIND_DIR`（指向 `third_party/` 里随包附带的 minimind），"
-        "全程不需要联网。不用 `bin/` 时，手动导出这两个变量后直接调用 `chronos bundle …`。", "",
+        "全程不需要联网。不用 `bin/` 时，手动导出这两个变量后直接调用 `chronos-translate bundle …`。", "",
         "## 下一阶段：SFT 微调（Apple silicon / MLX）", "",
         "```sh",
         "# 1. 准备平行语料：.jsonl {\"en\":…, \"zh\":…} | .csv | .tsv | .parquet",
@@ -273,7 +280,7 @@ def _readme_zh(m: dict, recs: dict) -> str:
         "`--mode sft`（默认）训练对话格式 `<|im_start|>user\\n翻译成中文，只输出译文：\\n…`；"
         "`--mode pretrain` 在新文本上继续预训练；`--mode pretrain+sft` 两者都做（时间按 40/60 分配）。"
         "用 `bin/chronos monitor --runs-dir work` 监控训练。微调后的检查点在 `work/run/*_ft_sft.best.pth`，"
-        "可用 `chronos bundle build --run-dir work/run --phase sft` 重新打包。", "",
+        "可用 `chronos-translate bundle build --run-dir work/run --phase sft` 重新打包。", "",
         "微调默认带专家簇局部性约束训练，这样得到的模型在推理时可以按簇分页（`--no-cluster-locality` 关闭）。"
         "默认值：`--lambda-cluster 0.3`（来自合成任务上从头训练的实测扫描，对微调的效果尚未实测）；"
         "`--cluster-window` 取最接近你数据中位 SFT 记录长度的 2 的幂。spec 中记录了每个值的来源"

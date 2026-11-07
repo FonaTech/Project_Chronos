@@ -3,8 +3,8 @@
 The stock ``ollama`` CLI and any Ollama/OpenAI client can talk to the native
 Chronos runtime by pointing at this server::
 
-    chronos serve --models-dir runs/enzh_50m_v1 --port 11435
-    OLLAMA_HOST=127.0.0.1:11435 ollama run chronos_enzh_sft "Hello world"
+    chronos serve --models-dir runs/my_run --port 11435
+    OLLAMA_HOST=127.0.0.1:11435 ollama run chronos_sft "Hello world"
 
 The kernel is never converted to another architecture: recurrent depth,
 SSD-lazy experts with lookahead prefetch, compressed KV and self-speculative
