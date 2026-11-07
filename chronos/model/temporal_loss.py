@@ -1,3 +1,5 @@
+import math
+
 import torch
 import torch.nn.functional as F
 
@@ -63,6 +65,80 @@ def router_locality_loss(
     target_mask = F.one_hot(target_ids, num_classes=E).sum(dim=-2).to(cur.dtype)
     overlap_mass = (cur * target_mask).sum(dim=-1).clamp_min(1e-9)
     return (-torch.log(overlap_mass / float(top_k))).mean()
+
+
+def _window_cluster_mass(router_4d: torch.Tensor, membership: torch.Tensor, window: int):
+    """``[W, C]``: routing mass per cluster for each window (tokens × every dispatch)."""
+    B, S, V, E = router_4d.shape
+    C = int(membership.shape[1])
+    w = S if int(window or 0) <= 0 else min(int(window), S)
+    n = S // w
+    if n <= 0 or C <= 1:
+        return None
+    mass = torch.einsum("bsve,ec->bsvc", router_4d.float(), membership.to(router_4d.device, torch.float32))
+    return mass[:, : n * w].reshape(B, n, w, V, C).mean(dim=(2, 3)).reshape(B * n, C)
+
+
+def _entropy(p: torch.Tensor) -> torch.Tensor:
+    p = p.clamp_min(1e-9)
+    return -(p * p.log()).sum(dim=-1)
+
+
+def cluster_locality_loss(
+    router_4d: torch.Tensor,
+    membership: torch.Tensor,
+    window: int = 0,
+) -> torch.Tensor:
+    """Cluster-locality constraint over a stream and its recurrent iterations.
+
+    ``router_4d`` is ``[B, S, V, E]``: every MoE dispatch (V = virtual layers,
+    so a recurrent group contributes one slice per loop iteration).
+    ``membership`` is the ``[E, C]`` one-hot expert→cluster map that the lazy
+    store pages by.  For each window of ``window`` tokens (0 = the whole
+    sequence) the routing mass per cluster is averaged over its tokens *and*
+    all its dispatches, giving ``p_w``.  The loss is
+
+        1 − I(window; cluster) / log C,   I = H(mean_w p_w) − mean_w H(p_w)
+
+    Low ``H(p_w)`` keeps a stream, across tokens, layers and loop
+    iterations, inside few clusters: the pages one cluster read serves.
+    High ``H(mean_w p_w)`` spreads different windows over different
+    clusters, so experts specialise per stream instead of collapsing onto
+    one cluster.  Range ``[0, 1]``; one window in the batch gives no signal.
+    """
+    if router_4d is None or router_4d.dim() != 4:
+        return torch.tensor(0.0)
+    pw = _window_cluster_mass(router_4d, membership, window)
+    if pw is None:
+        return router_4d.new_zeros(())
+    log_c = math.log(int(membership.shape[1]))
+    mutual = _entropy(pw.mean(dim=0)) - _entropy(pw).mean()
+    return 1.0 - mutual / log_c
+
+
+def cluster_routing_metrics(router_4d: torch.Tensor, membership: torch.Tensor, top_k: int,
+                            window: int = 0) -> dict[str, float]:
+    """Detached diagnostics of the cluster constraint (normalised entropies, clusters touched)."""
+    if router_4d is None or router_4d.dim() != 4:
+        return {}
+    with torch.no_grad():
+        B, S, V, E = router_4d.shape
+        C = int(membership.shape[1])
+        w = S if int(window or 0) <= 0 else min(int(window), S)
+        n = S // w
+        pw = _window_cluster_mass(router_4d, membership, window)
+        if pw is None:
+            return {}
+        log_c = math.log(C)
+        k = max(1, min(int(top_k), E))
+        cid = membership.to(router_4d.device).argmax(dim=-1)[router_4d.float().topk(k, dim=-1).indices]
+        hit = torch.zeros(B, S, V, C, device=router_4d.device).scatter_(-1, cid, 1.0)
+        touched = hit[:, : n * w].reshape(B, n, w * V, C).amax(dim=2).sum(dim=-1)
+        return {
+            "cluster_window_entropy": float(_entropy(pw).mean() / log_c),
+            "cluster_marginal_entropy": float(_entropy(pw.mean(dim=0)) / log_c),
+            "clusters_per_window": float(touched.mean()),
+        }
 
 
 def router_offload_metrics(

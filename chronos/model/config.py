@@ -195,6 +195,19 @@ class ChronosConfig(MiniMindConfig):
         self.lambda_lookahead_topk: float = kwargs.pop("lambda_lookahead_topk", 0.15)
         self.lambda_lookahead_union: float = kwargs.pop("lambda_lookahead_union", 0.05)
         self.lambda_router_locality: float = kwargs.pop("lambda_router_locality", 0.02)
+        # Cluster-locality constraint: within each ``cluster_locality_window``
+        # tokens (0 = whole sequence) and each virtual layer (every loop
+        # iteration), push routing mass into few expert clusters.  The
+        # partition is ``chronos.expert_clusters.training_clusters`` and is the
+        # one lazy inference pages by (``inference_clusters``: automatic when
+        # λ > 0).  The class default stays 0 so a stored recipe or checkpoint
+        # that predates the field keeps its training objective; every entry
+        # point that creates a new training config (planner, presets, CLI,
+        # bundle finetune) turns it on at the measured
+        # ``chronos.expert_clusters.DEFAULT_LAMBDA``.
+        self.lambda_cluster_locality: float = kwargs.pop("lambda_cluster_locality", 0.0)
+        self.cluster_locality_clusters: int = kwargs.pop("cluster_locality_clusters", 0)
+        self.cluster_locality_window: int = kwargs.pop("cluster_locality_window", 32)
         # M4: weight on the router KL anchor (alignment stages only).
         # Prevents SFT/DPO/ORPO/GRPO gradients from drifting routing away
         # from the pretrained distribution that the cluster layout was

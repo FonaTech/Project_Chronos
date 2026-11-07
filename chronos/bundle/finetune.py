@@ -102,14 +102,20 @@ def _check_shards(shards_dir: str, phases: list[dict]) -> None:
 
 
 def write_finetune_spec(bundle_dir: str, shards_dir: str, run_dir: str, *, tier: str = "quick", mode: str = "sft",
-                        budget_hours: float | None = None, seed: int | None = None) -> str:
-    """Write ``<run_dir>/finetune_spec.json`` for ``chronos longrun --spec``."""
+                        budget_hours: float | None = None, seed: int | None = None, cluster_locality: bool = True,
+                        lambda_cluster: float | None = None, cluster_window: int | None = None,
+                        clusters: int | None = None) -> str:
+    """Write ``<run_dir>/finetune_spec.json`` for ``chronos longrun --spec``.
+
+    The expert-cluster locality constraint is on by default; see
+    ``recommend.cluster_locality_config`` for the defaults and their sources."""
     from .recommend import longrun_spec
     bundle_dir = os.path.abspath(bundle_dir)
     with open(os.path.join(bundle_dir, "recipes", "source_run_spec.json"), encoding="utf-8") as fh:
         recipe = json.load(fh)
     spec = longrun_spec(bundle_dir, recipe, run_dir=run_dir, shards_dir=shards_dir, tier=tier, mode=mode,
-                        budget_hours=budget_hours, seed=seed)
+                        budget_hours=budget_hours, seed=seed, cluster_locality=cluster_locality,
+                        lambda_cluster=lambda_cluster, cluster_window=cluster_window, clusters=clusters)
     _check_shards(spec["shards_dir"], spec["phases"])
     os.makedirs(spec["run_dir"], exist_ok=True)
     path = os.path.join(spec["run_dir"], "finetune_spec.json")

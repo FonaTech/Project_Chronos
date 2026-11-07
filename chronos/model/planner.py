@@ -73,6 +73,7 @@ class DatasetProfile:
     chars_per_token: float | None = None
     seq_p95_tokens: int | None = None                  # sampled records (estimated)
     seq_cap_tokens: int | None = None                  # exact cap from a shard manifest
+    seq_median_tokens: float | None = None             # sampled records (estimated)
     vocab_size: int | None = None
     tokenizer_dir: str = ""
     notes: list = field(default_factory=list)
@@ -224,7 +225,8 @@ def profile_datasets(paths, *, max_files: int = 64) -> DatasetProfile:
         prof.seq_p95_tokens = int(math.ceil(tok_lens[int(0.95 * (len(tok_lens) - 1))]))
         total_tok = sum(tok_lens)
         prof.chars_per_token = round(chars / total_tok, 3) if total_tok else None
-        prof.notes.append(f"median record ≈ {statistics.median(tok_lens):.0f} tokens (estimated)")
+        prof.seq_median_tokens = float(statistics.median(tok_lens))
+        prof.notes.append(f"median record ≈ {prof.seq_median_tokens:.0f} tokens (estimated)")
     return prof
 
 
@@ -557,6 +559,16 @@ def plan_training(req: PlanRequest, profile: DatasetProfile | None = None, *, ve
     # SWA window: the typical record must fit; long documents use MLA layers.
     window = min(seq_len, max(128, 1 << int(math.ceil(math.log2(max(2, p95 // 4)))))) if p95 \
         else max(128, seq_len // 4)
+    # Cluster-locality training (on for MoE): measured default strength, window
+    # = one record (stream segment); C = ⌈E/2k⌉ is resolved from the topology.
+    from chronos.expert_clusters import DEFAULT_LAMBDA, recommended_window
+    cluster_lambda = DEFAULT_LAMBDA if req.use_moe and arch.num_experts > 2 * arch.num_experts_per_tok else 0.0
+    cluster_window = recommended_window(prof.seq_median_tokens, seq_len)
+    sources["lambda_cluster_locality"] = (
+        "measured sweep, tools/bench_cluster_locality.py (smallest λ on the plateau)" if cluster_lambda
+        else "off: dense model or fewer than two clusters")
+    sources["cluster_locality_window"] = (
+        "median record length (estimated)" if prof.seq_median_tokens else "default (no record lengths sampled)")
     per_expert_bytes = 3 * h * arch.ffn_width * 2                # bf16 page
     expert_mb = routed * 2 / 2**20
     ram_budget = None if policy["ram_fraction"] >= 1 or not req.use_moe else \
@@ -580,6 +592,7 @@ def plan_training(req: PlanRequest, profile: DatasetProfile | None = None, *, ve
         ponder_loss_coef=3e-3, recurrent_distill_coef=0.05, recurrent_stability_coef=1e-3,
         lambda_balance=5e-3 if req.use_moe else 0.0, lambda_temporal=1e-3, lambda_lookahead=0.1,
         lambda_lookahead_topk=0.05, fallback_mask_prob=0.08 if req.use_moe else 0.0, dropout=0.0,
+        lambda_cluster_locality=cluster_lambda, cluster_locality_clusters=0, cluster_locality_window=cluster_window,
         kv_cache_dtype=policy["kv_cache_dtype"], mla_cache_rope=policy["mla_cache_rope"],
         router_scope=policy["router_scope"], ram_budget_mb=ram_budget,
         activation_checkpointing=policy["activation_checkpointing"], optimizer_paging=policy["optimizer_paging"],

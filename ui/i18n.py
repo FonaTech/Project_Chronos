@@ -166,6 +166,9 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "config.lambda_la":      "λ 前瞻监督",
         "config.lambda_anchor":  "λ 路由锚点",
         "config.fallback_mask":  "专家冷缺失模拟概率",
+        "config.lambda_cluster": "λ 专家簇局部性（0 = 关闭；推荐 0.3）",
+        "config.cluster_count":  "专家簇数（0 = 自动 ⌈E/2k⌉）",
+        "config.cluster_window": "簇局部性窗口 token 数（0 = 整条序列；推荐 ≈ 单条记录长度）",
         "config.storage_format": "存储格式",
         "config.cpu_threads":    "CPU 线程数 (auto = CPU 后端默认 100% 物理核心)",
         "config.cpu_budget_percent": "CPU 资源比例 (%)",
@@ -343,6 +346,9 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "config.lambda_la":      "λ 前瞻監督",
         "config.lambda_anchor":  "λ 路由錨點",
         "config.fallback_mask":  "專家冷缺失模擬概率",
+        "config.lambda_cluster": "λ 專家簇局部性（0 = 關閉；建議 0.3）",
+        "config.cluster_count":  "專家簇數（0 = 自動 ⌈E/2k⌉）",
+        "config.cluster_window": "簇局部性視窗 token 數（0 = 整條序列；建議 ≈ 單筆記錄長度）",
         "config.storage_format": "儲存格式",
         "config.cpu_threads":    "CPU 執行緒數 (auto = CPU 後端預設 100% 物理核心)",
         "config.cpu_budget_percent": "CPU 資源比例 (%)",
@@ -519,6 +525,9 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "config.tie_emb":        "tie_word_embeddings",
         "config.lambda_la":      "λ lookahead",
         "config.lambda_anchor":  "λ router-anchor",
+        "config.lambda_cluster": "λ expert-cluster locality (0 = off; recommended 0.3)",
+        "config.cluster_count":  "Expert clusters (0 = auto ⌈E/2k⌉)",
+        "config.cluster_window": "Cluster-locality window in tokens (0 = whole sequence; recommended ≈ one record)",
         "config.fallback_mask":  "Expert miss simulation probability",
         "config.storage_format": "storage_format",
         "config.cpu_threads":    "CPU threads (auto = 100% physical cores for CPU backend)",
@@ -696,6 +705,9 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "config.tie_emb":        "重み共有",
         "config.lambda_la":      "λ 先読み監督",
         "config.lambda_anchor":  "λ ルータアンカー",
+        "config.lambda_cluster": "λ エキスパートクラスタ局所性（0 = 無効、推奨 0.3）",
+        "config.cluster_count":  "エキスパートクラスタ数（0 = 自動 ⌈E/2k⌉）",
+        "config.cluster_window": "クラスタ局所性ウィンドウ（トークン数、0 = 系列全体、推奨 ≈ 1 レコード長）",
         "config.fallback_mask":  "Expert miss simulation probability",
         "config.storage_format": "保存形式",
         "config.cpu_threads":    "CPU スレッド数 (auto = CPU バックエンドでは物理コアの 100%)",
@@ -925,6 +937,26 @@ _MONITOR_TRANSLATIONS: Dict[str, Dict[str, str]] = {
 }
 _MONITOR_GENERIC_EVALS: Dict[str, Dict[str, str]] = {'zh-Hans': {'monitor.eval_metric': '评测指标（从日志自动发现）', 'monitor.eval_note': '这里显示训练器在验证时实际记录的指标，按指标名分组（BLEU、accuracy、reward …），不预设任务类型。没有任务指标的运行只显示验证 CE。', 'monitor.sample_input': '输入', 'monitor.sample_ref': '参考', 'monitor.sample_output': '输出'}, 'en': {'monitor.eval_metric': 'Evaluation metric (discovered from the logs)', 'monitor.eval_note': 'Shows the metrics the trainer actually logged at validation, grouped by metric name (BLEU, accuracy, reward …); no task type is assumed. Runs without task metrics show validation CE only.', 'monitor.sample_input': 'Input', 'monitor.sample_ref': 'Reference', 'monitor.sample_output': 'Output'}, 'zh-Hant': {'monitor.eval_metric': '評測指標（從日誌自動發現）', 'monitor.eval_note': '這裡顯示訓練器在驗證時實際記錄的指標，按指標名分組（BLEU、accuracy、reward …），不預設任務類型。沒有任務指標的執行只顯示驗證 CE。', 'monitor.sample_input': '輸入', 'monitor.sample_ref': '參考', 'monitor.sample_output': '輸出'}, 'ja': {'monitor.eval_metric': '評価指標（ログから自動検出）', 'monitor.eval_note': '学習器が検証時に実際に記録した指標を、指標名ごと（BLEU・accuracy・reward …）にまとめて表示します。タスクの種類は仮定しません。タスク指標のないランは検証 CE のみを表示します。', 'monitor.sample_input': '入力', 'monitor.sample_ref': '参照', 'monitor.sample_output': '出力'}}
 _INFER_SPECULATIVE: Dict[str, Dict[str, str]] = {'zh-Hans': {'infer.speculative': '自推测解码（循环深度草稿）', 'infer.draft_depth': '草稿深度（循环次数）', 'infer.spec_gamma': '每轮草稿 token 数 γ（自适应，上限 8）', 'infer.spec_note': '自推测：用较浅的循环深度连续起草 γ 个 token，再用全深度一次前向批量校验。不需要额外权重；贪心输出与普通贪心逐 token 一致，采样用拒绝采样保持全深度分布。`per_iteration` 或非循环模型会自动退回普通解码。草稿深度 ≥ 全深度时等同普通解码。统计表会显示接受率与每次校验产出的 token 数。'}, 'zh-Hant': {'infer.speculative': '自推測解碼（循環深度草稿）', 'infer.draft_depth': '草稿深度（循環次數）', 'infer.spec_gamma': '每輪草稿 token 數 γ（自適應，上限 8）', 'infer.spec_note': '自推測：用較淺的循環深度連續起草 γ 個 token，再用全深度一次前向批次校驗。不需要額外權重；貪婪輸出與一般貪婪逐 token 一致，取樣用拒絕取樣保持全深度分布。`per_iteration` 或非循環模型會自動退回一般解碼。草稿深度 ≥ 全深度時等同一般解碼。統計表會顯示接受率與每次校驗產出的 token 數。'}, 'en': {'infer.speculative': 'Self-speculative decoding (recurrent-depth draft)', 'infer.draft_depth': 'Draft depth (loop iterations)', 'infer.spec_gamma': 'Draft tokens per round γ (adaptive, max 8)', 'infer.spec_note': 'Self-speculative: draft γ tokens at a shallow recurrent depth, then verify them in one full-depth forward. No extra weights; greedy output is token-for-token identical to plain greedy, and sampling uses rejection sampling to keep the full-depth distribution. `per_iteration` or non-recurrent models fall back to plain decoding, and so does a draft depth ≥ the full depth. The stats table shows the acceptance rate and tokens per verify.'}, 'ja': {'infer.speculative': '自己投機デコード（再帰深度ドラフト）', 'infer.draft_depth': 'ドラフト深度（ループ回数）', 'infer.spec_gamma': '1 ラウンドのドラフト token 数 γ（適応、上限 8）', 'infer.spec_note': '自己投機：浅い再帰深度で γ 個の token を連続ドラフトし、全深度の 1 回のフォワードでまとめて検証します。追加の重みは不要です。貪欲出力は通常の貪欲出力と token 単位で一致し、サンプリングは棄却サンプリングで全深度の分布を保ちます。`per_iteration` や非再帰モデル、ドラフト深度 ≥ 全深度の場合は通常デコードに戻ります。統計表に受理率と検証 1 回あたりの token 数を表示します。'}}
+_INFER_SPECULATIVE['zh-Hans']['infer.residency_planner'] = '专家驻留规划（按下一次使用驱逐 + 草稿队列预取，仅 MLX 懒加载）'
+_INFER_SPECULATIVE['zh-Hant']['infer.residency_planner'] = '專家駐留規劃（按下一次使用驅逐 + 草稿佇列預取，僅 MLX 懶載入）'
+_INFER_SPECULATIVE['en']['infer.residency_planner'] = 'Expert residency planner (next-use eviction + draft-queue prefetch, MLX lazy only)'
+_INFER_SPECULATIVE['ja']['infer.residency_planner'] = 'エキスパート常駐計画（次回使用順の退避 + ドラフトキュー先読み、MLX 遅延ロードのみ）'
+_INFER_SPECULATIVE['zh-Hans']['infer.paging'] = '专家分页方式（auto = 按模型训练方式自动选择）'
+_INFER_SPECULATIVE['zh-Hans']['infer.residency_decay'] = '驻留规划衰减（0–0.95，推荐 0.7）'
+_INFER_SPECULATIVE['zh-Hans']['infer.decode_wait'] = '解码前等待预取（秒，推荐 0.012）'
+_INFER_SPECULATIVE['zh-Hans']['infer.verify_wait'] = '校验前等待预取（秒，推荐 0.02）'
+_INFER_SPECULATIVE['zh-Hant']['infer.paging'] = '專家分頁方式（auto = 依模型訓練方式自動選擇）'
+_INFER_SPECULATIVE['zh-Hant']['infer.residency_decay'] = '駐留規劃衰減（0–0.95，建議 0.7）'
+_INFER_SPECULATIVE['zh-Hant']['infer.decode_wait'] = '解碼前等待預取（秒，建議 0.012）'
+_INFER_SPECULATIVE['zh-Hant']['infer.verify_wait'] = '校驗前等待預取（秒，建議 0.02）'
+_INFER_SPECULATIVE['en']['infer.paging'] = 'Expert paging (auto = follow how the model was trained)'
+_INFER_SPECULATIVE['en']['infer.residency_decay'] = 'Residency planner decay (0–0.95, recommended 0.7)'
+_INFER_SPECULATIVE['en']['infer.decode_wait'] = 'Prefetch wait before a decode step (s, recommended 0.012)'
+_INFER_SPECULATIVE['en']['infer.verify_wait'] = 'Prefetch wait before a verify step (s, recommended 0.02)'
+_INFER_SPECULATIVE['ja']['infer.paging'] = 'エキスパートのページング（auto = 学習方法に合わせて自動選択）'
+_INFER_SPECULATIVE['ja']['infer.residency_decay'] = '常駐計画の減衰（0–0.95、推奨 0.7）'
+_INFER_SPECULATIVE['ja']['infer.decode_wait'] = 'デコード前の先読み待ち（秒、推奨 0.012）'
+_INFER_SPECULATIVE['ja']['infer.verify_wait'] = '検証前の先読み待ち（秒、推奨 0.02）'
 for _lang, _entries in _INFER_SPECULATIVE.items():
     TRANSLATIONS[_lang].update(_entries)
 for _lang, _entries in _MONITOR_GENERIC_EVALS.items():

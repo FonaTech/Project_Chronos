@@ -891,8 +891,9 @@ def test_torch_inference_loads_base_only_before_lazy_setup():
         def __init__(self, _model, _cfg, ssd_dir=None):
             pass
 
-        def setup_from_state_dict(self, state, warm_expert_ids=None):
+        def setup_from_state_dict(self, state, warm_expert_ids=None, clusters=None):
             captured["setup_keys"] = sorted(state.keys())
+            captured["clusters"] = clusters
 
         def setup(self, warm_expert_ids=None):
             captured["setup_called"] = True
@@ -930,6 +931,8 @@ def test_torch_inference_loads_base_only_before_lazy_setup():
     assert captured["strict"] is False
     assert captured["loaded_keys"] == ["model.embed_tokens.weight"]
     assert any(".mlp.experts." in key for key in captured["setup_keys"])
+    assert captured["clusters"] is None                     # trained without cluster locality: per-expert pages
+    assert stats["paging_resolved"] == "expert"
     assert captured["teardown"] is True
 
 

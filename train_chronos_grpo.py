@@ -41,6 +41,8 @@ def main():
     p.add_argument("--lambda_lookahead_topk", type=float, default=None)
     p.add_argument("--lambda_lookahead_union", type=float, default=None)
     p.add_argument("--lambda_router_locality", type=float, default=None)
+    p.add_argument("--lambda_cluster_locality", type=float, default=None)
+    p.add_argument("--cluster_locality_window", type=int, default=None)
     p.add_argument("--fallback_mask_prob", type=float, default=0.02)
     p.add_argument("--beta", type=float, default=0.04, help="KL penalty weight")
     p.add_argument("--lambda_router_anchor", type=float, default=0.1)

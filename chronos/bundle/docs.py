@@ -157,6 +157,13 @@ def _readme_en(m: dict, recs: dict) -> str:
         "`--speculative` (recurrent-depth self-speculative decoding) gives the same greedy output as plain "
         "decoding and reports its acceptance rate on stderr. It needs `--repetition-penalty 1.0`, its default. "
         "On CPU at this model size it was measured slower than plain decoding.", "",
+        "`--lazy-experts` (MLX) keeps only the trunk in memory and pages the routed experts from an SSD cache "
+        "(`~/.cache/chronos/expert_cache`, or `$CHRONOS_EXPERT_CACHE`). The greedy output is the same. The page "
+        "layout adapts to the weights: one file per expert cluster when the model was trained with the "
+        "cluster-locality constraint, one per expert otherwise (`--paging auto|cluster|expert`). "
+        "`--residency planned` (default) evicts the page needed latest; `window` keeps LRU order. "
+        "`--decay`, `--ram-ratio`, `--decode-wait` and `--verify-wait` tune it; `--help` lists the defaults. "
+        "The page counts are printed to stderr.", "",
         "`bin/chronos` sets `CHRONOS_BUNDLE` and `CHRONOS_MINIMIND_DIR` (the vendored minimind in "
         "`third_party/`), so nothing is fetched from the network. Without `bin/`, export both variables and call "
         "`chronos bundle …` directly.", "",
@@ -176,6 +183,12 @@ def _readme_en(m: dict, recs: dict) -> str:
         "Monitor a run with `bin/chronos monitor --runs-dir work`. The fine-tuned checkpoint lands in "
         "`work/run/*_ft_sft.best.pth`; rebuild a bundle from it with `chronos bundle build --run-dir work/run "
         "--phase sft`.", "",
+        "Fine-tuning trains with the expert-cluster locality constraint by default, so the result can be paged "
+        "by cluster at inference (`--no-cluster-locality` turns it off). Defaults: `--lambda-cluster 0.3` (from "
+        "a measured sweep on a synthetic task with from-scratch training; its effect on a fine-tune has not "
+        "been measured) and `--cluster-window` = the power of two nearest the median SFT record length of "
+        "your data. The spec records where each value came from (`extra.cluster_locality_source`). Models "
+        "with fewer than two clusters (E ≤ 2k) train without it.", "",
         "Tiers (from `recommended.json`; every value is labelled with its source):", "",
         "| Tier | Hours | SFT peak LR | Tokens / step | Warmup | Use |", "|---|---|---|---|---|---|",
         *_tier_rows(recs), "",
@@ -238,6 +251,12 @@ def _readme_zh(m: dict, recs: dict) -> str:
         "```", "",
         "`--speculative`（循环深度自推测解码）的 greedy 输出与普通解码一致，接受率打印到 stderr。"
         "它要求 `--repetition-penalty 1.0`（此时的默认值）。在这个规模的模型上用 CPU 实测，它比普通解码慢。", "",
+        "`--lazy-experts`（MLX）只把主干留在内存里，路由专家从 SSD 缓存按需分页加载"
+        "（`~/.cache/chronos/expert_cache`，或 `$CHRONOS_EXPERT_CACHE`），greedy 输出不变。分页方式按权重自适应："
+        "模型训练时开了专家簇局部性约束就按簇读文件，否则按单个专家读（`--paging auto|cluster|expert`）。"
+        "`--residency planned`（默认）优先淘汰最晚才会用到的页，`window` 保持 LRU 顺序。"
+        "可用 `--decay`、`--ram-ratio`、`--decode-wait`、`--verify-wait` 调整，默认值见 `--help`。"
+        "页读取统计打印到 stderr。", "",
         "`bin/chronos` 会设置 `CHRONOS_BUNDLE` 和 `CHRONOS_MINIMIND_DIR`（指向 `third_party/` 里随包附带的 minimind），"
         "全程不需要联网。不用 `bin/` 时，手动导出这两个变量后直接调用 `chronos bundle …`。", "",
         "## 下一阶段：SFT 微调（Apple silicon / MLX）", "",
@@ -255,6 +274,10 @@ def _readme_zh(m: dict, recs: dict) -> str:
         "`--mode pretrain` 在新文本上继续预训练；`--mode pretrain+sft` 两者都做（时间按 40/60 分配）。"
         "用 `bin/chronos monitor --runs-dir work` 监控训练。微调后的检查点在 `work/run/*_ft_sft.best.pth`，"
         "可用 `chronos bundle build --run-dir work/run --phase sft` 重新打包。", "",
+        "微调默认带专家簇局部性约束训练，这样得到的模型在推理时可以按簇分页（`--no-cluster-locality` 关闭）。"
+        "默认值：`--lambda-cluster 0.3`（来自合成任务上从头训练的实测扫描，对微调的效果尚未实测）；"
+        "`--cluster-window` 取最接近你数据中位 SFT 记录长度的 2 的幂。spec 中记录了每个值的来源"
+        "（`extra.cluster_locality_source`）。簇数少于 2（E ≤ 2k）的模型不加这项约束。", "",
         "档位（来自 `recommended.json`，每个数值都标注了来源）：", "",
         "| 档位 | 小时 | SFT 峰值 LR | 每步 token | Warmup | 用途 |", "|---|---|---|---|---|---|",
         *_tier_rows(recs), "",

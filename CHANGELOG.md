@@ -1,5 +1,46 @@
 # Changelog
 
+## [Unreleased]
+
+## [0.3.1a0] — 2026-11-07 (beta)
+
+Core half of 0.3.1: cluster-locality training on by default, inference that
+adapts its expert paging to how the checkpoint was trained, and lazy experts in
+the bundle. The rewritten Web UI follows in 0.3.1a1.
+
+### Changed
+- Cluster locality is on by default for new training: `train_chronos*.py --lambda_cluster_locality` defaults to 0.3, the planner and presets set λ = 0.3 for MoE models with more than 2k experts, and the window follows the data (`recommended_window`: power of two nearest the median SFT record, clamped to [16, seq_len]; 32 without record lengths). The `ChronosConfig` class default stays 0.0, so a stored recipe without the field keeps its original objective on resume, and checkpoints written before the field existed load as λ = 0. The λ = 0.3 default comes from the synthetic sweep below (from-scratch training); its effect on real data and on fine-tuning has not been measured.
+- Lazy-expert inference picks its page layout from the checkpoint (`paging="auto"`): weights trained with λ > 0 are paged one training cluster per SSD read, other weights one expert per read. `paging="cluster"|"expert"` forces a layout. The layout is part of the expert-cache directory name (`…_mlx_c2`, `…_c2`), so a cache written for one layout is never reused for the other. Per-expert cache names are unchanged.
+
+### Added
+- `chronos/lazy_experts.py`: one lazy-expert implementation for the Web UI, bundle and server — `LazyOptions` (paging, residency, decay, decode/verify waits, RAM ratio; validated), `page_layout`, `checkpoint_cache_dir`, the expert budget, and `build_mlx_lazy_engine` (trunk only in memory, cache built or reused).
+- Torch offload writes cluster layouts as `cluster_<c>.ctsr` files with a v2 manifest (`ClusterStorage.write_clusters_from_states`); `setup_from_state_dict/_reader(clusters=…)`.
+- MLX `generate(decode_wait_s=0.012, verify_wait_s=0.02, repetition_penalty=1.0)`. The penalty uses the CTRL rule and is rejected together with `speculative=True`, which needs penalty 1.0 to stay exact.
+- `chronos bundle translate|eval --lazy-experts` with `--paging`, `--residency`, `--decay`, `--ram-ratio`, `--decode-wait`, `--verify-wait`. The cache lives outside the bundle (`$CHRONOS_EXPERT_CACHE`, default `~/.cache/chronos/expert_cache`); `eval` also gains `--backend` and `--dtype`.
+- `chronos bundle finetune --[no-]cluster-locality --lambda-cluster --cluster-window --clusters` (on by default; dense models and models with fewer than two clusters stay off). The spec records where each value came from (`extra.cluster_locality_source`); the window comes from the median SFT record length of `--data`.
+- `chronos serve --paging auto|cluster|expert`; `/api/ps` metadata reports the resolved layout.
+- Web UI Inference tab: paging, planner decay and the two prefetch waits, with four-language labels.
+
+- Next-use residency planning for lazy MLX experts (`chronos/residency_planner.py`, `generate(residency="planned")`). The planner records the page-access trace of every forward, keyed by (layer, loop iteration). The previous forward of the same kind, and in speculative decoding the queue of draft traces since the last verify, then predicts when each page is needed next. The store evicts the page needed latest (`MLXExpertStore.set_eviction_ranker`). The running dispatch's pending experts are never evicted. Pages needed early are prefetched only into spare slots. Greedy output is unchanged. The Web UI Inference tab has a switch for it, on by default (MLX lazy only); the stats table shows the eviction policy.
+- Cluster-locality training constraint `lambda_cluster_locality`, with `cluster_locality_clusters` (0 = ⌈E/2k⌉) and `cluster_locality_window`. The loss is 1 − I(window; cluster)/log C over every MoE dispatch, recurrent iterations included. It keeps a stream inside few expert clusters and spreads different streams over different clusters. The partition (`chronos/expert_clusters.py`) is the one lazy inference pages by. Torch and MLX trainers and all stage scripts take it.
+- `tools/bench_residency.py`: LRU window vs planned residency, plain and speculative, on a real checkpoint.
+- `tools/bench_cluster_locality.py`: a tiny-model training A/B of the constraint, reporting held-out CE, cluster entropies, topic purity and lazy-decode cluster reads.
+
+### Measured (reports/residency_20261107/)
+- 50M s13996 checkpoint, 16 FLORES+ dev prompts, greedy, CPU, 12 hot / 12 RAM pages.
+  - Plain decoding: planned residency needs 4438 synchronous SSD loads instead of 6876 (−35%). Throughput is 22.47 vs 23.17 tok/s.
+  - Speculative decoding: 6258 vs 9297 loads (−33%), and 18.96 vs 16.03 tok/s.
+  - All outputs are identical to plain greedy (16/16).
+  - The checkpoint was trained without the constraint and routes near-uniformly over all 36 experts within a stream.
+- Tiny model on synthetic 4-topic streams, 300 steps, λ=0.3 vs 0.
+  - Window cluster entropy falls from 0.49 to 0.005; topic→cluster purity rises from 0.81 to 0.999.
+  - Marginal cluster entropy rises from 0.71 to 0.99, and expert-usage entropy is unchanged (0.87).
+  - Held-out CE is 1.712 vs 1.703.
+  - Cluster-paged lazy decoding needs 0.023 vs 1.48 cluster reads per token.
+
+### Fixed
+- MLX lazy store: an expert evicted by the prefetch thread between an SSD read and promotion raised "could not be loaded on demand". Reads now return the page they loaded.
+
 ## [0.3.0] — 2026-11-06
 
 v3 kernel: recurrent-depth MoE. Quality results for the 50M en→zh demo are not

@@ -1,0 +1,32 @@
+Skipping import of cpp extensions due to incompatible torch version. Please upgrade to torch >= 2.11.0 (found 2.10.0).
+W1107 09:02:42.439000 84813 site-packages/torch/distributed/elastic/multiprocessing/redirects.py:29] NOTE: Redirects are currently not supported in Windows or MacOs.
+[baseline] lambda_cluster_locality=0.0
+  step    0 loss 5.7093 ce 4.8183 cluster 0.00000
+  step   30 loss 2.6990 ce 2.2045 cluster 0.00000
+  step   60 loss 2.2713 ce 1.8351 cluster 0.00000
+  step   90 loss 2.1471 ce 1.7156 cluster 0.00000
+  step  120 loss 2.2024 ce 1.7713 cluster 0.00000
+  step  150 loss 2.1309 ce 1.7002 cluster 0.00000
+  step  180 loss 2.1575 ce 1.7400 cluster 0.00000
+  step  210 loss 2.1656 ce 1.7480 cluster 0.00000
+  step  240 loss 2.1477 ce 1.7286 cluster 0.00000
+  step  270 loss 2.0949 ce 1.6715 cluster 0.00000
+  step  299 loss 2.0888 ce 1.6615 cluster 0.00000
+[baseline] heldout_ce 1.7034  cluster_window_entropy 0.4883  cluster_marginal_entropy 0.7105  clusters_per_window 4.0  topic_cluster_purity 0.8074  expert_usage_entropy 0.8739  num_clusters 4
+[baseline] lazy window  expert misses/token 1.388  cluster reads/token 1.482  tokens 384
+[baseline] lazy planned expert misses/token 0.958  cluster reads/token 1.115  tokens 384
+[cluster] lambda_cluster_locality=1.0
+  step    0 loss 6.7062 ce 4.8183 cluster 0.99683
+  step   30 loss 2.8887 ce 2.4338 cluster 0.05808
+  step   60 loss 2.3366 ce 1.9381 cluster 0.02302
+  step   90 loss 2.1795 ce 1.7506 cluster 0.05562
+  step  120 loss 2.1525 ce 1.7667 cluster 0.02868
+  step  150 loss 2.0918 ce 1.7111 cluster 0.02724
+  step  180 loss 2.1362 ce 1.7263 cluster 0.06234
+  step  210 loss 2.1232 ce 1.7469 cluster 0.03004
+  step  240 loss 2.1643 ce 1.7269 cluster 0.10323
+  step  270 loss 2.0505 ce 1.6843 cluster 0.02998
+  step  299 loss 2.1568 ce 1.6689 cluster 0.14572
+[cluster] heldout_ce 1.7087  cluster_window_entropy 0.0009  cluster_marginal_entropy 0.9929  clusters_per_window 1.391  topic_cluster_purity 0.9999  expert_usage_entropy 0.897  num_clusters 4
+[cluster] lazy window  expert misses/token 0.026  cluster reads/token 0.026  tokens 384
+[cluster] lazy planned expert misses/token 0.026  cluster reads/token 0.026  tokens 384

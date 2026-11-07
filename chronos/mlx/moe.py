@@ -193,6 +193,8 @@ class ChronosMLXMOE(nn.Module):
                 # ``.item()`` sync per expert per MoE call during decode).
                 hit = (topk_idx.reshape(-1)[:, None] == mx.arange(self.num_experts)[None, :]).any(axis=0)
                 selected_host = hit.tolist()
+                # Read by residency planners from the runtime hooks below.
+                object.__setattr__(self, "_selected_host", selected_host)
 
             for i, expert in enumerate(self.experts):
                 sel = (topk_idx == i)

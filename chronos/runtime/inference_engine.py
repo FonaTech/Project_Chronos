@@ -299,15 +299,18 @@ class ChronosInferenceEngine:
         self,
         state_dict: dict,
         warm_expert_ids: Optional[List[int]] = None,
+        clusters: Optional[List[List[int]]] = None,
     ):
         """Setup path for real lazy expert loading on CPU/MPS.
 
         The caller loads base/non-expert weights into the live model, then
         hands the full checkpoint here so ExpertStore can shard only expert
         tensors to SSD and replace live experts with placeholders.
+        ``clusters`` pages by cluster file (``chronos.lazy_experts``); None
+        keeps one shard per expert.
         """
         print("[Chronos] Offloading expert weights to SSD from checkpoint...")
-        self.cache_manager.expert_store.offload_from_state_dict(state_dict)
+        self.cache_manager.expert_store.offload_from_state_dict(state_dict, clusters=clusters)
         self.cache_manager.start()
         print("[Chronos] Warming up VRAM cache...")
         self.cache_manager.warm_up(warm_expert_ids)
@@ -317,10 +320,11 @@ class ChronosInferenceEngine:
         self,
         reader,
         warm_expert_ids: Optional[List[int]] = None,
+        clusters: Optional[List[List[int]]] = None,
     ):
         """Setup lazy expert loading from a safetensors/GGUF export reader."""
         print("[Chronos] Offloading expert weights to SSD from export reader...")
-        self.cache_manager.expert_store.offload_from_state_reader(reader)
+        self.cache_manager.expert_store.offload_from_state_reader(reader, clusters=clusters)
         self.cache_manager.start()
         print("[Chronos] Warming up VRAM cache...")
         self.cache_manager.warm_up(warm_expert_ids)

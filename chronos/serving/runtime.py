@@ -87,12 +87,14 @@ def _find_tokenizer_dir(ckpt_path: str, meta: dict) -> str:
 def load_model(path: str, *, name: str | None = None, device: str | None = "auto",
                lazy_experts: bool = True, ram_expert_fraction: float = 0.5,
                expert_cache_root: str | None = None, dtype: str = "auto",
-               inference_overrides: dict | None = None) -> LoadedModel:
+               inference_overrides: dict | None = None, paging: str = "auto") -> LoadedModel:
     """Load a Chronos checkpoint for serving.
 
     With ``lazy_experts`` (default) the routed experts are sharded to an SSD
     cache and only ``ram_expert_fraction`` of them are ever resident; the
-    rest stream in on demand, guided by the lookahead router.  ``dtype``
+    rest stream in on demand, guided by the lookahead router.  ``paging``
+    (``chronos.lazy_experts.page_layout``) pages by training cluster when the
+    checkpoint was trained with cluster locality, per expert otherwise.  ``dtype``
     picks the single compute dtype (``chronos.precision.resolve_torch``):
     weights, activations, KV cache and expert pages all use it.
     """
@@ -116,21 +118,27 @@ def load_model(path: str, *, name: str | None = None, device: str | None = "auto
     weights = load_checkpoint_state_dict(path, map_location="cpu")
     model = ChronosForCausalLM(config)
     engine = None
+    paging_info = {}
     if lazy_experts and getattr(config, "use_moe", True):
-        from chronos.runtime.inference_engine import ChronosInferenceEngine
-        from ui.tabs.inference_tab import (
-            _apply_offload_expert_budget, _checkpoint_expert_cache_dir,
-            _replace_torch_experts_with_placeholders,
+        from chronos.lazy_experts import (
+            apply_torch_budget, checkpoint_cache_dir, page_layout, torch_experts_to_placeholders,
         )
+        from chronos.runtime.inference_engine import ChronosInferenceEngine
+        layout = page_layout(config, paging)
         base = {k: v for k, v in weights.items() if ".mlp.experts." not in k}
         load_state_dict_controlled(model, base, allow_missing_substrings=(".mlp.experts.",))
-        _replace_torch_experts_with_placeholders(model, config)
+        torch_experts_to_placeholders(model, config)
         model, precision = place_torch_model(model, device, dtype)
         model = model.eval()
-        cache_dir = expert_cache_root or _checkpoint_expert_cache_dir(path, config)
+        cache_dir = checkpoint_cache_dir(path, config, tag=layout["tag"])
+        if expert_cache_root:
+            cache_dir = os.path.join(expert_cache_root, os.path.basename(cache_dir))
         engine = ChronosInferenceEngine(model, config, ssd_dir=cache_dir)
-        _apply_offload_expert_budget(engine, config, ram_expert_fraction)
-        engine.setup_from_state_dict(weights, warm_expert_ids=[])
+        apply_torch_budget(engine, config, ram_expert_fraction)
+        engine.setup_from_state_dict(weights, warm_expert_ids=[],
+                                     clusters=None if layout["tag"] == "e" else layout["clusters"])
+        paging_info = {"paging": layout["paging"], "paging_resolved": layout["resolved"],
+                       "num_pages": layout["num_pages"]}
     else:
         load_state_dict_controlled(model, weights)
         model, precision = place_torch_model(model, device, dtype)
@@ -141,7 +149,7 @@ def load_model(path: str, *, name: str | None = None, device: str | None = "auto
                        config=config, model=model, tokenizer=tokenizer, engine=engine, device=device,
                        lazy_experts=engine is not None,
                        meta={"tokenizer_dir": tok_dir, "precision": precision.as_dict(),
-                             "inference_overrides": applied, **meta_full})
+                             "inference_overrides": applied, **paging_info, **meta_full})
 
 
 class ChronosRuntime:
@@ -149,12 +157,16 @@ class ChronosRuntime:
 
     def __init__(self, models_dir: str | None = None, *, device: str = "auto", lazy_experts: bool = True,
                  ram_expert_fraction: float = 0.5, keep_alive_s: float = 300.0, dtype: str = "auto",
-                 inference_overrides: dict | None = None):
+                 inference_overrides: dict | None = None, paging: str = "auto"):
         self.models_dir = models_dir
         self.inference_overrides = dict(inference_overrides or {})
         self.dtype = dtype
         self.device, self.lazy_experts = device, lazy_experts
         self.ram_expert_fraction = ram_expert_fraction
+        from chronos.expert_clusters import PAGING_MODES
+        if paging not in PAGING_MODES:
+            raise ValueError(f"paging must be one of {PAGING_MODES}")
+        self.paging = paging
         self.keep_alive_s = keep_alive_s
         self.loaded: dict[str, LoadedModel] = {}
         self.last_used: dict[str, float] = {}
@@ -184,7 +196,8 @@ class ChronosRuntime:
                                                lazy_experts=self.lazy_experts,
                                                ram_expert_fraction=self.ram_expert_fraction,
                                                dtype=self.dtype,
-                                               inference_overrides=self.inference_overrides)
+                                               inference_overrides=self.inference_overrides,
+                                               paging=self.paging)
             self.last_used[name] = time.time()
             return self.loaded[name]
 

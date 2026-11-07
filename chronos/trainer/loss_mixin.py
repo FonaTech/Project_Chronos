@@ -27,6 +27,7 @@ import torch
 
 from chronos.model.moe_chronos import ChronosMOEFeedForward
 from chronos.model.temporal_loss import (
+    cluster_locality_loss,
     temporal_locality_loss,
     lookahead_supervision_loss,
     lookahead_topk_hit_loss,
@@ -59,6 +60,13 @@ def collect_router_probs(model, *, with_grad: bool = False) -> Optional[torch.Te
     if not probs:
         return None
     return torch.stack(probs, dim=2)
+
+
+def cluster_membership_tensor(config, device=None) -> torch.Tensor:
+    """``[E, C]`` one-hot of ``chronos.expert_clusters.training_clusters(config)``."""
+    from chronos.expert_clusters import cluster_membership, training_clusters
+    e = int(config.num_experts)
+    return torch.tensor(cluster_membership(training_clusters(config), e), dtype=torch.float32, device=device)
 
 
 def collect_iteration_router_probs(model, *, with_grad: bool = False) -> Optional[torch.Tensor]:
@@ -152,6 +160,13 @@ def chronos_loss_term(
             loss = loss + lambda_router_locality * router_locality_loss(
                 router_mean,
                 int(getattr(config, "num_experts_per_tok", 1) or 1),
+            )
+        lambda_cluster = float(getattr(config, "lambda_cluster_locality", 0.0) or 0.0)
+        if lambda_cluster > 0.0:
+            loss = loss + lambda_cluster * cluster_locality_loss(
+                router_4d,
+                cluster_membership_tensor(config, router_4d.device),
+                int(getattr(config, "cluster_locality_window", 0) or 0),
             )
 
         lambda_lookahead = float(getattr(config, "lambda_lookahead", 0.0))

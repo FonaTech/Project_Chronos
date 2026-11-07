@@ -7,6 +7,11 @@ falls into on long inputs.  ``speculative=True`` uses recurrent-depth
 self-speculative decoding (same greedy output, fewer full-depth forwards);
 it needs ``repetition_penalty == 1`` because the penalty changes the target
 distribution position by position.
+
+``lazy_experts=True`` (MLX) keeps only the trunk in memory and pages routed
+experts from an SSD cache (``chronos.lazy_experts``): by training cluster when
+the checkpoint was trained with cluster locality, per expert otherwise, with
+next-use planned residency by default.  The greedy output is the same.
 """
 from __future__ import annotations
 
@@ -20,7 +25,8 @@ LANG_TAGS = {"en_zh": ("<|en|>", "<|zh|>"), "zh_en": ("<|zh|>", "<|en|>")}
 class BundleModel:
     """Weights + tokenizer of one bundle, ready for greedy translation."""
 
-    def __init__(self, bundle_dir: str, *, device: str = "cpu", dtype: str = "float32", backend: str = "torch"):
+    def __init__(self, bundle_dir: str, *, device: str = "cpu", dtype: str = "float32", backend: str = "torch",
+                 lazy_experts: bool = False, lazy_options=None, cache_root: str | None = None):
         import torch
         from tokenizers import Tokenizer
         from chronos.model.checkpoint import chronos_config_from_checkpoint, load_checkpoint_into_model
@@ -35,6 +41,13 @@ class BundleModel:
         self.config, _ = chronos_config_from_checkpoint(self.checkpoint)
         if self.tokenizer.get_vocab_size() > int(self.config.vocab_size):
             raise ValueError("bundle tokenizer is larger than the model vocabulary")
+        self.prompt_format = self.manifest.get("prompt_format", "pretrain_tags")
+        tid = self.tokenizer.token_to_id
+        self.stop_ids = {tid(t) for t in STOP_TOKENS if tid(t) is not None}
+        self.engine, self.lazy_info = None, {}
+        if lazy_experts:
+            self._init_lazy(backend, device, dtype, lazy_options, cache_root)
+            return
         model = ChronosForCausalLM(self.config)
         load_checkpoint_into_model(model, self.checkpoint, map_location="cpu")
         self.backend, self.last_stats = backend, {}
@@ -59,9 +72,34 @@ class BundleModel:
             self.device = device
         else:
             raise ValueError(f"backend must be 'torch' or 'mlx', not {backend!r}")
-        self.prompt_format = self.manifest.get("prompt_format", "pretrain_tags")
-        tid = self.tokenizer.token_to_id
-        self.stop_ids = {tid(t) for t in STOP_TOKENS if tid(t) is not None}
+
+    def _init_lazy(self, backend, device, dtype, lazy_options, cache_root):
+        import mlx.core as mx
+        from chronos.lazy_experts import LazyOptions, build_mlx_lazy_engine, warm_ids
+        if backend != "mlx":
+            raise ValueError("lazy_experts needs backend='mlx'")
+        if not getattr(self.config, "use_moe", True):
+            raise ValueError("lazy_experts needs a MoE checkpoint")
+        if device == "cpu":
+            mx.set_default_device(mx.cpu)
+        elif device not in ("auto", "gpu"):
+            raise ValueError(f"MLX backend runs on 'gpu' or 'cpu', not {device!r}")
+        self.lazy_options = (lazy_options or LazyOptions()).validated()
+        # Outside the bundle (it may be read-only and its files are hashed).
+        root = cache_root or os.environ.get("CHRONOS_EXPERT_CACHE") or os.path.join(
+            os.path.expanduser("~"), ".cache", "chronos", "expert_cache")
+        self.engine, self.lazy_info = build_mlx_lazy_engine(self.checkpoint, self.config, self.lazy_options,
+                                                            cache_root=root, dtype=dtype)
+        self.engine.store.warm_up(warm_ids(self.config, self.lazy_info))
+        self.model, self.backend, self.last_stats = self.engine.model, "mlx", {}
+        self.precision = None
+        self.device = "cpu" if device == "cpu" else "gpu"
+
+    def close(self) -> None:
+        """Stop the lazy engine's prefetch thread (no-op without lazy experts)."""
+        if self.engine is not None:
+            self.engine.stop()
+            self.engine = None
 
     # ---- prompts ---------------------------------------------------------------
     def directions(self) -> list[str]:
@@ -85,7 +123,9 @@ class BundleModel:
         if speculative and repetition_penalty != 1.0:
             raise ValueError("speculative decoding needs repetition_penalty=1.0 (the penalty changes the target "
                              "distribution at every position)")
-        if speculative:
+        if self.engine is not None:
+            out = self._lazy(prompt, limit, repetition_penalty, speculative, draft_depth, gamma)
+        elif speculative:
             out = self._speculative(prompt, limit, draft_depth, gamma)
         elif self.backend == "mlx":
             out = self._greedy_mlx(prompt, limit, repetition_penalty)
@@ -138,6 +178,29 @@ class BundleModel:
             logits, _, cache = self.model(mx.array([[nxt]], dtype=mx.int32), cache=cache)
         return out
 
+    def _lazy(self, prompt, limit, repetition_penalty, speculative, draft_depth, gamma):
+        import mlx.core as mx
+        kw = dict(speculative=True, draft_depth=draft_depth, gamma=gamma) if speculative else {}
+        out = []
+        for tok in self.engine.generate(mx.array([prompt], dtype=mx.int32), max_new_tokens=limit, temperature=0.0,
+                                        top_p=1.0, eos_token_id=sorted(self.stop_ids),
+                                        repetition_penalty=float(repetition_penalty),
+                                        **self.lazy_options.generate_kwargs(), **kw):
+            if tok in self.stop_ids:
+                break
+            out.append(int(tok))
+        st = dict(self.engine.last_stats or {})
+        agg = self.last_stats.setdefault("lazy", {"tokens": 0, "sync_ssd_loads": 0, "cluster_loads": 0})
+        agg["tokens"] += len(out)
+        agg["sync_ssd_loads"] += int(st.get("sync_ssd_loads", 0))
+        agg["cluster_loads"] = int(self.engine.store.stats().get("cluster_loads", 0))
+        if speculative and st.get("speculative"):
+            spec = self.last_stats.setdefault("speculative", {"proposed": 0, "accepted": 0, "verify_calls": 0,
+                                                              "draft_calls": 0, "generated": 0})
+            for k in spec:
+                spec[k] += int(st["speculative"].get(k, 0))
+        return out
+
     def _speculative(self, prompt, limit, draft_depth, gamma):
         eos = sorted(self.stop_ids)
         if self.backend == "mlx":
@@ -169,6 +232,11 @@ class BundleModel:
             gen = self.greedy(self.prompt_ids(src, direction), limit, repetition_penalty, speculative=speculative,
                               draft_depth=draft_depth, gamma=gamma)
             out.append(self.tokenizer.decode(gen, skip_special_tokens=True))
+        lazy = self.last_stats.get("lazy")
+        if lazy:
+            lazy.update({k: self.lazy_info[k] for k in ("paging_resolved", "num_pages", "trained_with_clusters",
+                                                        "effective_expert_budget") if k in self.lazy_info})
+            lazy["residency"] = self.lazy_options.residency
         spec = self.last_stats.get("speculative")
         if spec:
             spec["acceptance_rate"] = round(spec["accepted"] / spec["proposed"], 4) if spec["proposed"] else 0.0

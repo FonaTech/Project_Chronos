@@ -165,7 +165,10 @@ def create_app(runtime, *, api_key: str | None = None, monitor_runs_dir: str | N
             entry.update(size_vram=int(st.get("vram_bytes", 0) or 0),
                          expires_at=datetime.fromtimestamp(runtime.last_used.get(name, time.time()) + runtime.keep_alive_s,
                                                            timezone.utc).isoformat().replace("+00:00", "Z"),
-                         chronos={"device": lm.device, "lazy_experts": lm.lazy_experts, "expert_store": st})
+                         chronos={"device": lm.device, "lazy_experts": lm.lazy_experts,
+                                  **{k: lm.meta[k] for k in ("paging", "paging_resolved", "num_pages")
+                                     if k in (lm.meta or {})},
+                                  "expert_store": st})
             out.append(entry)
         return {"models": out}
 
@@ -311,6 +314,9 @@ def main(argv=None) -> int:
                         "(auto: CUDA bf16/fp16, MPS fp32, CPU fp32)")
     parser.add_argument("--no-lazy-experts", action="store_true", help="keep every expert resident (no SSD offload)")
     parser.add_argument("--ram-expert-fraction", type=float, default=0.5)
+    parser.add_argument("--paging", choices=["auto", "cluster", "expert"], default="auto",
+                        help="expert page layout; auto pages by training cluster when the checkpoint "
+                             "was trained with cluster locality, per expert otherwise")
     # Inference-only options (default: whatever the checkpoint config says).
     parser.add_argument("--kv-cache-dtype", choices=["auto", "int8"], default=None,
                         help="int8: per-token int8 KV cache with FP32 group scales")
@@ -338,7 +344,7 @@ def main(argv=None) -> int:
     overrides = {k: v for k, v in overrides.items() if v is not None}
     runtime = ChronosRuntime(args.models_dir, device=args.device, lazy_experts=not args.no_lazy_experts,
                              ram_expert_fraction=args.ram_expert_fraction, dtype=args.dtype,
-                             inference_overrides=overrides)
+                             inference_overrides=overrides, paging=args.paging)
     print(f"[chronos serve] http://{args.host}:{args.port}  models={sorted(runtime.available())}  "
           f"auth={'on' if args.api_key else 'off (loopback only)'}  overrides={overrides or 'none'}", flush=True)
     if args.monitor_runs_dir:

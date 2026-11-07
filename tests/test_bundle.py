@@ -150,6 +150,34 @@ def test_translate_backends_and_speculative_agree(bundle):
         mx.set_default_device(prev)
 
 
+def test_lazy_experts_translate_like_the_full_model(bundle, tmp_path):
+    """SSD-lazy experts (MLX) give the same greedy output; the cache stays outside the bundle."""
+    mx = pytest.importorskip("mlx.core")
+    from chronos.bundle.runtime import BundleModel
+    from chronos.lazy_experts import LazyOptions
+    prev = mx.default_device()
+    try:
+        full = BundleModel(bundle, device="cpu", backend="mlx")
+        src = EN[:2]
+        ref = full.translate(src, "en_zh", max_new_tokens=16)
+        for residency in ("planned", "window"):
+            lazy = BundleModel(bundle, device="cpu", backend="mlx", lazy_experts=True,
+                               lazy_options=LazyOptions(residency=residency, ram_ratio=0.5),
+                               cache_root=str(tmp_path / "cache"))
+            try:
+                assert lazy.translate(src, "en_zh", max_new_tokens=16) == ref
+                assert lazy.translate(src, "en_zh", max_new_tokens=16, speculative=True) == ref
+                stats = lazy.last_stats["lazy"]
+                assert stats["paging_resolved"] == "expert" and stats["residency"] == residency
+            finally:
+                lazy.close()
+        assert not os.path.exists(os.path.join(bundle, "expert_cache"))
+        with pytest.raises(ValueError, match="mlx"):
+            BundleModel(bundle, device="cpu", backend="torch", lazy_experts=True)
+    finally:
+        mx.set_default_device(prev)
+
+
 def test_prepare_data_and_finetune_spec(bundle, tmp_path):
     from chronos.bundle.finetune import prepare_data, write_finetune_spec
     data = tmp_path / "mine.jsonl"
@@ -172,6 +200,9 @@ def test_prepare_data_and_finetune_spec(bundle, tmp_path):
     assert spec["init_checkpoint"] == os.path.join(bundle, m["model"]["checkpoint"])
     assert spec["tokenizer_dir"] == os.path.join(bundle, "model", "tokenizer")
     assert [p["name"] for p in spec["phases"]] == ["sft"] and spec["export_prefix"] == "tiny_bundle_ft"
+    # the tiny model has 4 experts with k=2 (one cluster): the constraint is off and says why
+    assert spec["model_config"]["lambda_cluster_locality"] == 0.0
+    assert "fewer than two clusters" in spec["extra"]["cluster_locality_source"]["lambda_cluster_locality"]
     with pytest.raises(ValueError, match="pretrain"):
         write_finetune_spec(bundle, str(out / "shards"), str(tmp_path / "ft2"), tier="smoke", mode="pretrain")
     (run / "checkpoints").mkdir()

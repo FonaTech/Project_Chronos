@@ -42,6 +42,9 @@ def main():
     p.add_argument("--lambda_lookahead_topk", type=float, default=None)
     p.add_argument("--lambda_lookahead_union", type=float, default=None)
     p.add_argument("--lambda_router_locality", type=float, default=None)
+    p.add_argument("--lambda_cluster_locality", type=float, default=None,
+                   help="default: inherited from the upstream checkpoint (0 = off)")
+    p.add_argument("--cluster_locality_window", type=int, default=None)
     p.add_argument("--fallback_mask_prob", type=float, default=0.04)
     p.add_argument("--lambda_router_anchor", type=float, default=0.01,
                    help="SFT default: weak anchor.")

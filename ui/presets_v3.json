@@ -128,6 +128,7 @@
    "lambda_balance": 0.005,
    "fallback_mask_prob": 0.08,
    "dropout": 0.0,
+   "lambda_cluster_locality": 0.0,
    "kv_cache_dtype": "auto",
    "mla_cache_rope": true,
    "router_scope": "per_iteration",

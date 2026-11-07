@@ -142,6 +142,60 @@ class ChronosMLXInferenceEngine:
                 moe.runtime_on_demand_loader = loader
                 moe.runtime_touch_expert = touch
 
+    def _attach_planner(self, planner) -> None:
+        """Report every lazy-expert run to ``planner`` and let it rank evictions.
+
+        Wraps the hooks of :meth:`_install_runtime_hooks`: before an expert
+        of dispatch ``(layer, loop iteration)`` is loaded or run, the planner
+        records it; the dispatch's not-yet-run experts (an MoE runs its
+        selection in id order) are kept from eviction.  The store then evicts
+        the page needed latest instead of the least recent one.
+        """
+        layer_of = {}
+        for li, layer in enumerate(self.model.layers):
+            moe = getattr(layer, "mlp", None)
+            if not isinstance(moe, ChronosMLXMOE):
+                continue
+            layer_of[id(moe)] = li
+
+            def record(eid, moe=moe, li=li):
+                eid = int(eid)
+                selected = getattr(moe, "_selected_host", None) or ()
+                pending = [j for j in range(eid + 1, len(selected)) if selected[j]]
+                planner.access(li, len(moe.iteration_router_probs) - 1, eid, pending)
+
+            base_load, base_touch = moe.runtime_on_demand_loader, moe.runtime_touch_expert
+
+            def load(eid, record=record, base=base_load):
+                record(eid)
+                return bool(base(eid)) if base is not None else False
+
+            def touch(eid, record=record, base=base_touch):
+                record(eid)
+                if base is not None:
+                    base(eid)
+
+            moe.runtime_on_demand_loader = load
+            moe.runtime_touch_expert = touch
+        # Ranking replaces the protected window: a protected set the size of
+        # the budget would turn every eviction into a forced fallback.
+        self.store.set_protected_experts([])
+        self.store.set_eviction_ranker(planner.victim)
+
+    def _planned_prefetch(self, planner, timeout_s: float) -> int:
+        """Queue (and briefly await) the pages the next forward needs early; returns the count."""
+        hot_cap = max(int(getattr(self.store, "_capacity", 1) or 1), 1)
+        warm_cap = max(int(getattr(self.store, "_warm_capacity", hot_cap) or hot_cap), 1)
+        with self.store._lock:
+            warm = set(self.store._warm.keys())
+        hot = self.store.hot_expert_ids()
+        fetch = planner.prefetch_plan(warm | hot, warm_cap)
+        promote = planner.prefetch_plan(hot, hot_cap)
+        if fetch or promote:
+            self._prefetch_and_promote_window(list(dict.fromkeys(promote + fetch)), promote_ids=promote,
+                                              timeout_s=timeout_s)
+        return len(promote)
+
     def _clear_runtime_hooks(self):
         for layer in self.model.layers:
             moe = getattr(layer, "mlp", None)
@@ -224,24 +278,37 @@ class ChronosMLXInferenceEngine:
         and may pick different experts each time; residency follows the
         union, so the next step's identical iterations stay hot.
         """
+        values = self._virtual_route_weights(last_only=True)
+        return [i for i, _v in sorted(((i, v) for i, v in enumerate(values) if v > 0), key=lambda t: (-t[1], t[0]))]
+
+    def _virtual_route_weights(self, last_only: bool = True) -> List[float]:
+        """Per-expert top-k routing weight summed over every dispatch of the last forward.
+
+        ``last_only`` scores the last position (one decode or draft token);
+        otherwise every position counts and the sum is divided by the number
+        of positions, so a verify or prefill forward weighs like one token.
+        """
         from chronos.mlx.moe import ChronosMLXMOE
         e = int(self.config.num_experts)
         k = max(1, min(int(self.config.num_experts_per_tok), e))
-        rows = []
+        rows, positions = [], 1
         for layer in self.model.layers:
             moe = getattr(layer, "mlp", None)
             if isinstance(moe, ChronosMLXMOE):
-                rows.extend(p[:, -1, :].reshape(-1, e) for p in (moe.iteration_router_probs or ()))
+                for p in (moe.iteration_router_probs or ()):
+                    if not last_only:
+                        positions = max(positions, int(p.shape[1]))
+                    rows.append((p[:, -1, :] if last_only else p).reshape(-1, e))
         if not rows:
-            return []
+            return [0.0] * e
         probs = mx.concatenate(rows, axis=0).astype(mx.float32)
         ids = mx.argpartition(-probs, kth=k - 1, axis=-1)[:, :k]
         weights = mx.take_along_axis(probs, ids, axis=-1)
         scores = ((ids[..., None] == mx.arange(e)).astype(mx.float32) * weights[..., None]).sum(axis=(0, 1))
-        values = scores.tolist()
+        values = [float(v) / positions for v in scores.tolist()]
         with self._stats_lock:
             self._runtime_stats["virtual_dispatches"] = self._runtime_stats.get("virtual_dispatches", 0) + len(rows)
-        return [i for i, _v in sorted(((i, v) for i, v in enumerate(values) if v > 0), key=lambda t: (-t[1], t[0]))]
+        return values
 
     def _protect_prediction_window(self, expert_ids: List[int]) -> None:
         capacity = max(
@@ -281,6 +348,11 @@ class ChronosMLXInferenceEngine:
         top_k: int = 0,
         seed: Optional[int] = None,
         eos_token_id=None,
+        residency: str = "window",     # lazy experts: "window" (LRU + protected window) | "planned"
+        residency_decay: float = 0.7,
+        decode_wait_s: float = 0.012,  # planned: wait for prefetched pages before a decode step
+        verify_wait_s: float = 0.02,   # planned + speculative: wait before the verify forward
+        repetition_penalty: float = 1.0,
     ) -> Iterator[int]:
         """
         Yields token IDs one at a time.
@@ -293,13 +365,51 @@ class ChronosMLXInferenceEngine:
         verifies them in one full-depth forward (``chronos.mlx.speculative``);
         greedy output equals plain greedy decoding.  ``eos_token_id`` (int or
         list) stops generation after that token is yielded.
+
+        ``residency="planned"`` replaces LRU eviction of lazy expert pages
+        with next-use planning (``chronos.residency_planner``): the previous
+        forward of the same kind (and, when speculative, the draft queue)
+        predicts the order in which pages are needed, the page needed latest
+        is evicted, and pages needed early are prefetched.  Output is
+        unchanged; residency only decides what is loaded when.
+        ``decode_wait_s`` / ``verify_wait_s`` bound how long a step waits for
+        its prefetched pages before running (a page still missing is loaded
+        on demand, so the wait only trades latency for fewer stalls).
+
+        ``repetition_penalty`` (plain decoding only) applies the CTRL rule to
+        every token already in the prompt or output; speculative decoding
+        needs 1.0 because the penalty changes the target distribution.
         """
+        if residency not in ("window", "planned"):
+            raise ValueError("residency must be 'window' or 'planned'")
+        if not 0.0 <= float(residency_decay) < 1.0:
+            raise ValueError("residency_decay must be in [0, 1)")
+        if float(decode_wait_s) < 0 or float(verify_wait_s) < 0:
+            raise ValueError("decode_wait_s and verify_wait_s must be >= 0")
+        if float(repetition_penalty) <= 0:
+            raise ValueError("repetition_penalty must be > 0")
+        if speculative and float(repetition_penalty) != 1.0:
+            raise ValueError("speculative decoding needs repetition_penalty=1.0")
+        self.store.set_eviction_ranker(None)
         if speculative:
             yield from self._generate_speculative(
                 input_ids, max_new_tokens=max_new_tokens, temperature=temperature, top_p=top_p, top_k=top_k,
                 draft_depth=draft_depth, gamma=gamma, gamma_max=gamma_max, adaptive_gamma=adaptive_gamma,
-                seed=seed, eos_token_id=eos_token_id)
+                seed=seed, eos_token_id=eos_token_id, residency=residency, residency_decay=residency_decay,
+                verify_wait_s=verify_wait_s)
             return
+        penalty = float(repetition_penalty)
+        seen = None
+        if penalty != 1.0:
+            import numpy as np
+            seen = np.zeros(int(self.config.vocab_size), dtype=bool)
+            seen[np.array(input_ids.tolist(), dtype=np.int64).reshape(-1)] = True
+
+        def penalised(row):
+            if seen is None:
+                return row
+            row = row.astype(mx.float32)
+            return mx.where(mx.array(seen), mx.where(row < 0, row * penalty, row / penalty), row)
         t0 = time.monotonic()
         setup_mem = self._memory_snapshot()
         self._last_predicted = set()
@@ -312,6 +422,12 @@ class ChronosMLXInferenceEngine:
             self.store.set_protected_experts([])
         else:
             self._install_runtime_hooks()
+        planner = None
+        if not all_resident_fast_path and scheduler is None and residency == "planned":
+            from chronos.residency_planner import NextUsePlanner
+            planner = NextUsePlanner(int(self.config.num_experts), decay=float(residency_decay))
+            self._attach_planner(planner)
+        hot_cap = int(getattr(self.store, "_capacity", 1) or 1)
         # ── Prefill phase: front-load expert IO ───────────────────────────
         if scheduler is not None and not all_resident_fast_path:
             import torch, numpy as np
@@ -326,17 +442,24 @@ class ChronosMLXInferenceEngine:
             prefill_masks = None
         else:
             prefill_masks = self._build_avail_masks(None)
+        if planner is not None:
+            planner.begin_forward("multi")
         logits, lookahead_probs, cache = self.model(input_ids, available_expert_masks=prefill_masks)
         mx.eval(logits)
+        if planner is not None:
+            planner.end_forward()
         self._last_current = [] if all_resident_fast_path else self._current_virtual_ids()
         prefill_t1 = time.monotonic()
         prefill_mem = self._memory_snapshot()
 
         # Sample from prefill
-        next_token = self._sample(logits[:, -1, :], temperature, top_p)
+        next_token = self._sample(penalised(logits[:, -1, :]), temperature, top_p)
         activated_ids: List[int] = []
         tokens = 1
-        if not all_resident_fast_path and scheduler is None and lookahead_probs is not None:
+        if planner is not None:
+            if lookahead_probs is not None:
+                planner.hint(self._predict_future_experts(lookahead_probs, capacity=hot_cap, max_steps=1))
+        elif not all_resident_fast_path and scheduler is None and lookahead_probs is not None:
             future_ids = self._predict_future_experts(
                 lookahead_probs,
                 capacity=int(getattr(self.store, "_warm_capacity", self.config.num_experts) or self.config.num_experts),
@@ -351,12 +474,19 @@ class ChronosMLXInferenceEngine:
             self._prefetch_and_promote_window(future_ids, promote_ids=immediate_ids, timeout_s=0.025)
         eos = set([eos_token_id] if isinstance(eos_token_id, int) else (eos_token_id or []))
         first_id = int(next_token.item())
+        if seen is not None:
+            seen[first_id] = True
         yield first_id
 
         for _ in range(0 if first_id in eos else max_new_tokens - 1):
             if all_resident_fast_path:
                 avail_masks = None
             elif scheduler is not None:
+                avail_masks = self._build_avail_masks(next_token)
+            elif planner is not None:
+                planner.begin_forward("single")
+                self._planned_prefetch(planner, float(decode_wait_s))
+                self._last_predicted = set(planner.upcoming())
                 avail_masks = self._build_avail_masks(next_token)
             else:
                 # LookaheadRouter-driven prefetch
@@ -382,12 +512,18 @@ class ChronosMLXInferenceEngine:
                 available_expert_masks=avail_masks,
             )
             mx.eval(logits)
+            if planner is not None:
+                planner.end_forward()
+                if lookahead_probs is not None:
+                    planner.hint(self._predict_future_experts(lookahead_probs, capacity=hot_cap, max_steps=1))
             if not all_resident_fast_path:
                 self._last_current = self._current_virtual_ids()
 
-            next_token = self._sample(logits[:, -1, :], temperature, top_p)
+            next_token = self._sample(penalised(logits[:, -1, :]), temperature, top_p)
             mx.eval(next_token)
             tok_id = int(next_token.item())
+            if seen is not None:
+                seen[tok_id] = True
             activated_ids.append(tok_id)
             tokens += 1
             yield tok_id
@@ -405,22 +541,38 @@ class ChronosMLXInferenceEngine:
             "tokens_per_sec": round(tokens / max(end - t0, 1e-6), 2),
             "prefill_time_s": round(prefill_t1 - prefill_t0, 3),
             "decode_time_s": round(max(0.0, end - prefill_t1), 3),
+            "residency": {"mode": "full" if all_resident_fast_path else (
+                              "planned" if planner is not None else "window"),
+                          **({"planner": dict(planner.stats)} if planner is not None else {})},
             **self._memory_fields(setup_mem, "after_setup"),
             **self._memory_fields(prefill_mem, "after_prefill"),
             **self._memory_fields(end_mem, "after_decode"),
             **self._runtime_stat_fields(),
             **self.store.stats(),
         }
+        self.store.set_eviction_ranker(None)
 
     def _generate_speculative(self, input_ids, *, max_new_tokens, temperature, top_p, top_k, draft_depth, gamma,
-                              gamma_max, adaptive_gamma, seed, eos_token_id) -> Iterator[int]:
+                              gamma_max, adaptive_gamma, seed, eos_token_id, residency="window",
+                              residency_decay=0.7, verify_wait_s=0.02) -> Iterator[int]:
         """Self-speculative decoding with the same residency work as plain decoding.
 
         Every forward (draft or verify) runs with the current availability
         masks.  After it, the experts its last position routed to (all virtual
         layers) are unioned with the LookaheadRouter prediction and prefetched,
         so experts a draft touches are being loaded before the verify forward
-        that re-reads them."""
+        that re-reads them.
+
+        ``residency="planned"`` hands eviction to a next-use planner
+        (``chronos.residency_planner.NextUsePlanner``).  Each draft token ran
+        the prelude and the first ``draft_depth`` iterations, and verify
+        re-runs exactly those dispatches for the same tokens plus the deeper
+        ones, so the draft queue is the verify forward's page-access
+        reference: pages the queue needs early are prefetched while the
+        drafts run and awaited right before verify (``verify_wait_s``), and
+        the page needed latest (or not at all) is evicted first; the
+        previous forward of the same kind covers the deeper iterations.
+        Output is unchanged: residency only decides what is loaded when."""
         from chronos.mlx.speculative import SpecStats, speculative_tokens
         t0 = time.monotonic()
         setup_mem = self._memory_snapshot()
@@ -437,12 +589,38 @@ class ChronosMLXInferenceEngine:
         hot_cap = int(getattr(self.store, "_capacity", 1) or 1)
         timing = {"first": None}
 
+        planner = None
+        if not fast and residency == "planned":
+            from chronos.residency_planner import NextUsePlanner
+            planner = NextUsePlanner(int(self.config.num_experts), decay=float(residency_decay))
+            self._attach_planner(planner)
+        queue_stats = {"verify_plans": 0, "verify_planned": 0, "verify_ready": 0}
+
         def forward_fn(ids, cache, depth):
+            verify = depth is None and cache is not None
+            if planner is not None:
+                kind = "draft" if depth is not None else ("multi" if int(ids.shape[1]) > 1 else "single")
+                planner.begin_forward(kind)
+                # Drafts only queue SSD reads (the next draft is not delayed);
+                # verify waits briefly for the draft queue's pages.
+                self._planned_prefetch(planner, 0.0 if depth is not None else float(verify_wait_s))
+                if verify:
+                    hot = self.store.hot_expert_ids()
+                    upcoming = planner.upcoming(hot_cap)
+                    queue_stats["verify_plans"] += 1
+                    queue_stats["verify_planned"] += len(upcoming)
+                    queue_stats["verify_ready"] += sum(1 for eid in upcoming if eid in hot)
             masks = None if fast else self._build_avail_masks(None)
             logits, lookahead, new_cache = self.model(ids, cache=cache, available_expert_masks=masks,
                                                       recurrent_depth=depth)
             mx.eval(logits)
-            if not fast:
+            if planner is not None:
+                planner.end_forward(verify=verify)
+                if lookahead is not None:
+                    planner.hint(self._predict_future_experts(lookahead, capacity=hot_cap, max_steps=1))
+                self._last_current = self._current_virtual_ids()
+                self._last_predicted = set(planner.upcoming())
+            elif not fast:
                 self._last_current = self._current_virtual_ids()
                 predicted = (self._predict_future_experts(lookahead, capacity=warm_cap)
                              if lookahead is not None else [])
@@ -484,11 +662,16 @@ class ChronosMLXInferenceEngine:
                 "speculative": stats.as_dict() | {
                     "draft_depth": eff_draft, "full_depth": full_depth, "enabled": eff_draft < full_depth,
                     "gamma_final": (stats.gamma_history or [int(gamma)])[-1]},
+                "residency": {"mode": "full" if fast else residency, **queue_stats,
+                              "verify_ready_rate": round(queue_stats["verify_ready"]
+                                                         / max(queue_stats["verify_planned"], 1), 4),
+                              **({"planner": dict(planner.stats)} if planner is not None else {})},
                 **self._memory_fields(setup_mem, "after_setup"),
                 **self._memory_fields(end_mem, "after_decode"),
                 **self._runtime_stat_fields(),
                 **self.store.stats(),
             }
+            self.store.set_eviction_ranker(None)
 
     def _predict_future_experts(
         self,
@@ -497,16 +680,24 @@ class ChronosMLXInferenceEngine:
         max_steps: Optional[int] = None,
     ) -> List[int]:
         """Extract bounded top-k expert IDs for future steps."""
+        e = int(self.config.num_experts)
+        budget = e if capacity is None else max(1, min(e, int(capacity)))
+        values = self._future_expert_scores(lookahead_probs, max_steps=max_steps)
+        scored = [(idx, value) for idx, value in enumerate(values) if value > 0.0]
+        scored.sort(key=lambda item: (-item[1], item[0]))
+        return [int(idx) for idx, _value in scored[:budget]]
+
+    def _future_expert_scores(self, lookahead_probs: mx.array, max_steps: Optional[int] = None) -> List[float]:
+        """Per-expert LookaheadRouter score: top-k weight of each future step, weighted 1/(offset+1)."""
         # This store pages an expert ID across physical layers. Preserve
         # each prediction head until admission, then rank the union of IDs.
+        e = int(self.config.num_experts)
         future = lookahead_probs[:, -1, 1:, ...]
         if max_steps is not None:
             future = future[:, :max(0, int(max_steps))]
         if future.shape[1] <= 0:
-            return []
-        e = int(self.config.num_experts)
+            return [0.0] * e
         top_k = max(1, min(int(self.config.num_experts_per_tok), e))
-        budget = e if capacity is None else max(1, min(e, int(capacity)))
         scores = mx.zeros((e,), dtype=mx.float32)
         for offset in range(future.shape[1]):
             step = future[:, offset, ...].reshape(-1, e).astype(mx.float32)
@@ -515,9 +706,7 @@ class ChronosMLXInferenceEngine:
             one_hot = (ids[..., None] == mx.arange(e)).astype(mx.float32)
             scores = scores + (one_hot*vals[..., None]).sum(axis=(0, 1))
         mx.eval(scores)
-        scored = [(idx, float(value)) for idx, value in enumerate(scores.tolist()) if float(value) > 0.0]
-        scored.sort(key=lambda item: (-item[1], item[0]))
-        return [int(idx) for idx, _value in scored[:budget]]
+        return [float(v) for v in scores.tolist()]
 
     def _build_avail_masks(self, _token) -> List[set[int]] | None:
         """Promote prefetched experts and return per-layer availability masks."""

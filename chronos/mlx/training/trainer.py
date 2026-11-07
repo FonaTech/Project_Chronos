@@ -1,6 +1,7 @@
 """Minimal but real MLX-native six-stage training support."""
 from __future__ import annotations
 
+import math
 import os
 import time
 from dataclasses import dataclass
@@ -126,6 +127,40 @@ def _router_locality_loss(router_mean: mx.array, num_experts_per_tok: int) -> mx
     target_mask = (target_ids[..., None] == mx.arange(E)).astype(cur.dtype).sum(axis=-2)
     mass = (cur * target_mask).sum(axis=-1)
     return (-mx.log(mx.maximum(mass / float(top_k), 1e-9))).mean()
+
+
+_MEMBERSHIP_CACHE: dict = {}
+
+
+def _cluster_membership(config) -> mx.array:
+    """``[E, C]`` one-hot of ``chronos.expert_clusters.training_clusters(config)`` (cached)."""
+    from chronos.expert_clusters import cluster_membership, resolve_cluster_count, training_clusters
+    e = int(config.num_experts)
+    key = (e, resolve_cluster_count(config))
+    hit = _MEMBERSHIP_CACHE.get(key)
+    if hit is None:
+        hit = mx.array(cluster_membership(training_clusters(config), e), dtype=mx.float32)
+        _MEMBERSHIP_CACHE[key] = hit
+    return hit
+
+
+def _cluster_locality_loss(router_4d: mx.array, membership: mx.array, window: int = 0) -> mx.array:
+    """MLX twin of ``chronos.model.temporal_loss.cluster_locality_loss``: ``1 − I(window; cluster)/log C``."""
+    B, S, V, E = router_4d.shape
+    C = int(membership.shape[1])
+    w = S if int(window or 0) <= 0 else min(int(window), S)
+    n = S // w
+    if C <= 1 or n <= 0:
+        return mx.zeros(())
+    mass = (router_4d.astype(mx.float32).reshape(-1, E) @ membership).reshape(B, S, V, C)
+    pw = mass[:, : n * w].reshape(B, n, w, V, C).mean(axis=(2, 3)).reshape(B * n, C)
+
+    def entropy(p):
+        p = mx.maximum(p, 1e-9)
+        return -(p * mx.log(p)).sum(axis=-1)
+
+    mutual = entropy(pw.mean(axis=0)) - entropy(pw).mean()
+    return 1.0 - mutual / math.log(C)
 
 
 def _load_balance_loss(router_4d: mx.array, num_experts_per_tok: int) -> mx.array:
@@ -388,6 +423,10 @@ def _chronos_regularized_loss(model, base_loss, lookahead_probs, config, router_
         router = router.astype(mx.float32)
         top_k = config.num_experts_per_tok
         add("balance_loss", config.lambda_balance, _load_balance_loss(router, top_k))
+        if float(getattr(config, "lambda_cluster_locality", 0.0) or 0.0) > 0.0:
+            add("cluster_locality_loss", config.lambda_cluster_locality,
+                _cluster_locality_loss(router, _cluster_membership(config),
+                                       int(getattr(config, "cluster_locality_window", 0) or 0)))
         if router.shape[1] > 1:
             mean = router.mean(axis=2)
             add("temporal_loss", config.lambda_temporal, _temporal_locality_loss(mean))

@@ -230,6 +230,16 @@ def build_config_tab():
                     register_translatable(lambda_lookahead_topk, "config.lambda_la_topk")
                     register_translatable(lambda_router_anchor,  "config.lambda_anchor")
                     register_translatable(fallback_mask_prob,    "config.fallback_mask")
+                with gr.Row():
+                    lambda_cluster_locality = gr.Number(value=D.get("lambda_cluster_locality", 0.3), precision=4,
+                                                        label=t("config.lambda_cluster"))
+                    cluster_locality_clusters = gr.Number(value=D.get("cluster_locality_clusters", 0), precision=0,
+                                                          label=t("config.cluster_count"))
+                    cluster_locality_window = gr.Number(value=D.get("cluster_locality_window", 32), precision=0,
+                                                        label=t("config.cluster_window"))
+                    register_translatable(lambda_cluster_locality,   "config.lambda_cluster")
+                    register_translatable(cluster_locality_clusters, "config.cluster_count")
+                    register_translatable(cluster_locality_window,   "config.cluster_window")
 
                 gr.Markdown(f"### {t('config.hw')}")
                 with gr.Row():
@@ -414,6 +424,9 @@ def build_config_tab():
             "lambda_lookahead": lambda_lookahead,
             "lambda_lookahead_topk": lambda_lookahead_topk,
             "lambda_router_anchor": lambda_router_anchor,
+            "lambda_cluster_locality": lambda_cluster_locality,
+            "cluster_locality_clusters": cluster_locality_clusters,
+            "cluster_locality_window": cluster_locality_window,
             "fallback_mask_prob": fallback_mask_prob,
             "vram_budget_gb": vram_budget,
             "pinned_memory_max_fraction": pinned_frac,

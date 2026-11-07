@@ -227,11 +227,49 @@ class ClusterStorage:
 
         Returns the path to cluster_manifest.json.
         """
+        def get_state(li: int, eid: int) -> Dict[str, torch.Tensor]:
+            if li >= len(moe_layers):
+                return {}
+            out = {}
+            for pname, pval in moe_layers[li].experts[eid].state_dict().items():
+                t = pval.detach()
+                if dtype is not None and t.dtype != dtype:
+                    t = t.to(dtype=dtype)
+                out[pname] = t
+            return out
+
+        return ClusterStorage.write_clusters_from_states(
+            get_state, clusters=clusters, output_dir=output_dir, num_layers=num_layers,
+            num_experts=num_experts, layer_to_group=layer_to_group,
+        )
+
+    @staticmethod
+    def write_clusters_from_states(
+        get_state,
+        clusters: List[List[int]],
+        output_dir: str,
+        num_layers: int,
+        num_experts: int,
+        layer_to_group: Optional[Dict[int, int]] = None,
+    ) -> str:
+        """Write one safetensors file per cluster from ``get_state(layer, expert)``.
+
+        ``get_state`` returns ``{param_name: Tensor}`` for one expert in one
+        layer (empty when that layer has no routed experts).  Only one
+        cluster's tensors are held at a time, so a full checkpoint state dict
+        or an export reader can be sharded without materialising every
+        expert twice.  Every expert must appear in exactly one cluster.
+
+        Returns the path to cluster_manifest.json.
+        """
         if not _HAS_SAFETENSORS:
             raise ImportError(
                 "write_clusters requires the `safetensors` package. "
                 "Install with `pip install safetensors>=0.4.0`."
             )
+        seen = [int(e) for cl in clusters for e in cl]
+        if sorted(seen) != list(range(int(num_experts))):
+            raise ValueError("clusters must cover every expert exactly once")
         os.makedirs(output_dir, exist_ok=True)
 
         manifest_clusters: Dict[int, Tuple[str, List[int]]] = {}
@@ -242,14 +280,8 @@ class ClusterStorage:
             for eid in cluster:
                 expert_to_cluster[int(eid)] = cid
                 for li in range(num_layers):
-                    if li >= len(moe_layers):
-                        continue
-                    expert = moe_layers[li].experts[eid]
-                    for pname, pval in expert.state_dict().items():
-                        t = pval.detach()
-                        if dtype is not None and t.dtype != dtype:
-                            t = t.to(dtype=dtype)
-                        tensors[_key(li, int(eid), pname)] = t.cpu().contiguous()
+                    for pname, t in (get_state(li, int(eid)) or {}).items():
+                        tensors[_key(li, int(eid), pname)] = t.detach().cpu().contiguous()
 
             file_name = f"cluster_{cid}.ctsr"
             file_path = os.path.join(output_dir, file_name)
