@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+## [0.3.1a1] — 2026-11-07 (beta)
+
+Web UI half of 0.3.1: the rewritten Web UI, file picking and upload, LAN access, and the lazy-expert probe.
+
+### Changed
+- `chronos-ui` and `python chronos_app.py` start the new Web UI (`chronos/webui/`: FastAPI and a hand-written single-page app, no build step, CSP `script-src 'self'`). The Gradio console stays available as `--legacy`.
+- The UI is complete in zh-Hans, zh-Hant, en and ja. It follows the browser language and falls back to English. Buttons, chips, dropdown options and picker shortcuts are translated; device and format ids (cuda, float16, gguf) are shown as they are.
+- Hover help appears after the pointer rests for 2 s; the "?" mark shows it after 0.4 s and Tab focus shows it at once.
+
+### Added
+- Path fields have two ways to pick a path.
+  - "Browse…" lists folders on the server's machine.
+  - "Upload…" uses the system file manager. On the server's own machine (loopback) the server opens the native dialog (macOS `osascript`, Windows PowerShell, Linux `zenity`/`kdialog`) and the chosen path is used in place. From another machine the files are streamed to `<workdir>/uploads/<datasets|checkpoints|configs|folders|files>/<batch>/` and that path is used.
+  - Uploads refuse traversal, hidden names and executable or script types. They stop while less than max(8 GiB, 5 % of the disk) would stay free. `--max-upload-mb` caps a single file (default 20480).
+- Dataset fields take several files or folders, one per line. Training stages and export calibration merge them into one JSONL file (`chronos/workbench/files.py:merge_datasets`, with a `.sources.json` manifest). An unchanged selection reuses the earlier merge.
+- `--lan` opens the UI to the local network; it is off by default. Browsers on other machines sign in with `CHRONOS_UI_KEY`, or with a key printed at start when none is set. The server's own machine needs no sign-in. The key crosses plain HTTP in clear text unless `--ssl-certfile`/`--ssl-keyfile` or a TLS proxy is used. `--no-native-dialog` turns the native dialog off (for example over SSH).
+- `chronos lazy-probe`: lazy-expert efficiency, hit rate and fidelity of a checkpoint, or of each validation of a run with `--watch`; the Train page can run it at every validation.
+
 ## [0.3.1a0] — 2026-11-07 (beta)
 
 Core half of 0.3.1: cluster-locality training on by default, inference that

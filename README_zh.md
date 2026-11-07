@@ -471,15 +471,19 @@ pip install vllm
 
 ## 快速开始
 
-### Web UI（12 个 Tab，4 种语言）
+### Web UI（11 个页面，4 种语言）
 
 ```bash
-chronos-ui
-# 或
-python chronos_app.py
+chronos-ui                       # 或：python chronos_app.py
+chronos-ui --lan                 # 同时开放局域网访问（默认关闭）
+chronos-ui --legacy              # 旧版 Gradio 控制台
 ```
 
-包含：⚙️ Config（v3 预设、自动规划器和实时参数估算面板）/ 🗂️ Data（数据集扫描与转换）/ 🔤 Tokenizer（从数据集抽取文本、训练 Chronos BPE、评估并保存）/ 🏋️ Train（拥有 data_path，按所选阶段合并阶段参数）/ 📈 Training Monitor（只读监控 `runs/`，见下文）/ 🧪 6-Stage Pipeline（每阶段独立数据路径）/ 💬 Inference（含懒加载 vs 全量 DRAM 对比）/ 📦 Export（FP16/Q8_0 safetensors 与 GGUF）/ 🛰️ Serve（启停 `chronos serve` 并查看日志）/ 📊 Benchmark（Markdown 表 + 对比图）/ 🔬 Auto-Tune（持久化日志 + 一键 Apply Best → Config）/ 📡 IO Monitor。i18n 支持 zh-Hans / zh-Hant / en / ja。窗口宽 1280 px 时，Gradio 会把最后几个 Tab（Auto-Tune、IO Monitor）收进 “…” 溢出菜单。
+FastAPI 服务加单页前端（`chronos/webui/`），默认只监听 127.0.0.1，无需登录。页面包括：模型（v3 预设、下文的自动规划器、实时参数与内存估算）、数据（扫描一个或多个数据集）、分词器（抽取 → 训练 → 评估 Chronos BPE）、训练（按顺序执行各阶段，每阶段可单独指定数据；可在每次验证时探测懒加载）、监控（只读查看任意运行目录，包括命令行启动的训练）、推理（同一提示词对比懒加载专家与全内存）、导出、服务（启停 `chronos serve`）、基准测试、自动调参、IO 指标。
+
+- **语言。** 支持 zh-Hans、zh-Hant、en、ja，自动跟随浏览器语言，不支持的语言回退到英文。每个设置项都有悬浮说明，给出含义和推荐值（光标停留 2 秒后显示；“?” 标记 0.4 秒后显示）。
+- **路径。** “浏览…”列出服务所在电脑上的文件夹。“上传…”使用系统文件管理器：在服务所在的电脑上由服务打开系统对话框，直接使用原路径；从其他设备访问时，文件上传到 `<workdir>/uploads/` 后使用该路径。数据集字段可以填多个文件或文件夹（每行一个），训练和导出校准会把它们合并成一个 JSONL 文件。
+- **局域网访问**（`--lan`）。其他设备用 `CHRONOS_UI_KEY` 登录；未设置时启动时会生成并打印一个密钥。服务所在的电脑无需登录。登录后的浏览器能以服务用户的权限训练、读写文件，只应在可信网络中使用。不配 `--ssl-certfile` / `--ssl-keyfile` 或 TLS 反向代理时，密钥以明文经过 HTTP。`--max-upload-mb` 限制单个上传文件（默认 20480）；`--no-native-dialog` 关闭系统对话框（例如通过 SSH 运行时）。绑定其他地址需要 `--allow-remote` 并在环境变量中提供密钥。
 
 ### 预设与自动规划器
 
@@ -776,6 +780,8 @@ Project_Chronos/
 │   │   └── corpus/                # 下载 / 清洗 / 去重 / 泄漏过滤 / 分片
 │   ├── tokenizer/                 # Chronos BPE 构建器（抽取、规范化、训练、评估）
 │   ├── monitor/                   # 只读运行监控：快照、API 服务、静态页面
+│   ├── webui/                     # Web UI：FastAPI 服务、字段 schema、i18n/*.json、static/ 单页前端
+│   ├── workbench/                 # Web UI 任务：训练 worker、数据扫描、文件选取与合并、懒加载探针
 │   ├── backend/
 │   │   ├── __init__.py            # BackendDispatcher（cpu/mps/cuda/mlx）
 │   │   ├── dispatcher.py          # 探针 + 优先级 + 训练能力声明
@@ -787,7 +793,7 @@ Project_Chronos/
 │   │   ├── runtime.py             # 模型发现、懒加载专家、推测生成
 │   │   └── vllm_adapter.py        # 可选 vLLM 注册（无 vLLM 时优雅降级）
 │   └── cli.py                     # 统一 CLI
-├── ui/                            # Gradio Web UI（i18n: zh-Hans/zh-Hant/en/ja）
+├── ui/                            # 旧版 Gradio 控制台（chronos-ui --legacy）
 │   ├── i18n.py
 │   ├── estimator.py               # 实时参数量/内存估算（与 Config 同步）
 │   └── tabs/

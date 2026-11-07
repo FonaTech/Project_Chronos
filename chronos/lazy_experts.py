@@ -92,7 +92,9 @@ def checkpoint_cache_dir(model_path: str, config, *, backend: str = "torch", tag
     per-expert caches keep their historical names (``ckpt_<key>`` for Torch,
     ``ckpt_<key>_mlx`` for MLX); cluster layouts add ``_<tag>``.
     """
-    base = root or os.path.join(os.getcwd(), "expert_cache")
+    # ``CHRONOS_EXPERT_CACHE_ROOT`` lets a dedicated process (the validation
+    # probe) keep its caches in a scratch directory it deletes afterwards.
+    base = root or os.environ.get("CHRONOS_EXPERT_CACHE_ROOT") or os.path.join(os.getcwd(), "expert_cache")
     if not model_path or not os.path.exists(model_path):
         name_dir = base
     else:

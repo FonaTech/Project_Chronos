@@ -137,7 +137,9 @@ class RunMonitor:
         last = rows[-1] if rows else {}
         finished = any(r.get("event") == "final" for r in rows[-50:])
         declared = heartbeat.get("state")
-        if declared in ("finished", "failed") and not alive:
+        if declared in ("finished", "failed") and (not alive or finished):
+            # A heartbeat that declares the end, backed by a ``final`` event, wins even when the pid
+            # is still alive (the writer runs inside a longer-lived process, or the pid was reused).
             state = declared
         elif finished and not alive:
             state = "finished"
@@ -229,6 +231,7 @@ class RunMonitor:
                         self._stream(os.path.join(path, "samples.jsonl"), max_rows=200).read()[-40:] if isinstance(x, dict)],
             "inspections": self._inspections(path),
             "checkpoints": self._checkpoints(path),
+            "lazy_probe": self._lazy_probes(path, limit=20),
             "counts": {"metric_rows": len(train_rows), "events": len(events), "parameter_rows": len(params)},
         }
         if history:
@@ -313,6 +316,46 @@ class RunMonitor:
                 _numeric_leaves({k: v for k, v in data.items() if k not in meta + ("precision", "run_dir")}, "", metrics)
                 out.append({"file": os.path.basename(file), **{k: data.get(k) for k in meta}, "metrics": metrics})
         return out
+
+    # Columns the monitor table shows per probe variant (the full result stays in lazy_probe.jsonl).
+    PROBE_MEASURED = ("tokens_per_s", "decode_tokens_per_s", "resident_hit_rate", "prediction_hit_rate",
+                      "cold_miss_predict_hit_rate", "on_demand_loads", "prefetch_wait_time_s", "peak_rss_gb",
+                      "spec_acceptance_rate", "speed_vs_full", "paging_resolved", "num_pages",
+                      "effective_expert_budget", "tokens")
+    PROBE_FIDELITY = ("exact_match_rate", "positionwise_agreement", "min_matching_prefix")
+
+    def _lazy_probes(self, path: str, limit: int = 20) -> list[dict]:
+        """Mid-training lazy-expert probe results (``lazy_probe.jsonl``), newest last.
+
+        Each entry keeps phase / step / wall time and, per variant, the label,
+        settings, measured efficiency + hit rates and fidelity versus the
+        full-memory reference; skipped requests keep their reason."""
+        out = []
+        for row in self._stream(os.path.join(path, "lazy_probe.jsonl"), max_rows=500).read()[-limit:]:
+            if not isinstance(row, dict):
+                continue
+            entry = {k: row.get(k) for k in ("time", "phase", "step", "checkpoint", "wall_s", "skipped", "error") if k in row}
+            result = row.get("result") or {}
+            if result.get("skipped"):
+                entry["skipped"] = result["skipped"]
+            if result.get("variants") is not None:
+                entry.update({k: result.get(k) for k in ("trained_with_clusters", "auto_paging", "num_experts",
+                                                          "top_k", "truncated", "variants_requested", "elapsed_s",
+                                                          "conditions")})
+                entry["references"] = {b: (r.get("measured") or {}).get("tokens_per_s")
+                                       for b, r in (result.get("references") or {}).items()}
+                entry["variants"] = [{
+                    "label": v.get("label"), "settings": v.get("settings"),
+                    **({"error": v["error"]} if "error" in v else {}),
+                    "measured": {k: (v.get("measured") or {}).get(k) for k in self.PROBE_MEASURED},
+                    "fidelity": {k: (v.get("fidelity") or {}).get(k) for k in self.PROBE_FIDELITY},
+                } for v in result["variants"]]
+            out.append(entry)
+        return out
+
+    def lazy_probes(self, run: str | None, limit: int = 200) -> list[dict]:
+        path = self.run_dir(run)
+        return self._lazy_probes(path, limit=limit) if path else []
 
     @staticmethod
     def _checkpoints(path: str) -> list[dict]:

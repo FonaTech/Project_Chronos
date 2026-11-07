@@ -597,7 +597,7 @@ def test_train_backend_choice_helpers():
         _train_backend_dropdown_choices,
     )
 
-    with mock.patch("ui.tabs.train_tab.training_available", return_value=["mlx", "mps", "cpu"]):
+    with mock.patch("chronos.workbench.training.training_available", return_value=["mlx", "mps", "cpu"]):
         assert _available_train_backend_choices() == ["auto", "mlx", "mps", "cpu"]
         choices = _train_backend_dropdown_choices("en")
         assert choices[0][1] == "auto"
@@ -1956,8 +1956,8 @@ def test_ui_train_session_mlx_topology_mismatch_starts_fresh(tmp_path, monkeypat
         return Result()
 
     monkeypatch.setattr("chronos.mlx.training.run_mlx_stage", fake_run_mlx_stage)
-    monkeypatch.setattr("ui.tabs.train_tab.resolve_training_device", lambda _requested: ("mlx", "mlx"))
-    monkeypatch.setattr("ui.tabs.train_tab._verify_checkpoint_warn", lambda *args, **kwargs: None)
+    monkeypatch.setattr("chronos.workbench.training.resolve_training_device", lambda _requested: ("mlx", "mlx"))
+    monkeypatch.setattr("chronos.workbench.training._verify_checkpoint_warn", lambda *args, **kwargs: None)
 
     session = TrainSession()
     messages = []
@@ -2052,7 +2052,7 @@ def test_train_cleanup_removes_only_gradio_temp_dataset(monkeypatch, tmp_path):
 def test_train_start_merge_preserves_config_weight_decay(monkeypatch, tmp_path):
     from ui.tabs import train_tab
 
-    monkeypatch.setattr(train_tab, "resolve_training_device", lambda requested: ("cpu", "cpu"))
+    monkeypatch.setattr("chronos.workbench.training.resolve_training_device", lambda requested: ("cpu", "cpu"))
     cfg, effective = train_tab._prepare_training_run_config(
         {"weight_decay": 0.123, "cpu_threads": "auto"},
         "pretrain",
@@ -2075,7 +2075,7 @@ def test_train_start_prefers_latest_uploaded_dataset(monkeypatch, tmp_path):
     from types import SimpleNamespace
     from ui.tabs import train_tab
 
-    monkeypatch.setattr(train_tab, "resolve_training_device", lambda requested: ("cpu", "cpu"))
+    monkeypatch.setattr("chronos.workbench.training.resolve_training_device", lambda requested: ("cpu", "cpu"))
     gradio_root = tmp_path / "gradio"
     upload_dir = gradio_root / "upload_hash"
     upload_dir.mkdir(parents=True)
@@ -2540,7 +2540,7 @@ def test_generate_api_returns_plain_json_with_chart_records():
         "decode_diagnostics": {"lazy_offload": {"generated_token_ids": [2], "warning": "empty clean decode"}},
         "chart": [{"metric": "Decode speed", "mode": "lazy_offload", "value": 1.0, "unit": "tokens/s"}],
     }
-    with mock.patch("ui.tabs.inference_tab._run_inference_modes", return_value=fake_raw):
+    with mock.patch("chronos.workbench.inference._run_inference_modes", return_value=fake_raw):
         out = mod.generate_api({}, "cpu", "offload", "", "hello", 1, 0.1, False, "1.00", False)
 
     assert isinstance(out, dict)

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "Project_Chronos"
-version = "0.3.1a0"
+version = "0.3.1a1"
 description = "Storage-aware recurrent-depth MoE: lookahead expert prefetch, SSD-lazy experts, hybrid MLA/SWA attention, self-speculative decoding"
 readme = "README.md"
 license = "Apache-2.0"
@@ -45,7 +45,7 @@ Issues = "https://github.com/FonaTech/Project_Chronos/issues"
 
 [project.scripts]
 chronos       = "chronos.cli:main"
-chronos-ui    = "chronos.app:main"
+chronos-ui    = "chronos.webui.server:main"
 chronos-train = "train_chronos:main"
 chronos-eval  = "chronos.eval.io_profiler:main"
 chronos-bench = "chronos.eval.benchmark:main"
@@ -68,6 +68,7 @@ include = ["chronos*", "ui*"]
 [tool.setuptools.package-data]
 ui = ["event_contract.js", "presets_v3.json"]
 "chronos.monitor" = ["static/*.html", "static/*.js", "static/*.css"]
+"chronos.webui" = ["static/*.html", "static/*.js", "static/*.css", "static/*.svg", "i18n/*.json"]
 
 [tool.black]
 line-length = 100

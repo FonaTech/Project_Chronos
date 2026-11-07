@@ -470,30 +470,19 @@ pip install vllm
 
 ## Quick start
 
-### Web UI (12 tabs, 4 languages)
+### Web UI (11 pages, 4 languages)
 
 ```bash
-chronos-ui
-# or
-python chronos_app.py
+chronos-ui                       # or: python chronos_app.py
+chronos-ui --lan                 # also open it to the local network (off by default)
+chronos-ui --legacy              # the previous Gradio console
 ```
 
-Tabs included:
+A FastAPI server with a single-page app (`chronos/webui/`). It listens on 127.0.0.1 without a login. Pages: Model (v3 presets, the auto planner below, a live parameter / memory estimate), Data (scan one or several datasets), Tokenizer (extract → train → evaluate the Chronos BPE), Train (stages in order, each with its own data; optional lazy-expert probe at every validation), Monitor (read-only view of any run folder, including runs started from the command line), Inference (lazy experts vs full memory on one prompt), Export, Serve (start and stop `chronos serve`), Benchmark, Auto-tune, IO metrics.
 
-- `Config`: v3 presets, the auto planner (below) and a live parameter / memory estimator
-- `Data` for dataset scanning and conversion
-- `Tokenizer`: extract text from datasets, train the Chronos BPE, evaluate and save
-- `Train` with its own `data_path`; applies the selected stage's overrides
-- `Training Monitor` (read-only view of `runs/`; see below)
-- `6-Stage Pipeline` with per-stage dataset paths
-- `Inference`
-- `Export` for FP16/Q8_0 safetensors and GGUF deployment artifacts
-- `Serve`: start and stop `chronos serve` and view its log
-- `Benchmark` with Markdown table + comparison plots
-- `Auto-Tune` with persistent logs and one-click `Apply Best -> Config`
-- `IO Monitor`
-
-At a 1280 px wide window, Gradio moves the last tabs (Auto-Tune, IO Monitor) into its "…" overflow menu.
+- **Languages.** zh-Hans, zh-Hant, en and ja; the page follows the browser language and falls back to English. Every setting has hover help with its meaning and recommended value (after a 2 s rest; the "?" mark after 0.4 s).
+- **Paths.** "Browse…" lists folders on the server's machine. "Upload…" uses the system file manager: on the server's own machine the server opens the native dialog and the file is used where it is; from another machine the files are uploaded to `<workdir>/uploads/` and that path is used. Dataset fields take several files or folders, one per line; training and export calibration merge them into one JSONL file.
+- **LAN access** (`--lan`). Other machines sign in with `CHRONOS_UI_KEY`, or with a key printed at start when none is set; the server's own machine needs no sign-in. A signed-in browser can train and read or write files with the server user's rights, so use it on a trusted network only. The key crosses plain HTTP in clear text unless `--ssl-certfile` / `--ssl-keyfile` or a TLS proxy is used. `--max-upload-mb` caps a single upload (default 20480); `--no-native-dialog` turns the native dialog off, for example over SSH. `--allow-remote` with a key in the environment binds any other host.
 
 ### Presets and the auto planner
 
@@ -782,6 +771,8 @@ Project_Chronos/
 │   │   └── corpus/                # download / clean / dedup / leak filter / shards
 │   ├── tokenizer/                 # Chronos BPE builder (extract, normalize, train, evaluate)
 │   ├── monitor/                   # Read-only run monitor: snapshot, API server, static page
+│   ├── webui/                     # Web UI: FastAPI server, field schema, i18n/*.json, static/ SPA
+│   ├── workbench/                 # Web UI jobs: train worker, data scan, file picking / merge, lazy probe
 │   ├── backend/
 │   │   ├── __init__.py            # BackendDispatcher (cpu/mps/cuda/mlx)
 │   │   ├── dispatcher.py          # Capability probing + priority logic
@@ -793,7 +784,7 @@ Project_Chronos/
 │   │   ├── runtime.py             # Model discovery, lazy experts, speculative generation
 │   │   └── vllm_adapter.py        # Optional vLLM registration
 │   └── cli.py                     # Unified CLI
-├── ui/                            # Gradio Web UI (zh-Hans / zh-Hant / en / ja)
+├── ui/                            # Legacy Gradio console (chronos-ui --legacy)
 │   ├── i18n.py
 │   ├── estimator.py               # Live parameter / memory estimator
 │   └── tabs/

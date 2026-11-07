@@ -14,6 +14,8 @@ Commands:
     chronos corpus    — download / clean / dedup / shard training corpora
     chronos longrun   — time-budgeted resumable MLX training run (alias: run)
     chronos monitor   — read-only training monitor page + JSON API
+    chronos lazy-probe — lazy-expert efficiency / hit rate / fidelity of a checkpoint or a run
+    chronos webui     — Web UI (alias: ui)
 """
 import sys
 import os
@@ -114,6 +116,10 @@ def main():
     sub.add_parser('longrun',   help='Time-budgeted resumable MLX training run', aliases=['run'], add_help=False)
     sub.add_parser('monitor',   help='Read-only training monitor page + JSON API', add_help=False)
     sub.add_parser('bundle',    help='Out-of-the-box model bundle: build/check/translate/finetune/serve', add_help=False)
+    sub.add_parser('lazy-probe', help='Lazy-expert efficiency/hit-rate/fidelity probe (checkpoint or --watch run)',
+                   add_help=False)
+    sub.add_parser('webui',     help='Web UI (FastAPI; --legacy for the Gradio console)', aliases=['ui'],
+                   add_help=False)
 
     known, rest = parser.parse_known_args()
     longrun = lambda rest: _module_main('chronos.mlx.training.longrun', rest)  # noqa: E731
@@ -132,6 +138,9 @@ def main():
         'run':       longrun,
         'monitor':   lambda rest: _module_main('chronos.monitor.server', rest),
         'bundle':    lambda rest: _module_main('chronos.bundle.cli', rest),
+        'lazy-probe': lambda rest: _module_main('chronos.workbench.lazy_probe', rest),
+        'webui':     lambda rest: _module_main('chronos.webui.server', rest),
+        'ui':        lambda rest: _module_main('chronos.webui.server', rest),
     }
     dispatch[known.command](rest)
 

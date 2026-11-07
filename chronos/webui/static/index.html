@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en" data-theme="system">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Chronos</title>
+<link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/static/app.css">
+<script type="module" src="/static/app.js"></script>
+</head>
+<body>
+<a class="skip" href="#main" data-i18n="ui.skip">Skip to content</a>
+<header class="top">
+  <div class="brand">
+    <img src="/static/icon.svg" alt="" width="28" height="28">
+    <div>
+      <h1 data-i18n="app.title">Chronos</h1>
+      <p class="sub" data-i18n="app.subtitle"></p>
+    </div>
+  </div>
+  <div class="top-tools">
+    <span id="auth-badge" class="badge" role="status"></span>
+    <label class="compact"><span data-i18n="ui.language">Language</span>
+      <select id="lang-select">
+        <option value="zh-Hans">简体中文</option>
+        <option value="zh-Hant">繁體中文</option>
+        <option value="en">English</option>
+        <option value="ja">日本語</option>
+      </select>
+    </label>
+    <label class="compact"><span data-i18n="ui.theme">Theme</span>
+      <select id="theme-select">
+        <option value="system" data-i18n="ui.theme.system">System</option>
+        <option value="light" data-i18n="ui.theme.light">Light</option>
+        <option value="dark" data-i18n="ui.theme.dark">Dark</option>
+      </select>
+    </label>
+    <button id="logout" class="ghost" hidden data-i18n="ui.logout">Log out</button>
+  </div>
+</header>
+<div class="shell">
+  <nav id="nav" class="nav" aria-label="Sections"></nav>
+  <main id="main" tabindex="-1"></main>
+</div>
+<div id="tooltip" class="tooltip" role="tooltip" hidden></div>
+<div id="toasts" class="toasts" aria-live="polite"></div>
+<dialog id="login-dialog">
+  <form id="login-form" method="dialog">
+    <h2 data-i18n="ui.login">Log in</h2>
+    <p data-i18n="ui.login_needed"></p>
+    <label><span data-i18n="ui.key">Key</span><input id="login-key" type="password" autocomplete="current-password" required></label>
+    <p id="login-error" class="error" hidden data-i18n="ui.login_failed"></p>
+    <div class="row end"><button type="submit" class="primary" data-i18n="ui.login">Log in</button></div>
+  </form>
+</dialog>
+</body>
+</html>

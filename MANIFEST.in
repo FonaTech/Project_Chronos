@@ -1,5 +1,7 @@
 include README.md README_zh.md LICENSE THIRD_PARTY_NOTICES.md CHANGELOG.md requirements.txt
 recursive-include chronos/monitor/static *.html *.js *.css
+recursive-include chronos/webui/static *.html *.js *.css *.svg
+recursive-include chronos/webui/i18n *.json
 include ui/event_contract.js
 global-exclude __pycache__ *.py[cod] .DS_Store
 prune runs
