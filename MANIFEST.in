@@ -12,4 +12,4 @@ prune results
 prune reports
 prune .archive
 prune Translation?Training?Data
-prune chronos/mlx/training/recipes
+prune demos

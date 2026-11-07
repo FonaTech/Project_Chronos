@@ -294,6 +294,9 @@ def test_monitor_static_assets_parse():
     with open(os.path.join(static, "index.html"), encoding="utf-8") as fh:
         page = fh.read()
     assert "<script>" not in page and " style=" not in page and "onclick" not in page   # CSP: no inline code
+    with open(os.path.join(static, "app.js"), encoding="utf-8") as fh:
+        app = fh.read()
+    assert '"lazy"' in app and "function panelLazy" in app and "api/lazy_probes" in app   # lazy-expert tab
     node = shutil.which("node")
     if node is None:
         pytest.skip("node not installed")

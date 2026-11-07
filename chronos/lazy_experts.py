@@ -1,4 +1,4 @@
-"""SSD-lazy routed experts: one implementation for the Web UI, bundle and server.
+"""SSD-lazy routed experts: one implementation for the Web UI, model bundles and the server.
 
 The page layout adapts to how the checkpoint was trained.  Weights trained
 with the cluster-locality constraint (``lambda_cluster_locality > 0``) keep a

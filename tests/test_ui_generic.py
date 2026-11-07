@@ -17,10 +17,10 @@ if _repo_root not in sys.path:
 # ---- evaluation discovery ------------------------------------------------------
 def test_split_key_groups_by_metric_name_not_task():
     from chronos.monitor.evals import split_key
-    assert split_key("probe_en_zh_bleu") == ("bleu", "probe en_zh")
-    assert split_key("probe_zh_en_bleu") == ("bleu", "probe zh_en")
+    assert split_key("probe_math_accuracy") == ("accuracy", "probe math")
+    assert split_key("probe_code_accuracy") == ("accuracy", "probe code")
     assert split_key("qa_accuracy") == ("accuracy", "qa")
-    assert split_key("bleu_zh") == ("bleu", "bleu_zh")
+    assert split_key("bleu_dev") == ("bleu", "bleu_dev")
     assert split_key("accuracy") == ("accuracy", "accuracy")
     assert split_key("pass1") == ("pass1", "pass1")
     assert split_key("weird_thing") == ("weird_thing", "weird_thing")
@@ -47,10 +47,10 @@ def test_eval_metrics_discovers_any_task_and_separates_context():
 
 def test_sample_view_maps_roles_for_any_task():
     from chronos.monitor.evals import sample_view
-    mt = sample_view({"time": "t", "phase": "pretrain", "step": 5, "direction": "en_zh", "set": "dev",
-                      "src": "Hello", "ref": "你好", "hyp": "您好"})
-    assert (mt["input"], mt["reference"], mt["output"]) == ("Hello", "你好", "您好")
-    assert mt["tags"] == {"direction": "en_zh", "set": "dev"}
+    mt = sample_view({"time": "t", "phase": "pretrain", "step": 5, "direction": "a_b", "set": "dev",
+                      "src": "Hello", "ref": "Hallo", "hyp": "Hallo!"})
+    assert (mt["input"], mt["reference"], mt["output"]) == ("Hello", "Hallo", "Hallo!")
+    assert mt["tags"] == {"direction": "a_b", "set": "dev"}
     qa = sample_view({"phase": "sft", "step": 9, "question": "2+2?", "answer": "4", "prediction": "4",
                       "task": "math", "score": 1.0, "meta": {"x": 1}})
     assert (qa["input"], qa["reference"], qa["output"]) == ("2+2?", "4", "4")
@@ -111,6 +111,28 @@ def test_monitor_page_hardcodes_no_task():
         tab = fh.read()
     for needle in ("probe_en_zh", "bleu_zh", "en→zh", "FLORES"):
         assert needle not in tab, needle
+
+
+def test_kernel_has_no_translation_task_code():
+    """Task tooling (corpora, metrics, bundles) lives in extensions such as
+    demos/translation; the kernel packages stay task-agnostic."""
+    import re
+    pattern = re.compile(r"sacrebleu|sacremoses|flores|wmt2|\bbleu_zh\b|en_zh|zh_en|enzh|en→zh|zh→en|"
+                         r"<\|en\|>|<\|zh\|>|Translation Training Data|翻译成|chronos[._]translate|"
+                         r"data\.corpus|chronos\.bundle", re.I)
+    hits = []
+    for top in ("chronos", "ui"):
+        for folder, dirs, files in os.walk(os.path.join(_repo_root, top)):
+            dirs[:] = [d for d in dirs if d != "__pycache__"]
+            for name in files:
+                if not name.endswith((".py", ".js", ".json", ".html", ".css")):
+                    continue
+                path = os.path.join(folder, name)
+                with open(path, encoding="utf-8") as fh:
+                    for no, line in enumerate(fh, 1):
+                        if pattern.search(line):
+                            hits.append(f"{os.path.relpath(path, _repo_root)}:{no}: {line.strip()[:120]}")
+    assert not hits, "\n".join(hits)
 
 
 # ---- data inspector -------------------------------------------------------------

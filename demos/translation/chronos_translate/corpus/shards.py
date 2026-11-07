@@ -7,6 +7,7 @@ Document mix (per pair, seeded):
   * ``<|en|>{en}<|zh|>{zh}`` and reverse  — cross-lingual alignment
 SFT stream: chat-template records ``[ids, loss_mask]`` (only the assistant
 reply is supervised) in a ``.bin`` + ``.idx`` pair for O(1) random access.
+The layout and its readers are generic: ``chronos.data.shards``.
 """
 from __future__ import annotations
 
@@ -18,11 +19,14 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 
 import numpy as np
 
+# Readers live in the kernel; re-exported so existing imports keep working.
+from chronos.data.shards import PackedTokenStream, SFTRecords, _dtype_for  # noqa: F401
+
 SFT_PROMPT_EN_ZH = "翻译成中文，只输出译文：\n"
-
-
-def _dtype_for(vocab_size: int):
-    return np.uint16 if vocab_size <= 65535 else np.uint32
+# Reverse direction (doc-mix shards, ``chronos_translate.corpus.docmix``): same
+# template, so one model serves both directions from the instruction alone.
+SFT_PROMPT_ZH_EN = "翻译成英文，只输出译文：\n"
+SFT_PROMPTS = {"en_zh": SFT_PROMPT_EN_ZH, "zh_en": SFT_PROMPT_ZH_EN}
 
 
 def _encode_batch(tok, texts: list[str]) -> list[list[int]]:
@@ -140,80 +144,6 @@ def build_shards(pairs_dir: str, tokenizer_dir: str, out_dir: str, *, workers: i
     with open(os.path.join(out_dir, "shards_manifest.json"), "w", encoding="utf-8") as fh:
         json.dump(manifest, fh, ensure_ascii=False, indent=2)
     return manifest
-
-
-class PackedTokenStream:
-    """Random fixed-length windows over memory-mapped pretrain shards."""
-
-    def __init__(self, folder: str, seq_len: int, dtype=np.uint16, seed: int = 0):
-        files = sorted(os.path.join(folder, f) for f in os.listdir(folder) if f.endswith(".bin"))
-        self.arrays = [np.memmap(f, dtype=dtype, mode="r") for f in files]
-        self.arrays = [a for a in self.arrays if a.size > seq_len + 1]
-        sizes = np.array([a.size for a in self.arrays], dtype=np.float64)
-        self.weights = sizes / sizes.sum()
-        self.total_tokens = int(sizes.sum())
-        self.seq_len = seq_len
-        self.rng = np.random.default_rng(seed)
-
-    def batch(self, batch_size: int) -> np.ndarray:
-        which = self.rng.choice(len(self.arrays), size=batch_size, p=self.weights)
-        out = np.empty((batch_size, self.seq_len + 1), dtype=np.int32)
-        for row, i in enumerate(which):
-            arr = self.arrays[i]
-            start = int(self.rng.integers(0, arr.size - self.seq_len - 1))
-            out[row] = arr[start:start + self.seq_len + 1]
-        return out
-
-
-class SFTRecords:
-    """Length-bucketed SFT batches with assistant-only loss masks."""
-
-    def __init__(self, folder: str, dtype=np.uint16, seed: int = 0, pad_id: int = 0):
-        stems = sorted(f[:-5] for f in os.listdir(folder) if f.endswith(".plen"))
-        self.tokens, self.offsets, self.plens, self.index = [], [], [], []
-        for si, stem in enumerate(stems):
-            base = os.path.join(folder, stem)
-            tok = np.memmap(base + ".bin", dtype=dtype, mode="r")
-            off = np.fromfile(base + ".idx", dtype=np.int64)
-            plen = np.fromfile(base + ".plen", dtype=np.int32)
-            self.tokens.append(tok); self.offsets.append(off); self.plens.append(plen)
-            self.index.append(np.stack([np.full(len(plen), si), np.arange(len(plen)),
-                                        np.diff(off)], axis=1))
-        self.index = np.concatenate(self.index) if self.index else np.zeros((0, 3), np.int64)
-        # Sorted by length once: each batch is a contiguous similar-length
-        # window found by binary search (O(log n), no full scan per batch).
-        self.index = self.index[np.argsort(self.index[:, 2], kind="stable")]
-        self.lengths = self.index[:, 2]
-        self.rng = np.random.default_rng(seed)
-        self.pad_id = pad_id
-
-    def __len__(self):
-        return len(self.index)
-
-    def batch(self, token_budget: int, max_rows: int = 256, width_multiple: int = 64):
-        """Sample a bucket of similar-length records filling ~token_budget tokens.
-
-        The padded width is rounded up to ``width_multiple`` so the training
-        graph sees a handful of shapes (Metal kernels are shape-specialized).
-        """
-        target = int(self.lengths[int(self.rng.integers(0, len(self.index)))])
-        tol = max(4, target // 8)
-        lo = int(np.searchsorted(self.lengths, target - tol, side="left"))
-        hi = int(np.searchsorted(self.lengths, target + tol, side="right"))
-        bucket = -(-(target + tol) // width_multiple) * width_multiple
-        rows = max(1, min(max_rows, token_budget // max(bucket, 1), hi - lo))
-        pick = self.index[lo + self.rng.choice(hi - lo, size=rows, replace=False)]
-        width = int(pick[:, 2].max())
-        width = -(-width // width_multiple) * width_multiple + 1   # +1: inputs/labels are shifted
-        ids = np.full((len(pick), width), self.pad_id, dtype=np.int32)
-        labels = np.full((len(pick), width), -100, dtype=np.int32)
-        for r, (si, ri, n) in enumerate(pick):
-            off = self.offsets[si][ri]
-            seq = self.tokens[si][off:off + n]
-            ids[r, :n] = seq
-            p = int(self.plens[si][ri])
-            labels[r, p:n] = seq[p:]
-        return ids, labels
 
 
 def main(argv=None) -> int:

@@ -24,15 +24,14 @@
     "C = 1.00e+13 FLOPs is outside the DeepSeek fit range 1e+17–2e+19; LR/batch are extrapolated and clamped"
    ]
   },
-  "Chronos-v3 50M (en→zh recipe)": {
-   "summary": "Exactly the enzh_50m_72h recipe (16k Chronos tokenizer, shards_v1).",
+  "Chronos-v3 50M (16k vocab)": {
+   "summary": "50M MoE (36 experts, top-2) for a 16k Chronos tokenizer; no memory saving.",
    "request": {
     "target_total": 50000000.0,
     "num_experts": 36,
     "active_experts": 2,
-    "data_paths": [
-     "Translation Training Data/shards_v1"
-    ],
+    "vocab_size": 16384,
+    "seq_len": 512,
     "memory_saving": "none",
     "ram_gb": 32
    },
@@ -42,9 +41,7 @@
    "params_label": "measured (meta-device count)",
    "training_peak_gb": 16.4,
    "training_peak_label": "estimated",
-   "notes": [
-    "token counts from Translation Training Data/shards_v1/shards_manifest.json"
-   ]
+   "notes": []
   },
   "Chronos-v3 200M (32 GB)": {
    "summary": "General 200M MoE, balanced memory saving, minimind 6400 vocab.",
@@ -226,7 +223,7 @@
     }
    }
   },
-  "Chronos-v3 50M (en→zh recipe)": {
+  "Chronos-v3 50M (16k vocab)": {
    "architecture_version": 3,
    "recurrent_attention_mode": "shared_first",
    "rope_layout": "per_head",
@@ -254,40 +251,42 @@
    "ram_budget_mb": null,
    "vram_budget_gb": 0.25,
    "dtype": "bfloat16",
-   "learning_rate": 0.0021,
+   "learning_rate": 0.0022,
    "batch_size": 32,
+   "accumulation_steps": 4,
    "epochs": 1,
+   "max_steps": 60656,
    "weight_decay": 0.1,
-   "save_interval": 3810,
+   "save_interval": 3030,
    "stage_overrides": {
     "pretrain": {
-     "learning_rate": 0.0021,
+     "learning_rate": 0.0022,
      "batch_size": 32,
-     "accumulation_steps": 8,
+     "accumulation_steps": 4,
      "max_seq_len": 512,
      "grad_clip": 1.0,
      "epochs": 1,
-     "max_steps": 0,
+     "max_steps": 60656,
      "weight_decay": 0.1,
-     "save_interval": 3810,
+     "save_interval": 3030,
      "lambda_router_anchor": 0.0
     },
     "sft": {
-     "learning_rate": 0.0007,
+     "learning_rate": 0.00073,
      "batch_size": 32,
-     "accumulation_steps": 4,
+     "accumulation_steps": 2,
      "max_seq_len": 512,
      "grad_clip": 1.0,
      "epochs": 1,
      "max_steps": 0,
      "weight_decay": 0.1,
-     "save_interval": 31560,
+     "save_interval": 500,
      "lambda_router_anchor": 0.0
     },
     "dpo": {
-     "learning_rate": 0.0001,
+     "learning_rate": 0.00011,
      "batch_size": 16,
-     "accumulation_steps": 4,
+     "accumulation_steps": 2,
      "max_seq_len": 512,
      "grad_clip": 1.0,
      "epochs": 1,
@@ -298,9 +297,9 @@
      "save_interval": 500
     },
     "orpo": {
-     "learning_rate": 0.00021,
+     "learning_rate": 0.00022,
      "batch_size": 16,
-     "accumulation_steps": 4,
+     "accumulation_steps": 2,
      "max_seq_len": 512,
      "grad_clip": 1.0,
      "epochs": 1,
@@ -327,9 +326,9 @@
      "save_interval": 500
     },
     "distill": {
-     "learning_rate": 0.0007,
+     "learning_rate": 0.00073,
      "batch_size": 32,
-     "accumulation_steps": 4,
+     "accumulation_steps": 2,
      "max_seq_len": 512,
      "grad_clip": 1.0,
      "epochs": 1,
@@ -338,10 +337,9 @@
      "alpha": 0.7,
      "temperature": 4.0,
      "lambda_router_anchor": 0.0,
-     "save_interval": 31560
+     "save_interval": 500
     }
-   },
-   "tokenizer_path": "./Translation Training Data/tokenizer_v1"
+   }
   },
   "Chronos-v3 200M (32 GB)": {
    "architecture_version": 3,

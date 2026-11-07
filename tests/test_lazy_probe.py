@@ -225,7 +225,19 @@ def test_worker_probes_checkpoint_after_validation_and_monitor_shows_it(trained_
                                                        "cpu/expert/r0.5/sync_on_demand"}
     for v in probe["variants"]:
         assert 0 <= v["measured"]["resident_hit_rate"] <= 1 and v["fidelity"]["exact_match_rate"] == 1.0
+        assert set(RunMonitor.PROBE_MEASURED) <= set(v["measured"])          # every lazy metric reaches the UI
+        assert set(RunMonitor.PROBE_FIDELITY) <= set(v["fidelity"])
+        assert v["measured"]["prefill_time_s"] >= 0 and v["measured"]["on_demand_load_time_s"] >= 0
     assert probe["conditions"]["label"] == "measured"
+    ref = probe["reference_measured"]["cpu"]
+    assert ref["tokens_per_s"] > 0 and ref["tokens_per_s"] == probe["references"]["cpu"]
+
+    from fastapi.testclient import TestClient
+    from chronos.monitor.server import create_monitor_app
+    client = TestClient(create_monitor_app(str(tmp_path / "runs")))
+    body = client.get("/api/lazy_probes", params={"run": "webui_job"}).json()
+    assert body["probes"] == snap["lazy_probe"]
+    assert client.get("/api/lazy_probes", params={"run": "missing"}).status_code == 404
 
 
 def test_worker_records_skip_when_validation_has_no_checkpoint(tmp_path, monkeypatch):

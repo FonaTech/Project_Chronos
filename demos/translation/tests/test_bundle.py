@@ -1,9 +1,8 @@
-"""``chronos bundle``: build → check → translate → prepare-data → fine-tune spec, on a tiny model."""
+"""``chronos-translate bundle``: build → check → translate → prepare-data → fine-tune spec, on a tiny model."""
 from __future__ import annotations
 
 import json
 import os
-import sys
 
 import pytest
 
@@ -11,12 +10,9 @@ torch = pytest.importorskip("torch")
 pq = pytest.importorskip("pyarrow.parquet")
 pa = pytest.importorskip("pyarrow")
 
-_repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if _repo_root not in sys.path:
-    sys.path.insert(0, _repo_root)
-
-from chronos.bundle import builder  # noqa: E402
-from chronos.bundle.builder import FLORES_REL, build_bundle, check_bundle, load_bundle_manifest  # noqa: E402
+from chronos_translate.bundle import builder  # noqa: E402
+from chronos_translate.bundle.builder import FLORES_REL, build_bundle, check_bundle, load_bundle_manifest  # noqa: E402
+from chronos_translate.model_presets import SPECIAL_TOKENS  # noqa: E402
 from chronos.model.checkpoint import (  # noqa: E402
     checkpoint_config_path, resolve_checkpoint_tokenizer, save_state_dict_with_config, tokenizer_metadata,
 )
@@ -42,14 +38,15 @@ def _config(vocab: int) -> ChronosConfig:
 
 @pytest.fixture(scope="module")
 def run_dir(tmp_path_factory):
-    """A finished-looking ``chronos longrun`` run directory (never trained; random weights)."""
+    """A finished-looking run directory (never trained; random weights)."""
     root = tmp_path_factory.mktemp("bundle_src")
     corpus = root / "pairs.jsonl"
     with open(corpus, "w", encoding="utf-8") as fh:
         for zh, en in zip(ZH * 40, EN * 40):
             fh.write(json.dumps({"translation": {"zh": zh, "en": en}}, ensure_ascii=False) + "\n")
     tok_dir = root / "tokenizer"
-    tok = build_tokenizer([str(corpus)], str(tok_dir), vocab_size=700, log=lambda *_: None)
+    tok = build_tokenizer([str(corpus)], str(tok_dir), vocab_size=700, special_tokens=SPECIAL_TOKENS,
+                          log=lambda *_: None)
     vocab = ((tok.vocab_size + 63) // 64) * 64
     torch.manual_seed(5)
     cfg = _config(vocab)
@@ -128,7 +125,7 @@ def test_check_detects_tampering_and_smoke_translates(bundle, tmp_path):
 
 
 def test_translate_backends_and_speculative_agree(bundle):
-    from chronos.bundle.runtime import BundleModel
+    from chronos_translate.bundle.runtime import BundleModel
     bm = BundleModel(bundle, device="cpu")
     src = EN[:3]
     plain = bm.translate(src, "en_zh", max_new_tokens=20)
@@ -153,7 +150,7 @@ def test_translate_backends_and_speculative_agree(bundle):
 def test_lazy_experts_translate_like_the_full_model(bundle, tmp_path):
     """SSD-lazy experts (MLX) give the same greedy output; the cache stays outside the bundle."""
     mx = pytest.importorskip("mlx.core")
-    from chronos.bundle.runtime import BundleModel
+    from chronos_translate.bundle.runtime import BundleModel
     from chronos.lazy_experts import LazyOptions
     prev = mx.default_device()
     try:
@@ -179,7 +176,7 @@ def test_lazy_experts_translate_like_the_full_model(bundle, tmp_path):
 
 
 def test_prepare_data_and_finetune_spec(bundle, tmp_path):
-    from chronos.bundle.finetune import prepare_data, write_finetune_spec
+    from chronos_translate.bundle.finetune import prepare_data, write_finetune_spec
     data = tmp_path / "mine.jsonl"
     rows = [{"zh": f"{zh}第{i}句。", "en": f"{en} Sentence {i}."} for i in range(30) for zh, en in zip(ZH, EN)]
     rows += [{"zh": ZH[0], "en": EN[0]}]                                    # FLORES+ pair: must be removed

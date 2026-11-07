@@ -119,14 +119,15 @@ flowchart LR
 | 命令 | 作用 |
 |---|---|
 | `chronos tokenizer` | 自研字节回退 BPE：按文字脚本预切分，按语言平衡合并；输出 HF 兼容的 `tokenizer.json` 和 chat template |
-| `chronos corpus download / build / shards` | 固定版本下载、清洗、全局去重、剔除评测集泄漏、生成 uint16 分片 |
-| `chronos longrun --spec recipe.json`（别名 `run`） | 按墙钟预算训练的 MLX 任务：每个阶段 warmup + cosine，NaN 回滚，续跑逐位一致，带验证和翻译探针 |
+| `chronos longrun --spec recipe.json`（别名 `run`） | 按墙钟预算训练的 MLX 任务：每个阶段 warmup + cosine，NaN 回滚，续跑逐位一致，验证 CE；任务通过继承 `LongRun`（`task_eval`）加入自己的指标 |
 | `chronos serve` | 原生运行时上的 Ollama/OpenAI 协议服务（见下文） |
 | `chronos monitor` | 只读训练监控页面 + JSON API（见下文） |
 
 `chronos.model.factory.fit_config` 按总参数量和激活参数量目标搜索模型配置。
 
-**50M 英译中 demo（进行中）**
+**内核与扩展。** `chronos` 包用于训练通用模型，不含任何任务特化代码。任务工具放在调用内核的扩展里。英↔中翻译 demo 就是这样一个扩展：`demos/translation`（`chronos-translate`：语料流水线、BLEU/chrF 训练、模型包，详见其 README）。它不在 `Project_Chronos` wheel 里，也不发布到 PyPI，需从仓库检出后用 `pip install -e demos/translation` 安装。
+
+**50M 英译中 demo（进行中；`demos/translation`）**
 - 模型：总参数 49.69M，激活 12.09M；36 个专家；MLA latent 128；SWA 窗口 128；自研 16k 词表。
 - 训练：72 小时 MLX bf16 任务（先预训练，后 SFT），2026-11-05 启动。
 - 中途实测：预训练第 13,996 步（计划约 24.7k 步）valid CE 为 2.477（第 1,656 步时为 3.012）。该 checkpoint 已打包为 `chronos-enzh-50m-pretrain-s13996`（见“模型包”）。
@@ -452,7 +453,7 @@ pip install "Project_Chronos[mlx]"
 **可选依赖组**（版本已固定）：
 ```bash
 pip install "Project_Chronos[serve]"      # chronos serve / chronos monitor（fastapi、uvicorn）
-pip install "Project_Chronos[translate]"  # 语料反分词 + BLEU/chrF 探针（sacremoses、sacrebleu）
+pip install -e demos/translation          # 英↔中 demo 扩展 chronos-translate，仅限仓库检出安装（不在 PyPI）
 ```
 
 **vLLM 服务（可选，仅 Linux+CUDA）：**
@@ -492,7 +493,7 @@ Config Tab 提供 5 档 v3 预设。它们都由规划器生成，存放在 `ui/
 | 预设 | 总参数 / 激活参数（实测） | 形状 | 内存档位 | 训练峰值（估算） |
 |---|---|---|---|---|
 | Chronos-v3 Tiny (smoke / CI) | 1.51M / 1.29M | E4 top-2，词表 6400，seq 128，深度 2 | none | 2.13 GB |
-| Chronos-v3 50M (en→zh recipe) | 49.69M / 12.09M | h384，L6，E36 top-2，词表 16384，seq 512 | none | 16.4 GB（正在跑的任务实测峰值 8.72 GB） |
+| Chronos-v3 50M (16k vocab) | 49.69M / 12.09M | h384，L6，E36 top-2，词表 16384，seq 512 | none | 16.4 GB（正在跑的任务实测峰值 8.72 GB） |
 | Chronos-v3 200M (32 GB)（默认） | 200.72M / 28.20M | h576，E32 top-2 | balanced | 10.14 GB |
 | Chronos-v3 500M (32 GB) | 499.53M / 61.59M | E48 top-3 | aggressive | 9.26 GB |
 | Chronos-v3 1B (64 GB) | 1002.17M / 99.74M | E64 top-4，seq 2048 | aggressive | 18.92 GB |
@@ -562,12 +563,13 @@ OLLAMA_HOST=127.0.0.1:11435 ollama run <模型名> "你好"
 - stock `ollama` / llama.cpp 无法执行 Chronos 的 GGUF 文件，因为 MLA+SWA 混合层和收缩式循环没有对应的 stock 实现；请改用本服务。
 - 安全：默认只监听 127.0.0.1，不带认证。绑定其他地址必须同时给出 `--allow-remote` 和 `--api-key`，客户端随后发送 `Authorization: Bearer <key>`。
 
-### 模型包（开箱即用的预训练模型）
+### 模型包（翻译 demo 扩展）
 
-`chronos bundle build` 把 `chronos longrun` 某次运行导出的一个 checkpoint 打包成解压即用的目录。打包过程只读取运行目录。
+模型包属于翻译扩展（`demos/translation`）。先构建两个 wheel（`python -m build --outdir dist .` 和 `python -m build --outdir dist demos/translation`）。`chronos-translate bundle build` 把某次运行导出的一个 checkpoint 打包成解压即用的目录。打包过程只读取运行目录。
 
 ```bash
-chronos bundle build --run-dir runs/enzh_50m_v1 --which best --wheel dist/project_chronos-0.3.0-py3-none-any.whl --pack
+chronos-translate bundle build --run-dir runs/enzh_50m_v1 --which best --pack \
+    --wheel dist/project_chronos-0.3.1a2-py3-none-any.whl --wheel dist/chronos_translate-0.3.1a2-py3-none-any.whl
 ```
 
 | 包内路径 | 内容 |
@@ -576,14 +578,14 @@ chronos bundle build --run-dir runs/enzh_50m_v1 --which best --wheel dist/projec
 | `eval/` | FLORES+ dev/devtest（CC BY-SA 4.0），供 `bundle eval` / `probe` 使用 |
 | `data/sft_valid/` | 该次运行的 SFT 验证分片 |
 | `third_party/minimind/` | 内置 minimind（Apache-2.0），无需 git clone |
-| `wheels/`、`bin/setup.sh`、`bin/chronos` | 离线安装到 `.venv`；启动脚本设置 `CHRONOS_BUNDLE` / `CHRONOS_MINIMIND_DIR` |
+| `wheels/`、`bin/setup.sh`、`bin/chronos` | 把内核和扩展两个 wheel 离线安装到 `.venv`；启动脚本设置 `CHRONOS_BUNDLE` / `CHRONOS_MINIMIND_DIR`，并把 `bundle …` 转给 `chronos-translate` |
 | `recipes/source_run_spec.json`、`recommended.json` | 产生这份权重的配方；微调档位 `smoke` / `quick` / `standard` / `full` |
 | `bundle.json` | 来源信息（步数、token 数、valid CE）、实测质量探针、每个文件的 SHA-256 |
 
 接收方的用法：
 
 ```bash
-bin/setup.sh                                              # 建 venv、装 wheel、运行 `bundle check`
+bin/setup.sh                                              # 建 venv、装 wheels、运行 `bundle check`
 bin/chronos bundle translate "The weather is very nice today."
 bin/chronos bundle translate --backend mlx --speculative --file examples/translate_en.txt
 bin/chronos bundle eval --split devtest -n 200
@@ -592,7 +594,7 @@ bin/chronos bundle finetune --data work/data --run-dir work/ft --tier quick --mo
 bin/chronos bundle serve -- --port 11435
 ```
 
-`--speculative` 要求 `--repetition-penalty 1.0`（此时的默认值），因为惩罚会逐位置改变目标分布。`finetune` 写出一份 `init_checkpoint` 指向包内权重的 `chronos longrun` spec；运行目录里已有训练时会拒绝写入。用许可未知的数据（WMT19、OPUS-100）训练的模型包，`NOTICE.md` 中写明权重仅供研究使用。
+`--speculative` 要求 `--repetition-penalty 1.0`（此时的默认值），因为惩罚会逐位置改变目标分布。`finetune` 写出一份 `init_checkpoint` 指向包内权重的 `chronos-translate run` spec；运行目录里已有训练时会拒绝写入。用许可未知的数据（WMT19、OPUS-100）训练的模型包，`NOTICE.md` 中写明权重仅供研究使用。
 
 ### 部署导出
 
@@ -777,7 +779,7 @@ Project_Chronos/
 │   │   └── benchmark.py           # 端到端基准测试
 │   ├── data/
 │   │   ├── flexible_dataset.py    # 自动识别任意 JSONL 字段格式
-│   │   └── corpus/                # 下载 / 清洗 / 去重 / 泄漏过滤 / 分片
+│   │   └── shards.py              # 内存映射的预训练 / SFT 分片读取器
 │   ├── tokenizer/                 # Chronos BPE 构建器（抽取、规范化、训练、评估）
 │   ├── monitor/                   # 只读运行监控：快照、API 服务、静态页面
 │   ├── webui/                     # Web UI：FastAPI 服务、字段 schema、i18n/*.json、static/ 单页前端
@@ -787,7 +789,6 @@ Project_Chronos/
 │   │   ├── dispatcher.py          # 探针 + 优先级 + 训练能力声明
 │   │   └── ext/opencl.py          # 第三方 OpenCL 插件钩子（stub）
 │   ├── _backend_legacy.py         # 向后兼容 build_model() 等旧 API
-│   ├── bundle/                    # chronos bundle：打包/校验/翻译/微调
 │   ├── serving/
 │   │   ├── ollama_server.py       # chronos serve：Ollama/OpenAI 协议层
 │   │   ├── runtime.py             # 模型发现、懒加载专家、推测生成
@@ -824,6 +825,8 @@ Project_Chronos/
 │   └── fixtures/                  # tiny_pretrain / tiny_sft / tiny_dpo / tiny_grpo
 ├── docs/
 │   └── vllm_integration.md
+├── demos/
+│   └── translation/               # 英↔中扩展（chronos-translate）：语料、训练、模型包；不进 wheel
 ├── pyproject.toml
 └── README.md / README_zh.md / THIRD_PARTY_NOTICES.md
 ```

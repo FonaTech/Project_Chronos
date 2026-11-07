@@ -112,7 +112,7 @@ class BundleModel:
         if self.prompt_format == "pretrain_tags":
             a, b = LANG_TAGS[direction]
             return [tok.token_to_id(a)] + tok.encode(src, add_special_tokens=False).ids + [tok.token_to_id(b)]
-        from chronos.data.corpus.shards import SFT_PROMPT_EN_ZH
+        from chronos_translate.corpus.shards import SFT_PROMPT_EN_ZH
         text = f"<|im_start|>user\n{SFT_PROMPT_EN_ZH}{src}<|im_end|>\n<|im_start|>assistant\n"
         return tok.encode(text, add_special_tokens=False).ids
 
@@ -246,7 +246,7 @@ class BundleModel:
 
 def eval_pairs(bundle_dir: str, split: str = "dev") -> list[tuple[str, str]]:
     """FLORES+ (en, zh) pairs shipped in ``<bundle>/eval``."""
-    from chronos.data.corpus.evalsets import load_eval_sets
+    from chronos_translate.corpus.evalsets import load_eval_sets
     name = "flores_dev" if split == "dev" else "flores_devtest"
     return load_eval_sets(os.path.join(os.path.abspath(bundle_dir), "eval"), [name]).get(name, [])
 

@@ -11,7 +11,13 @@ Designed for multi-day benchmark runs on Apple silicon:
 * Metrics go to ``metrics.jsonl`` (one JSON object per log interval) —
   losses by component, recurrent depth/halting, routing balance/entropy,
   lookahead recall, grad norm, LR, tokens/s, memory, plus periodic
-  validation CE and BLEU/chrF.  The UI monitor tails this file.
+  validation CE.  The UI monitor tails this file.
+
+The runner is task-agnostic.  A task adds its own quality metrics by
+subclassing ``LongRun`` and overriding ``task_eval`` (called at every
+validation and once at the end); whatever keys it returns are logged next to
+``valid_ce`` and discovered by the monitor.  ``demos/translation`` is one
+such extension.
 """
 from __future__ import annotations
 
@@ -55,8 +61,10 @@ class RunSpec:
     log_every_steps: int = 20
     validate_every_s: float = 3600.0
     checkpoint_every_s: float = 1800.0
-    bleu_samples: int = 200          # periodic FLORES devtest subset during SFT
-    final_eval_samples: int = 1012   # full FLORES+ devtest at the end (0 = skip)
+    # Task-metric sample counts handed to ``LongRun.task_eval`` (0 = skip):
+    # at each validation and once at the end of the run.
+    eval_samples: int = 0
+    final_eval_samples: int = 0
     seed: int = 1234
     dtype: str = "bfloat16"
     # "time": warmup + cosine over the phase's wall-clock budget, so the LR
@@ -66,15 +74,12 @@ class RunSpec:
     # Telemetry (monitor pages): per-tensor weight/grad/update statistics every
     # ``tensor_stats_every_s`` (0 = off) and per-virtual-layer routing.
     tensor_stats_every_s: float = 1800.0
-    # Greedy FLORES+ dev probe at each pretrain validation (``<|en|>…<|zh|>``
-    # format, both directions); samples go to ``samples.jsonl``.  0 = off.
-    probe_samples: int = 16
     # Start from these weights instead of a fresh initialization (a bundle's
     # ``model/*.pth``).  The checkpoint's topology and vocabulary must match
     # ``model_config``; optimizer state starts fresh.  Ignored on resume.
     init_checkpoint: str | None = None
     # Exported checkpoints are ``<run_dir>/<export_prefix>_<phase>[.best].pth``.
-    export_prefix: str = "chronos_enzh"
+    export_prefix: str = "chronos"
     extra: dict = field(default_factory=dict)
 
 
@@ -174,7 +179,7 @@ def recurrent_metrics(state: dict | None) -> dict:
 
 class PretrainSource:
     def __init__(self, shards_dir, seq_len, seed):
-        from chronos.data.corpus.shards import PackedTokenStream
+        from chronos.data.shards import PackedTokenStream
         self.stream = PackedTokenStream(os.path.join(shards_dir, "pretrain", "train"), seq_len, seed=seed)
         self.valid = PackedTokenStream(os.path.join(shards_dir, "pretrain", "valid"), seq_len, seed=seed + 1)
 
@@ -200,7 +205,7 @@ class PretrainSource:
 
 class SFTSource:
     def __init__(self, shards_dir, seed):
-        from chronos.data.corpus.shards import SFTRecords
+        from chronos.data.shards import SFTRecords
         self.records = SFTRecords(os.path.join(shards_dir, "sft", "train"), seed=seed)
         self.valid = SFTRecords(os.path.join(shards_dir, "sft", "valid"), seed=seed + 1)
 
@@ -573,10 +578,7 @@ class LongRun:
         ce = self._validate(source, phase)
         rec = {"phase": phase.name, "step": self.state["phase_step"], "event": "validation", "valid_ce": ce,
                "valid_ppl": math.exp(min(ce, 30))}
-        if phase.name == "sft" and self.spec.bleu_samples:
-            rec.update(self.translation_eval(self.spec.bleu_samples))
-        elif phase.name == "pretrain" and getattr(self.spec, "probe_samples", 0):
-            rec.update(self._pretrain_probe(int(self.spec.probe_samples)))
+        rec.update(self._safe_task_eval(phase.name, final=False))
         best = self.state["best_valid"].get(phase.name)
         if best is None or ce < best:
             self.state["best_valid"][phase.name] = ce
@@ -584,93 +586,74 @@ class LongRun:
         self._emit(rec)
         self.log(f"[eval] {json.dumps(rec, ensure_ascii=False)}")
 
-    def _pretrain_probe(self, n: int) -> dict:
-        from chronos.mlx.training.inspect_checkpoint import translation_probe
+    # ---- task hooks (overridden by task extensions) --------------------------
+    def task_eval(self, phase_name: str, n: int, *, final: bool = False) -> dict:
+        """Task metrics for the current weights; the kernel itself has none.
+
+        ``n`` comes from ``eval_samples_for`` (never 0: a zero count skips the call).
+        Return flat ``{metric_key: number}``; the keys land in the
+        ``validation`` / ``final`` rows of ``metrics.jsonl``.  Use
+        ``write_samples`` for example outputs and ``generate`` for decoding.
+        """
+        return {}
+
+    def eval_samples_for(self, phase_name: str, *, final: bool) -> int:
+        """Sample count for ``task_eval`` (per phase in task extensions)."""
+        return int((self.spec.final_eval_samples if final else self.spec.eval_samples) or 0)
+
+    def _safe_task_eval(self, phase_name: str, *, final: bool, n: int | None = None) -> dict:
+        n = self.eval_samples_for(phase_name, final=final) if n is None else int(n)
+        if n <= 0:
+            return {}
         self.model.eval()
         try:
-            probe = translation_probe(asdict(self.spec), self.model, "pretrain", n)
-        except Exception as exc:  # noqa: BLE001 - a probe failure must not stop training
-            self.log(f"[eval] pretrain probe skipped: {exc!r}")
-            return {}
+            return dict(self.task_eval(phase_name, n, final=final) or {})
+        except Exception as exc:  # noqa: BLE001 - a task metric must not stop training
+            self.log(f"[eval] task_eval skipped: {exc!r}")
+            return {"task_eval_error": f"{type(exc).__name__}: {exc}"[:200]}
         finally:
             self.model.train()
-        out = {}
-        with open(os.path.join(self.spec.run_dir, "samples.jsonl"), "a", encoding="utf-8") as fh:
-            for direction in ("en_zh", "zh_en"):
-                res = probe.get(direction)
-                if not isinstance(res, dict):
-                    continue
-                out[f"probe_{direction}_bleu"], out[f"probe_{direction}_chrf"] = res["bleu"], res["chrf"]
-                for sample in res.get("samples", [])[:3]:
-                    fh.write(json.dumps({"time": time.strftime("%Y-%m-%dT%H:%M:%S"), "phase": "pretrain",
-                                         "step": self.state["phase_step"], "direction": direction,
-                                         "set": probe.get("probe_set"), **sample}, ensure_ascii=False) + "\n")
-        if out:
-            out["probe_n"], out["probe_s"] = n, probe.get("probe_s")
-        return out
 
-    # ---- translation quality (greedy, KV cache, MLX GPU) ----------------------
     def _tokenizer(self):
         if not hasattr(self, "_tok"):
             from tokenizers import Tokenizer
             self._tok = Tokenizer.from_file(os.path.join(self.spec.tokenizer_dir, "tokenizer.json"))
         return self._tok
 
-    def translate(self, sources: list[str], max_new_tokens: int = 160) -> list[str]:
-        from chronos.data.corpus.shards import SFT_PROMPT_EN_ZH
-        tok = self._tokenizer()
-        end = tok.token_to_id("<|im_end|>")
-        self.model.eval()
+    def generate(self, prompt_ids: list[int], limit: int, stop_ids=()) -> list[int]:
+        """Greedy continuation with the KV cache (no sampling, no penalty)."""
+        stop = set(int(i) for i in stop_ids)
+        logits, _, cache = self.model(mx.array([prompt_ids], dtype=mx.int32))
         out = []
-        for src in sources:
-            prompt = f"<|im_start|>user\n{SFT_PROMPT_EN_ZH}{src}<|im_end|>\n<|im_start|>assistant\n"
-            ids = tok.encode(prompt, add_special_tokens=False).ids
-            src_len = len(tok.encode(src, add_special_tokens=False).ids)
-            limit = min(max_new_tokens, int(1.6 * src_len) + 16)   # zh output ≲ 1.6× en tokens
-            logits, _, cache = self.model(mx.array([ids], dtype=mx.int32))
-            gen = []
-            for _ in range(limit):
-                nxt = int(mx.argmax(logits[0, -1]).item())
-                if nxt == end:
-                    break
-                gen.append(nxt)
-                logits, _, cache = self.model(mx.array([[nxt]], dtype=mx.int32), cache=cache)
-            out.append(tok.decode(gen, skip_special_tokens=True))
-        self.model.train()
+        for _ in range(int(limit)):
+            nxt = int(mx.argmax(logits[0, -1]).item())
+            if nxt in stop:
+                break
+            out.append(nxt)
+            logits, _, cache = self.model(mx.array([[nxt]], dtype=mx.int32), cache=cache)
         return out
 
-    def translation_eval(self, n: int) -> dict:
-        import sacrebleu
-        from chronos.data.corpus.evalsets import load_eval_sets
-        raw = self.spec.extra.get("raw_root")
-        if not raw:
-            return {}
-        pairs = load_eval_sets(raw, ["flores_devtest"]).get("flores_devtest", [])[:n]
-        if not pairs:
-            return {}
-        t0 = time.monotonic()
-        hyps = self.translate([en for en, _zh in pairs])
-        refs = [zh for _en, zh in pairs]
-        bleu = sacrebleu.corpus_bleu(hyps, [refs], tokenize="zh")
-        chrf = sacrebleu.corpus_chrf(hyps, [refs])
+    def write_samples(self, rows: list[dict]) -> None:
+        """Append example outputs to ``samples.jsonl`` (any keys; the monitor shows them)."""
+        if not rows:
+            return
+        phase = self.spec.phases[min(self.state["phase_index"], len(self.spec.phases) - 1)].name
+        stamp = time.strftime("%Y-%m-%dT%H:%M:%S")
         with open(os.path.join(self.spec.run_dir, "samples.jsonl"), "a", encoding="utf-8") as fh:
-            for (en, zh), hyp in list(zip(pairs, hyps))[:5]:
-                fh.write(json.dumps({"time": time.strftime("%Y-%m-%dT%H:%M:%S"), "phase": self.spec.phases[
-                    min(self.state["phase_index"], len(self.spec.phases) - 1)].name, "step": self.state["phase_step"],
-                    "direction": "en_zh", "set": "flores_devtest", "src": en, "ref": zh, "hyp": hyp},
-                    ensure_ascii=False) + "\n")
-        return {"flores_devtest_n": len(pairs), "bleu_zh": round(bleu.score, 2), "chrf": round(chrf.score, 2),
-                "eval_s": round(time.monotonic() - t0, 1)}
+            for r in rows:
+                fh.write(json.dumps({"time": stamp, "phase": phase, "step": self.state["phase_step"], **r},
+                                    ensure_ascii=False) + "\n")
+
+    def pinned_modules(self) -> tuple[str, ...]:
+        """Modules imported at start so source edits during a long run cannot
+        change the code that evaluates it; extensions add theirs."""
+        return ("tokenizers", "chronos.data.shards", "chronos.mlx.training.inspect_checkpoint")
 
     # ---- whole run -----------------------------------------------------------
     def run(self):
-        # Pin every lazily-used module now so source edits during a multi-day
-        # run cannot change the code that evaluates it.
-        import sacrebleu  # noqa: F401
-        import tokenizers  # noqa: F401
-        import chronos.data.corpus.evalsets  # noqa: F401
-        import chronos.data.corpus.shards  # noqa: F401
-        import chronos.mlx.training.inspect_checkpoint  # noqa: F401
+        import importlib
+        for name in self.pinned_modules():
+            importlib.import_module(name)
         try:
             return self._run()
         except KeyboardInterrupt:
@@ -703,26 +686,83 @@ class LongRun:
         self._beat("evaluating")
         final = {"event": "final", "tokens_seen": self.state["tokens_seen"],
                  "hours": round((time.monotonic() - start) / 3600, 2)}
-        if self.spec.final_eval_samples:
-            final.update(self.translation_eval(self.spec.final_eval_samples))
+        phase = self.spec.phases[-1].name if self.spec.phases else ""
+        final.update(self._safe_task_eval(phase, final=True))
         self._emit(final)
         self._beat("finished", final=final)
         self.log(f"[run] done: {json.dumps(final, ensure_ascii=False)}")
         return final
 
 
-def main(argv=None) -> int:
-    import argparse
-    parser = argparse.ArgumentParser(description="Time-budgeted Chronos MLX training run")
-    parser.add_argument("--spec", required=True, help="RunSpec JSON (see chronos/mlx/training/recipes)")
-    parser.add_argument("--budget-hours", type=float, default=None)
-    args = parser.parse_args(argv)
-    raw = json.load(open(args.spec, encoding="utf-8"))
+PATH_KEYS = ("run_dir", "shards_dir", "tokenizer_dir", "init_checkpoint")
+
+
+def load_spec(path: str, budget_hours: float | None = None, *, spec_cls=None, extra_path_keys=()) -> RunSpec:
+    """Read a RunSpec JSON.
+
+    Relative paths (``PATH_KEYS`` and ``extra.<extra_path_keys>``) resolve
+    against the recipe's folder, so a recipe can travel with its data.  Keys
+    starting with ``_`` are comments.  Any other unknown key is an error: it
+    usually belongs to a task extension's own spec class (``spec_cls``).
+    """
+    spec_cls = spec_cls or RunSpec
+    base = os.path.dirname(os.path.abspath(path))
+    with open(path, encoding="utf-8") as fh:
+        raw = {k: v for k, v in json.load(fh).items() if not k.startswith("_")}
+
+    def resolve(v):
+        return v if not v or os.path.isabs(v) else os.path.normpath(os.path.join(base, os.path.expanduser(v)))
+
+    for key in PATH_KEYS:
+        if raw.get(key):
+            raw[key] = resolve(raw[key])
+    extra = dict(raw.get("extra") or {})
+    for key in extra_path_keys:
+        if extra.get(key):
+            extra[key] = resolve(extra[key])
+    raw["extra"] = extra
+    unknown = sorted(set(raw) - set(spec_cls.__dataclass_fields__))
+    if unknown:
+        raise ValueError(f"{path}: unknown RunSpec keys {unknown}; task-specific keys need the task's "
+                         f"runner (e.g. `chronos-translate run` for demos/translation recipes)")
     raw["phases"] = [PhaseSpec(**p) for p in raw["phases"]]
-    spec = RunSpec(**raw)
-    if args.budget_hours is not None:
-        spec.budget_hours = args.budget_hours
-    LongRun(spec, log=lambda m: print(m, flush=True)).run()
+    spec = spec_cls(**raw)
+    if budget_hours is not None:
+        spec.budget_hours = float(budget_hours)
+    return spec
+
+
+def main(argv=None, *, runner_cls=None, spec_cls=None, extra_path_keys=(), description=None,
+         prepare=None) -> int:
+    """CLI for a time-budgeted run; task extensions pass their own runner/spec classes
+    (``prepare(spec, args)`` may adjust the spec after loading)."""
+    import argparse
+    runner_cls = runner_cls or LongRun
+    parser = argparse.ArgumentParser(description=description or "Time-budgeted Chronos MLX training run")
+    parser.add_argument("--spec", required=True, help="RunSpec JSON (paths may be relative to it)")
+    parser.add_argument("--budget-hours", type=float, default=None)
+    parser.add_argument("--max-steps", type=int, default=None,
+                        help="smoke test: this many updates per phase, then the closing eval (no full budget)")
+    parser.add_argument("--run-dir", default=None, help="override the recipe's run_dir (e.g. a smoke-test folder)")
+    args = parser.parse_args(argv)
+    spec = load_spec(args.spec, args.budget_hours, spec_cls=spec_cls, extra_path_keys=extra_path_keys)
+    if args.run_dir:
+        spec.run_dir = os.path.abspath(args.run_dir)
+    if prepare is not None:
+        prepare(spec, args)
+    run = runner_cls(spec, log=lambda m: print(m, flush=True))
+    if args.max_steps is None:
+        run.run()
+        return 0
+    deadline = time.monotonic() + spec.budget_hours * 3600
+    for pi in range(len(spec.phases)):
+        run.state.update(phase_index=pi, phase_step=0, phase_total=None, phase_budget_s=None, phase_wall_s=0.0)
+        run.run_phase(pi, deadline, max_steps=args.max_steps)
+    last = spec.phases[-1].name
+    n = min(run.eval_samples_for(last, final=True), 4)
+    if n > 0:                                      # smoke: errors surface instead of being logged
+        run.model.eval()
+        print(json.dumps(run.task_eval(last, n, final=True), ensure_ascii=False), flush=True)
     return 0
 
 

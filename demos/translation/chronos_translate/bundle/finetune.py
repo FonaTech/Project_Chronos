@@ -41,11 +41,11 @@ def prepare_data(bundle_dir: str, inputs: list[str], out_dir: str, *, zh_field: 
     ``inputs`` are files (``.jsonl``/``.csv``/``.tsv``/``.parquet``) with a
     Chinese and an English column.  FLORES+ (shipped in the bundle) is removed
     from the data so the bundled evaluation stays held out."""
-    from chronos.data.corpus.clean import CleanConfig
-    from chronos.data.corpus.evalsets import load_eval_sets
-    from chronos.data.corpus.pipeline import PairSource, build_corpus
-    from chronos.data.corpus.readers import count_rows
-    from chronos.data.corpus.shards import build_shards
+    from chronos_translate.corpus.clean import CleanConfig
+    from chronos_translate.corpus.evalsets import load_eval_sets
+    from chronos_translate.corpus.pipeline import PairSource, build_corpus
+    from chronos_translate.corpus.readers import count_rows
+    from chronos_translate.corpus.shards import build_shards
     bundle_dir, out_dir = os.path.abspath(bundle_dir), os.path.abspath(out_dir)
     manifest = load_bundle_manifest(bundle_dir)
     if os.path.exists(os.path.join(out_dir, "shards", "shards_manifest.json")):
@@ -105,7 +105,7 @@ def write_finetune_spec(bundle_dir: str, shards_dir: str, run_dir: str, *, tier:
                         budget_hours: float | None = None, seed: int | None = None, cluster_locality: bool = True,
                         lambda_cluster: float | None = None, cluster_window: int | None = None,
                         clusters: int | None = None) -> str:
-    """Write ``<run_dir>/finetune_spec.json`` for ``chronos longrun --spec``.
+    """Write ``<run_dir>/finetune_spec.json`` for ``chronos-translate run --spec``.
 
     The expert-cluster locality constraint is on by default; see
     ``recommend.cluster_locality_config`` for the defaults and their sources."""
@@ -120,15 +120,15 @@ def write_finetune_spec(bundle_dir: str, shards_dir: str, run_dir: str, *, tier:
     os.makedirs(spec["run_dir"], exist_ok=True)
     path = os.path.join(spec["run_dir"], "finetune_spec.json")
     if os.path.exists(os.path.join(spec["run_dir"], "checkpoints", "latest.state.pkl")):
-        # longrun resumes from latest.state.pkl; a different spec would mix two runs.
+        # the run resumes from latest.state.pkl; a different spec would mix two runs.
         raise FileExistsError(f"{spec['run_dir']} already holds a run; resume it with "
-                              f"`chronos longrun --spec {path}` or choose a new --run-dir")
+                              f"`chronos-translate run --spec {path}` or choose a new --run-dir")
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(spec, fh, ensure_ascii=False, indent=2)
     return path
 
 
 def launch(spec_path: str, budget_hours: float | None = None) -> int:
-    from chronos.mlx.training.longrun import main as longrun_main
+    from ..run import main as run_main   # TranslationRunSpec: bleu_samples / probe_samples
     argv = ["--spec", spec_path] + (["--budget-hours", str(budget_hours)] if budget_hours is not None else [])
-    return longrun_main(argv)
+    return run_main(argv)

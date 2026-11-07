@@ -59,7 +59,8 @@ function paint(body, snap) {
     h("div", { class: "progress", role: "progressbar", "aria-valuemin": 0, "aria-valuemax": p.total || 0, "aria-valuenow": p.step || 0,
       "aria-label": phaseLabel(p.name) }, bar(p.total ? Math.min(1, p.step / p.total) : (p.state === "complete" ? 1 : 0))),
     h("span", { class: "note", text: `${int(p.step)} / ${p.total ? int(p.total) : "–"} · ${t(`phase.${p.state}`)}` })));
-  body.replaceChildren(
+  // Cards with nothing to show return null; replaceChildren would print it as "null".
+  body.replaceChildren(...[
     h("div", { class: "row between" },
       h("div", { class: "row" }, badge(st.stale ? "stale" : st.state), st.stale ? h("span", { class: "note", text: t("mon.stale") }) : null,
         st.last_update_age_s !== null && st.last_update_age_s !== undefined ? h("span", { class: "note", text: t("mon.updated", { s: int(st.last_update_age_s) }) }) : null,
@@ -82,7 +83,7 @@ function paint(body, snap) {
     eventsCard(snap),
     samplesCard(snap),
     checkpointsCard(snap),
-    logCard(snap));
+    logCard(snap)].filter(Boolean));
 }
 
 function bar(fraction) {

@@ -212,7 +212,7 @@ def main(argv=None) -> int:
     ap.add_argument("--checkpoint", required=True)
     ap.add_argument("--prompts", required=True, help="jsonl (use --field) or one prompt per line")
     ap.add_argument("--field", default="en")
-    ap.add_argument("--format", default="tags:<|en|>,<|zh|>", help="raw | tags:<a>,<b>")
+    ap.add_argument("--format", default="raw", help="raw | tags:<a>,<b> (wrap each prompt in two control tokens)")
     ap.add_argument("--eos", default="<|endoftext|>")
     ap.add_argument("--n", type=int, default=24)
     ap.add_argument("--max-new", type=int, default=128)

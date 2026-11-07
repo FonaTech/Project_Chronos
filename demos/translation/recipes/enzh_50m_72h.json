@@ -1,7 +1,7 @@
 {
-  "run_dir": "runs/enzh_50m_v1",
-  "shards_dir": "Translation Training Data/shards_v1",
-  "tokenizer_dir": "Translation Training Data/tokenizer_v1",
+  "run_dir": "../../../runs/enzh_50m_v1",
+  "shards_dir": "../../../Translation Training Data/shards_v1",
+  "tokenizer_dir": "../../../Translation Training Data/tokenizer_v1",
   "model_config": {
     "architecture_version": 3,
     "num_hidden_layers": 6,
@@ -73,7 +73,7 @@
   "seed": 1234,
   "dtype": "bfloat16",
   "extra": {
-    "raw_root": "Translation Training Data/raw",
+    "raw_root": "../../../Translation Training Data/raw",
     "params": {
       "total": 49691717,
       "active": 12090437,

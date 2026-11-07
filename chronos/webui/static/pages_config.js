@@ -4,7 +4,7 @@ import { state, t, has, h, api, post, card, tile, pageHead, button, busy, params
 import { renderGroup, formState, markErrors, assign, submit } from "./forms.js";
 import { pathControl } from "./picker.js";
 
-const PRESET_SLUGS = { "Chronos-v3 Tiny (smoke / CI)": "tiny", "Chronos-v3 50M (en→zh recipe)": "enzh50m",
+const PRESET_SLUGS = { "Chronos-v3 Tiny (smoke / CI)": "tiny", "Chronos-v3 50M (16k vocab)": "m50",
   "Chronos-v3 200M (32 GB)": "m200", "Chronos-v3 500M (32 GB)": "m500", "Chronos-v3 1B (64 GB)": "b1" };
 
 let presetCache = null;
