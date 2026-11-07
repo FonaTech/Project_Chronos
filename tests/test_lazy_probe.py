@@ -16,7 +16,10 @@ from chronos.workbench.lazy_probe import (  # noqa: E402
 )
 
 
-def test_sweep_axes_collapse_per_backend_and_dedupe_by_resolved_layout():
+def test_sweep_axes_collapse_per_backend_and_dedupe_by_resolved_layout(monkeypatch):
+    # Backends resolve as requested here, so the test does not depend on MLX being installed (Linux CI).
+    from chronos.workbench import lazy_probe
+    monkeypatch.setattr(lazy_probe, "resolve_backend", lambda b: b)
     sweep = ProbeSweep.from_dict({"backends": ["cpu", "mlx"], "paging": ["auto", "cluster", "expert"],
                                   "residency": ["planned", "window"], "ram_ratios": [0.5],
                                   "miss_policies": ["sync_on_demand"], "speculative": [False, True],
@@ -35,6 +38,10 @@ def test_sweep_axes_collapse_per_backend_and_dedupe_by_resolved_layout():
                                     lambda p: p)
     assert len(capped) == 3 and total > 3
     assert variant_label(mlx_v[0]).startswith("mlx/cluster/r0.5/planned/d0.7/w12ms")
+    # A backend this machine lacks resolves to one it has; duplicates then collapse into one set.
+    monkeypatch.setattr(lazy_probe, "resolve_backend", lambda b: "cpu")
+    fallback, _ = expand_variants(sweep, lambda p: "cluster" if p == "auto" else p)
+    assert {v["backend"] for v in fallback} == {"cpu"} and len(fallback) == len(torch_v)
 
 
 @pytest.mark.parametrize("bad", [dict(paging=["louvain"]), dict(residency=["queue"]), dict(ram_ratios=[0]),
