@@ -42,6 +42,28 @@ def _digest(path: str) -> str:
     return hashlib.sha256(f"{path}:{st.st_size}:{st.st_mtime_ns}".encode()).hexdigest()
 
 
+def _chat_messages(body: dict) -> list[dict]:
+    """Request messages as template input: role, content, and (when present)
+    the assistant's ``tool_calls`` (Ollama/OpenAI shapes; OpenAI string
+    arguments are parsed) so tool conversations render as they were trained."""
+    out = []
+    for m in body.get("messages") or []:
+        msg = {"role": m.get("role", "user"), "content": m.get("content") or ""}
+        calls = []
+        for call in m.get("tool_calls") or []:
+            fn = dict(call.get("function") or call)
+            if isinstance(fn.get("arguments"), str):
+                try:
+                    fn["arguments"] = json.loads(fn["arguments"])
+                except ValueError:
+                    pass
+            calls.append({"function": {"name": fn.get("name", ""), "arguments": fn.get("arguments", {})}})
+        if calls:
+            msg["tool_calls"] = calls
+        out.append(msg)
+    return out
+
+
 def _options(body: dict) -> dict:
     opts = dict(body.get("options") or {})
     return {
@@ -238,8 +260,7 @@ def create_app(runtime, *, api_key: str | None = None, monitor_runs_dir: str | N
     async def chat(request: Request):
         body = await request.json()
         name = (body.get("model") or "").split(":")[0]
-        messages = [{"role": m.get("role", "user"), "content": m.get("content", "")}
-                    for m in body.get("messages") or []]
+        messages = _chat_messages(body)
         if _unload_if_requested(body, name):
             return {"model": body.get("model"), "created_at": _now(),
                     "message": {"role": "assistant", "content": ""}, "done": True, "done_reason": "unload"}
@@ -247,7 +268,7 @@ def create_app(runtime, *, api_key: str | None = None, monitor_runs_dir: str | N
         if not messages:
             return {"model": body.get("model"), "created_at": _now(),
                     "message": {"role": "assistant", "content": ""}, "done": True, "done_reason": "load"}
-        ids = runtime.encode_chat(lm, messages)
+        ids = runtime.encode_chat(lm, messages, body.get("tools"))
 
         def shape(text, final):
             if final is not None:
@@ -271,8 +292,7 @@ def create_app(runtime, *, api_key: str | None = None, monitor_runs_dir: str | N
         body = await request.json()
         name = (body.get("model") or "").split(":")[0]
         lm, load_s = _resolve(name)
-        messages = [{"role": m.get("role", "user"), "content": m.get("content", "")} for m in body.get("messages") or []]
-        ids = runtime.encode_chat(lm, messages)
+        ids = runtime.encode_chat(lm, _chat_messages(body), body.get("tools"))
         opts = _options({**body, "options": {"num_predict": body.get("max_tokens") or body.get("max_completion_tokens") or 256,
                                              "temperature": body.get("temperature", 0.0), "top_p": body.get("top_p", 1.0),
                                              "seed": body.get("seed"), "stop": body.get("stop"),

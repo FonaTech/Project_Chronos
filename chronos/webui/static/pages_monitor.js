@@ -46,6 +46,12 @@ export async function renderMonitor(main, page) {
   });
 }
 
+// How the remaining time was projected (measured progress or the time budget).
+function etaBasis(basis) {
+  const key = `mon.eta_basis.${String(basis).split(" ")[0]}`;
+  return has(key) ? t(key) : String(basis);
+}
+
 function paint(body, snap) {
   const st = snap.status || {};
   const pr = snap.progress || {};
@@ -58,7 +64,9 @@ function paint(body, snap) {
     h("span", { class: "phase-name", text: phaseLabel(p.name) }),
     h("div", { class: "progress", role: "progressbar", "aria-valuemin": 0, "aria-valuemax": p.total || 0, "aria-valuenow": p.step || 0,
       "aria-label": phaseLabel(p.name) }, bar(p.total ? Math.min(1, p.step / p.total) : (p.state === "complete" ? 1 : 0))),
-    h("span", { class: "note", text: `${int(p.step)} / ${p.total ? int(p.total) : "–"} · ${t(`phase.${p.state}`)}` })));
+    h("span", { class: "note", text: [`${int(p.step)} / ${p.total ? int(p.total) : "–"} · ${t(`phase.${p.state}`)}`,
+      p.eta && p.state !== "complete" ? t("mon.phase_eta", { t: dateTime(p.eta) }) : null,
+      p.eta_basis && p.state !== "complete" ? etaBasis(p.eta_basis) : null].filter(Boolean).join(" · ") })));
   // Cards with nothing to show return null; replaceChildren would print it as "null".
   body.replaceChildren(...[
     h("div", { class: "row between" },
@@ -74,7 +82,9 @@ function paint(body, snap) {
       tile(t("mon.throughput"), num(latest.tokens_per_s, 0), latest.tokens_seen ? `${params(latest.tokens_seen)} ${t("mon.tokens_seen")}` : null),
       tile(t("mon.memory"), mem.footprint_gb !== undefined ? `${num(mem.footprint_gb, 1)} GB` : (latest.peak_mem_gb !== undefined ? `${num(latest.peak_mem_gb, 1)} GB` : "–"),
         mem.state === "measured" ? t("label.measured") : null),
-      tile(t("mon.eta"), duration(pr.run_remaining_s), pr.eta ? dateTime(pr.eta) : null),
+      tile(t("mon.eta"), duration(pr.run_remaining_s),
+        pr.eta ? [dateTime(pr.eta), pr.eta_basis ? etaBasis(pr.eta_basis) : null].filter(Boolean).join(" · ")
+          : (pr.eta_paused ? t(`state.${pr.eta_paused}`) : null)),
       tile(t("mon.lr"), num(latest.lr, 6), latest.grad_norm !== undefined ? `${t("mon.grad_norm")} ${num(latest.grad_norm, 3)}` : null)),
     phaseBar.length ? card(t("mon.progress"), ...phaseBar) : null,
     probeSection(snap),

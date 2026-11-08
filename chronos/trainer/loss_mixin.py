@@ -34,6 +34,7 @@ from chronos.model.temporal_loss import (
     lookahead_union_loss,
     router_locality_loss,
     router_offload_metrics,
+    segment_cluster_loss,
 )
 
 
@@ -60,6 +61,16 @@ def collect_router_probs(model, *, with_grad: bool = False) -> Optional[torch.Te
     if not probs:
         return None
     return torch.stack(probs, dim=2)
+
+
+def real_token_mask_torch(labels: torch.Tensor) -> torch.Tensor:
+    """``[B, S]`` bool real-token mask of a right-padded batch (HF labels: the
+    loss shifts).  A row's real tokens end at its last supervised label; later
+    positions are padding.  Prompt tokens stay real.  Same rule as the MLX
+    ``trainer.real_token_mask(labels)``."""
+    pos = torch.arange(labels.shape[1], device=labels.device)
+    last = torch.where(labels != -100, pos[None, :], torch.full_like(labels, -1)).max(dim=1).values
+    return pos[None, :] <= last[:, None]
 
 
 def cluster_membership_tensor(config, device=None) -> torch.Tensor:
@@ -115,6 +126,8 @@ def chronos_loss_term(
     config,
     *,
     aux_loss: Optional[torch.Tensor] = None,
+    input_ids: Optional[torch.Tensor] = None,
+    labels: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """
     Combine `base_loss` with the Chronos-specific regularizers:
@@ -127,6 +140,10 @@ def chronos_loss_term(
     The function is safe to call from any stage: it gracefully degrades
     when the necessary tensors are unavailable (e.g. lookahead_probs is
     None during a model that doesn't expose it).
+
+    ``input_ids`` (and ``labels``, for the padding mask) let
+    ``cluster_locality_mode="segment"`` find the documents of the batch;
+    without them the window form is used.
     """
     loss = base_loss
 
@@ -163,11 +180,16 @@ def chronos_loss_term(
             )
         lambda_cluster = float(getattr(config, "lambda_cluster_locality", 0.0) or 0.0)
         if lambda_cluster > 0.0:
-            loss = loss + lambda_cluster * cluster_locality_loss(
-                router_4d,
-                cluster_membership_tensor(config, router_4d.device),
-                int(getattr(config, "cluster_locality_window", 0) or 0),
-            )
+            from chronos.expert_clusters import cluster_locality_mode, segment_ids
+            membership = cluster_membership_tensor(config, router_4d.device)
+            window = int(getattr(config, "cluster_locality_window", 0) or 0)
+            if cluster_locality_mode(config) == "segment" and input_ids is not None:
+                ids = input_ids.detach().cpu().numpy()
+                mask = None if labels is None else real_token_mask_torch(labels)
+                cluster_term = segment_cluster_loss(router_4d, membership, segment_ids(ids, window), mask)
+            else:
+                cluster_term = cluster_locality_loss(router_4d, membership, window)
+            loss = loss + lambda_cluster * cluster_term
 
         lambda_lookahead = float(getattr(config, "lambda_lookahead", 0.0))
         lookahead_steps = int(getattr(config, "lookahead_steps", 0))

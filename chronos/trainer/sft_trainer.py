@@ -126,7 +126,7 @@ class ChronosSFTTrainer:
 
             loss = chronos_loss_term(
                 self.model, ce_loss, lookahead_probs, self.config,
-                aux_loss=aux_loss,
+                aux_loss=aux_loss, input_ids=input_ids, labels=labels,
             )
 
             # Router KL anchor

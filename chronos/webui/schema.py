@@ -136,6 +136,8 @@ CONFIG_FIELDS: tuple[Field, ...] = (
        recommended=0, source="rule", ref="clusters_auto"),
     _f("cluster_locality_window", "objectives", "int", 32, min=0, max=65536, step=1,
        recommended="data", source="rule", ref="window_median_record"),
+    _f("cluster_locality_mode", "objectives", "choice", "window", choices=["window", "segment"],
+       source="code", advanced=True),
     # ---- memory / lazy experts ---------------------------------------------
     _f("vram_budget_gb", "memory", "float", 4.0, min=0.01, max=256.0, step=0.01),
     _f("pinned_memory_max_fraction", "memory", "float", 0.25, min=0.01, max=0.95, step=0.01),

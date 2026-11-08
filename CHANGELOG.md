@@ -2,6 +2,48 @@
 
 ## [Unreleased]
 
+## [0.3.1a3] — 2026-11-08 (beta)
+
+This release fixes the router masks and the lazy-expert decode. It also adds a document-level cluster objective, MLX multimodal training, tool-call SFT records, a kernel-level MLX cache limit and progress-based ETAs.
+
+### Added
+- `cluster_locality_mode="segment"`: the cluster objective treats each document as one unit.
+  - Documents are found from the tokens: `<|endoftext|>` separators, and long documents are cut every `cluster_locality_window` tokens. No labels or domain tags are used.
+  - The loss is `1 − I(document; cluster) / log C`, pooled over real tokens and all virtual layers.
+  - The default stays `"window"`, the 0.3.1a2 objective.
+  - Torch and MLX give the same value and gradient. The option is on the Web UI config page (advanced) in four languages.
+- MLX multimodal training. `chronos.mlx.multimodal` ports the image patch encoder, the audio conv encoder and the gated cross-attention fusion.
+  - Pre-encoded `*_embeds` inputs and the per-modality and per-token masks work as in Torch.
+  - Logits match Torch within 2e-4 in FP32 tests.
+  - MLX checkpoints save and load the fusion weights, and `freeze_modality_encoders` works on MLX.
+  - `run_mlx_stage` accepts `multimodal_collate` batches in pretrain and SFT. Preference and distillation stages with media still run on PyTorch.
+- Tool calls in the chat template.
+  - `tools` render as one `<tools>` system block.
+  - The assistant's `tool_calls` render as `<tool_call>{json}</tool_call>` lines, and `tool` turns carry the results.
+  - Conversations without tools render exactly as before.
+- `chronos.data.chat_records` provides `render_chat`, `encode_chat` and `write_sft_records`.
+  - Supervised tokens: the assistant text, its tool calls and `<|im_end|>`.
+  - Context tokens: system and user turns, tool definitions and tool results.
+  - Records are written as `.bin/.idx/.plen/.lmask`.
+- `SFTRecords` reads `.lmask` (one uint8 per token). When present it replaces the `.plen` prompt rule. Older readers still use `.plen`.
+- `chronos serve` passes `tools` and the assistant's `tool_calls` from `/api/chat` and `/v1/chat/completions` into the template. It does not parse `<tool_call>` output back into structured `tool_calls` yet.
+- `chronos.mlx.memory`: every MLX model sets the MLX buffer-cache limit before it allocates weights.
+  - The limit is `min(RAM/8, 16 GiB)`.
+  - A recipe (`extra.mlx_cache_limit_gb`) or `CHRONOS_MLX_CACHE_LIMIT_GB` can lower it. Larger values are clamped to the limit.
+  - `LongRun` logs the limit and records it in `runtime.json`.
+  - Only reclaimable cache is bounded. Weights, activations and gradients are not.
+- Monitor and Web UI ETAs follow measured progress.
+  - A phase ends at the first of three points: the wall deadline, the step total, or `target_passes`.
+  - The pass rate comes from row timestamps over the last 30 minutes, so evaluation and checkpoint time count.
+  - Each phase shows its estimated end and which of the three points sets it.
+  - Later phases also get the current phase's unused time.
+  - A stopped or failed run shows its remaining work and its state, but no end time.
+
+### Fixed
+- Router auxiliary losses and routing telemetry counted right-padding in SFT batches. Balance, entropy, lookahead and cluster terms now use only real tokens. Packed pretraining is unchanged.
+- Training telemetry now sums every micro-batch of a step. Before, it sampled only the last one.
+- MLX lazy-expert decode used the per-expert loop, which sums in a different order from the full-memory grouped kernel. In BF16 on the GPU this flipped near-tied greedy tokens: agreement was 31.25 % at every budget. The lazy path now runs the same grouped kernel over the live experts. Lazy and full greedy now agree at every budget (measured: 0.278, 0.5, 0.778 and 1.0 of experts, planned and window residency).
+
 ## [0.3.1a2] — 2026-11-07 (beta)
 
 Kernel/extension split: the `chronos` kernel trains general models and holds no translation-specific code. The en↔zh demo moved to `demos/translation` (`chronos-translate`), which imports the kernel and is not part of the `Project_Chronos` wheel. The extension is not published on PyPI; install it from a checkout with `pip install -e demos/translation` (see `demos/translation/README.md`).

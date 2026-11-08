@@ -142,22 +142,76 @@ def _optimizer_restore(optimizer, model, snap: dict) -> None:
     optimizer.state = tree_unflatten(list(current.items()))
 
 
-def routing_metrics(router: mx.array | None, top_k: int) -> dict:
-    """Load balance and confidence over every dispatch ``[B, S, V, E]``."""
-    if router is None:
-        return {}
-    E = router.shape[-1]
-    flat = router.reshape(-1, router.shape[2], E).astype(mx.float32)        # [N, V, E]
-    top = mx.argpartition(-flat, kth=top_k - 1, axis=-1)[..., :top_k]
-    load = (top[..., None] == mx.arange(E)).astype(mx.float32).sum(-2).mean(0) / top_k   # [V, E]
-    importance = flat.mean(0)
-    entropy = -(flat * mx.log(mx.maximum(flat, 1e-9))).sum(-1).mean()
-    cv = (load.std(-1) / mx.maximum(load.mean(-1), 1e-9)).mean()
-    dead = (load.max(0) < (0.05 / E)).sum()
-    mx.eval(load, importance, entropy, cv, dead)
-    return {"route_entropy": float(entropy.item()), "route_entropy_max": float(math.log(E)),
-            "load_cv": float(cv.item()), "dead_experts": int(dead.item()),
-            "max_expert_load": float(load.max().item() * E)}
+def token_mask_for(labels) -> np.ndarray | None:
+    """Real-token mask ``[B, S]`` of a batch whose labels are aligned with the
+    inputs (``PretrainSource``/``SFTSource`` pairs, ``labels[t]`` = token t+1).
+    A row's real tokens end one past its last supervised label (that input
+    holds the record's final token); later positions are right-padding.
+    Prompt tokens stay real.  ``None`` when nothing is padded (packed
+    pretraining), so packed batches keep the exact unmasked loss.  Same rule
+    as ``trainer.real_token_mask(labels, aligned=True)``."""
+    labels = np.asarray(labels)
+    if labels.ndim != 2 or labels.size == 0 or not (labels[:, -1] == -100).any():
+        return None
+    pos = np.arange(labels.shape[1])
+    last = np.where(labels != -100, pos[None, :], -1).max(axis=1)
+    mask = pos[None, :] <= (last + 1)[:, None]
+    return None if mask.all() else mask
+
+
+class RoutingCounts:
+    """Top-k dispatch counts, router probability mass and entropy per virtual
+    layer, summed over every micro-batch of a step (real tokens only).
+
+    Training telemetry used to read the last micro-batch alone, padding
+    included; a step's full batch is what the router losses see."""
+
+    def __init__(self):
+        self.load = self.importance = self.entropy = None
+        self.tokens = 0
+
+    def add(self, router: mx.array | None, top_k: int, token_mask=None) -> None:
+        if router is None:
+            return
+        E, V = router.shape[-1], router.shape[2]
+        flat = router.reshape(-1, V, E).astype(mx.float32)                      # [N, V, E]
+        w = mx.ones((flat.shape[0],)) if token_mask is None else \
+            mx.array(np.asarray(token_mask).reshape(-1), dtype=mx.float32)
+        top = mx.argpartition(-flat, kth=top_k - 1, axis=-1)[..., :top_k]
+        hits = (top[..., None] == mx.arange(E)).astype(mx.float32).sum(-2)      # [N, V, E]
+        ent = -(flat * mx.log(mx.maximum(flat, 1e-9))).sum(-1)                  # [N, V]
+        load, imp = (hits * w[:, None, None]).sum(0), (flat * w[:, None, None]).sum(0)
+        ent = (ent * w[:, None]).sum(0)
+        n = w.sum()
+        mx.eval(load, imp, ent, n)
+        if self.load is None:
+            self.load, self.importance, self.entropy = load, imp, ent
+        else:
+            self.load, self.importance, self.entropy = self.load + load, self.importance + imp, self.entropy + ent
+        self.tokens += int(n.item())
+
+    def summary(self, top_k: int) -> dict:
+        if self.load is None or self.tokens <= 0:
+            return {}
+        E = self.load.shape[-1]
+        load = self.load / (self.tokens * top_k)                                 # [V, E] dispatch share
+        cv = load.std(-1) / mx.maximum(load.mean(-1), 1e-9)                      # [V]
+        entropy = (self.entropy / self.tokens).mean()
+        dead = (load.max(0) < (0.05 / E)).sum()
+        mx.eval(load, cv, entropy, dead)
+        return {"route_entropy": float(entropy.item()), "route_entropy_max": float(math.log(E)),
+                "load_cv": float(cv.mean().item()), "load_cv_max": float(cv.max().item()),
+                "dead_experts": int(dead.item()),
+                "max_expert_load": float(load.max().item() * E), "min_expert_load": float(load.min().item() * E),
+                "route_tokens": int(self.tokens)}
+
+
+def routing_metrics(router: mx.array | None, top_k: int, token_mask=None) -> dict:
+    """Load balance and confidence over every real-token dispatch ``[B, S, V, E]``
+    (``token_mask`` ``[B, S]``, 1 = real; ``None`` = all positions)."""
+    acc = RoutingCounts()
+    acc.add(router, top_k, token_mask)
+    return acc.summary(top_k)
 
 
 def recurrent_metrics(state: dict | None) -> dict:
@@ -261,6 +315,10 @@ class LongRun:
         self.spec, self.log = spec, log
         os.makedirs(spec.run_dir, exist_ok=True)
         self.config = ChronosConfig(**spec.model_config)
+        # MLX free-buffer cache bound, set before the model exists: recipe
+        # ``extra.mlx_cache_limit_gb`` (GiB) may lower min(RAM/8, 16 GiB).
+        from chronos.mlx.memory import apply_cache_limit
+        self.cache_limit = apply_cache_limit((spec.extra or {}).get("mlx_cache_limit_gb"), log=log, force=True)
         import torch
         torch.manual_seed(spec.seed)        # reproducible initialization (built in Torch, then converted)
         mx.random.seed(spec.seed)
@@ -285,6 +343,9 @@ class LongRun:
         self.heartbeat = telemetry.Heartbeat(spec.run_dir)
         self.precision = getattr(self.model, "_chronos_precision", None)
         self.runtime = telemetry.runtime_info(self.model, spec, self.precision)
+        if self.cache_limit is not None:
+            self.runtime["mlx_cache_limit_gb"] = self.cache_limit["limit_gb"]
+            self.runtime["mlx_cache_limit"] = {k: v for k, v in self.cache_limit.items() if k != "requested"}
         try:
             telemetry._atomic_json(os.path.join(spec.run_dir, "runtime.json"), self.runtime)
         except OSError:
@@ -354,7 +415,8 @@ class LongRun:
             rollbacks=int(st.get("rollbacks", 0)), lr_scale=float(st.get("lr_scale", 1.0)),
             best_valid=st.get("best_valid"), **fields)
 
-    def _tensor_telemetry(self, phase, step: int, grads, before, accum: int, lr: float, norm: float):
+    def _tensor_telemetry(self, phase, step: int, grads, before, accum: int, lr: float, norm: float,
+                          routes: RoutingCounts | None = None):
         """One ``parameters.jsonl`` row: per-tensor weight RMS/|max|, pre-clip
         gradient RMS, relative update, per-group norms, expert grid, routing."""
         tel = self.telemetry
@@ -365,14 +427,16 @@ class LongRun:
                                  grad_scale=1.0 / max(1, accum))
         row = {"time": time.strftime("%Y-%m-%dT%H:%M:%S"), "phase": phase.name, "step": step, "lr": lr,
                "grad_norm": norm, **stats, "experts": tel.expert_table(stats["tensors"]),
-               "routing": tel.routing_snapshot(self.model)}
+               "routing": tel.routing_snapshot(self.model, counts=routes)}
         row["telemetry_s"] = round(time.monotonic() - t0, 3)
         with open(self.parameters_path, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(row, ensure_ascii=False) + "\n")
         return row
 
     # ---- training ----------------------------------------------------------
-    def _loss_fn(self, model, ids, labels):
+    def _loss_fn(self, model, ids, labels, token_mask=None):
+        """CE on supervised labels + Chronos regularizers; ``token_mask`` ``[B, S]``
+        (1 = real token) keeps right-padding out of the router regularizers."""
         from chronos.mlx.training.trainer import _chronos_regularized_loss, draft_exit_kl, draft_exit_logits
         draft = draft_exit_logits(model, ids, model.config)       # None unless draft_exit_kl_coef > 0
         logits, lookahead, _ = model(ids, logits_dtype=mx.float32)
@@ -384,7 +448,7 @@ class LongRun:
         # Labels here are pre-aligned with the logits (no shift).
         draft_kl = None if draft is None else draft_exit_kl(draft, logits, labels != -100)
         return _chronos_regularized_loss(model, ce, lookahead, model.config, metrics={"ce": ce, "primary": ce},
-                                         draft_kl=draft_kl)
+                                         draft_kl=draft_kl, token_mask=token_mask, input_ids=ids)
 
     def _source(self, phase: PhaseSpec):
         if phase.name == "pretrain":
@@ -392,7 +456,9 @@ class LongRun:
         return SFTSource(self.spec.shards_dir, self.spec.seed)
 
     def _micro_step(self, grad_fn, ids, labels):
-        loss, grads = grad_fn(self.model, mx.array(ids, dtype=mx.int32), mx.array(labels, dtype=mx.int32))
+        mask = token_mask_for(labels)
+        loss, grads = grad_fn(self.model, mx.array(ids, dtype=mx.int32), mx.array(labels, dtype=mx.int32),
+                              None if mask is None else mx.array(mask))
         return loss, grads
 
     def _apply(self, grads, n_micro, phase, lr):
@@ -474,9 +540,16 @@ class LongRun:
             lr *= float(self.state.get("lr_scale", 1.0))
             t0 = time.monotonic()
             acc, tokens, processed, loss_sum = None, 0, 0, mx.zeros(())
+            # Routing telemetry covers the whole step (every micro-batch, real
+            # tokens only), counted only on steps that are logged or sampled.
+            will_log = (step + 1) % self.spec.log_every_steps == 0 or step < 3
+            want_tensors = tensor_every > 0 and time.monotonic() - last_tensors >= tensor_every
+            routes = RoutingCounts() if will_log or want_tensors else None
             for _ in range(accum):
                 ids, labels = source.batch(phase.micro_tokens)
                 loss, grads = self._micro_step(grad_fn, ids, labels)
+                if routes is not None:
+                    routes.add(_collect_router_probs(self.model), top_k, token_mask_for(labels))
                 acc = grads if acc is None else _add_grads(acc, grads)
                 loss_sum = loss_sum + loss
                 tokens += int((labels != -100).sum())      # supervised tokens
@@ -484,7 +557,6 @@ class LongRun:
                 mx.eval(acc, loss_sum)          # bound the lazy graph to one micro-batch
             # Tensor telemetry keeps references to the pre-update weights (MLX
             # arrays are immutable: no copy) and the FP32 accumulated grads.
-            want_tensors = tensor_every > 0 and time.monotonic() - last_tensors >= tensor_every
             before = self.model.parameters() if want_tensors else None
             norm = self._apply(acc, accum, phase, lr)
             mx.eval(self.model.parameters(), self.optimizer.state, norm)
@@ -513,7 +585,8 @@ class LongRun:
             self.state["phase_step"] = step + 1
             if want_tensors:
                 try:
-                    self._tensor_telemetry(phase, step + 1, acc, before, accum, lr, float(norm.item()))
+                    self._tensor_telemetry(phase, step + 1, acc, before, accum, lr, float(norm.item()),
+                                           routes=routes)
                 except Exception as exc:  # noqa: BLE001 - telemetry must never stop training
                     self.log(f"[telemetry] tensor stats skipped: {exc!r}")
                 last_tensors = time.monotonic()
@@ -533,7 +606,7 @@ class LongRun:
                     self.log(f"[run] {phase.name}: {tps:,.0f} tok/s → ~{self.state['phase_total']} steps "
                              f"(~{self.state['phase_total'] * tokens / 1e9:.2f}B tokens)")
                 self.state["phase_tokens_per_s"][phase.name] = tps
-            if (step + 1) % self.spec.log_every_steps == 0 or step < 3:
+            if will_log:
                 comps = {k: round(float(v.item()), 5) for k, v in getattr(self.model, "_last_loss_components", {}).items()}
                 rec = {"phase": phase.name, "step": step + 1, "total": self.state["phase_total"],
                        "lr": lr, "grad_norm": float(norm.item()), "loss": float(loss_sum.item()) / accum,
@@ -546,7 +619,7 @@ class LongRun:
                        "phase_wall_s": self.state.get("phase_wall_s"), "phase_budget_s": self.state.get("phase_budget_s"),
                        "lr_scale": float(self.state.get("lr_scale", 1.0)), "rollbacks": int(self.state.get("rollbacks", 0)),
                        **comps, **recurrent_metrics(getattr(self.model, "last_recurrent_state", None)),
-                       **routing_metrics(_collect_router_probs(self.model), top_k)}
+                       **(routes.summary(top_k) if routes is not None else {})}
                 self._emit(rec)
                 self.log(f"[{phase.name}] {step + 1}/{self.state['phase_total']} loss={rec['loss']:.4f} "
                          f"ce={comps.get('primary_loss', 0):.4f} gn={rec['grad_norm']:.2f} lr={lr:.2e} "

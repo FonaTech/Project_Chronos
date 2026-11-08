@@ -245,8 +245,11 @@ class ChronosRuntime:
             return out
         return fwd
 
-    def encode_chat(self, lm: LoadedModel, messages: list[dict]) -> list[int]:
-        text = lm.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    def encode_chat(self, lm: LoadedModel, messages: list[dict], tools: list | None = None) -> list[int]:
+        # ``tools`` reach the template only when given, so templates without
+        # tool support render exactly as before.
+        extra = {"tools": tools} if tools else {}
+        text = lm.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True, **extra)
         return lm.tokenizer(text, add_special_tokens=False)["input_ids"]
 
     def encode_prompt(self, lm: LoadedModel, prompt: str, system: str | None = None, raw: bool = False):

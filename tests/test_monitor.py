@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import shutil
 import subprocess
 import sys
@@ -302,3 +303,39 @@ def test_monitor_static_assets_parse():
         pytest.skip("node not installed")
     result = subprocess.run([node, "--check", os.path.join(static, "app.js")], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
+
+
+def test_eta_follows_measured_data_passes_not_the_budget(tmp_path):
+    """A phase that ends at ``target_passes`` gets its ETA from the measured pass rate."""
+    from chronos.monitor import RunMonitor
+    path = tmp_path / "passes"
+    os.makedirs(path / "checkpoints")
+    spec = {"run_dir": str(path), "budget_hours": 10.0, "eval_reserve_fraction": 0.0, "schedule": "time",
+            "phases": [{"name": "pretrain", "budget_fraction": 0.5}, {"name": "sft", "budget_fraction": 0.5}],
+            "extra": {"target_passes": {"pretrain": 2.0}}}
+    (path / "run_spec.json").write_text(json.dumps(spec))
+    t0 = datetime.now() - timedelta(seconds=600)
+    rows = [{"phase": "pretrain", "step": i, "total": 10_000, "passes": 0.001 * i, "step_s": 1.0,
+             "time": (t0 + timedelta(seconds=i)).isoformat()} for i in range(1, 601)]
+    _write_jsonl(str(path / "metrics.jsonl"), rows)
+    hb = {"state": "running", "phase": "pretrain", "phase_wall_s": 600.0, "phase_budget_s": 18_000.0,
+          "updated": time.time(), "pid": None}
+    (path / "status.json").write_text(json.dumps(hb))
+    prog = RunMonitor(str(tmp_path)).snapshot("passes")["progress"]
+    # 1.4 passes left at 0.001 passes/s → 1400 s, well inside the 17 400 s deadline.
+    assert prog["eta_basis"] == "target_passes"
+    assert prog["phase_remaining_s"] == pytest.approx(1400, rel=0.01)
+    assert prog["phase_deadline_remaining_s"] == pytest.approx(17_400)
+    pre, sft = prog["phases"]
+    assert pre["eta_basis"] == "target_passes" and pre["remaining_s"] == pytest.approx(1400, rel=0.01)
+    # Unused pretrain time moves to SFT, whose deadline is fixed from the run start.
+    assert sft["remaining_s"] == pytest.approx(17_400 + 18_000, rel=0.01)
+    assert prog["run_remaining_s"] == pytest.approx(sft["remaining_s"], rel=0.01)
+    # No live process: remaining work is still reported, but no clock end time.
+    assert "eta" not in prog and "eta" not in pre and prog["eta_paused"] == "stopped"
+    hb["pid"] = os.getpid()                                   # a live writer
+    (path / "status.json").write_text(json.dumps(hb))
+    live = RunMonitor(str(tmp_path)).snapshot("passes")["progress"]
+    end = datetime.fromisoformat(live["eta"])
+    assert abs((end - datetime.now()).total_seconds() - live["run_remaining_s"]) < 120
+    assert "eta" in live["phases"][0] and "eta_paused" not in live

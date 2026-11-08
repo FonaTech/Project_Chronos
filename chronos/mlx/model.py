@@ -125,11 +125,19 @@ class ChronosMLXModel(nn.Module):
 
     def __init__(self, config):
         super().__init__()
+        # Kernel-level bound on MLX's free-buffer cache (min(RAM/8, 16 GiB)),
+        # applied once per process before any weight is allocated; a caller
+        # that set a lower limit first (recipe/env) keeps it.
+        from chronos.mlx.memory import apply_cache_limit
+        apply_cache_limit()
         self.config = config
-        if config.modalities:
-            raise ValueError("MLX modality encoders are not implemented; use the PyTorch MPS/CUDA backend for multimodal checkpoints")
+        # Image/audio encoders + gated cross-attention (Torch parity), only
+        # for the modalities the config enables.
+        from chronos.mlx.multimodal import MultimodalFusionMLX
+        self.multimodal_fusion = MultimodalFusionMLX(config) if config.modalities else None
         self.recurrent_controller = RecurrentControllerMLX(config)
         object.__setattr__(self, "last_recurrent_state", None)
+        object.__setattr__(self, "last_modality_states", {})
         self.dropout = nn.Dropout(config.dropout)
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size)
         self.layers = [ChronosMLXBlock(i, config)
@@ -147,6 +155,8 @@ class ChronosMLXModel(nn.Module):
         available_expert_masks=None,        # list of [E] float masks, or None
         logits_dtype=None,                  # e.g. mx.float32 for losses
         recurrent_depth=None,               # draft depth override (shared_first/first_only)
+        modality_inputs=None,               # {"image"|"audio"|"*_embeds"|"*_mask": array}
+        modality_mask=None,                 # [B] or [B, 2] (image, audio) presence
     ):
         """``logits_dtype=mx.float32`` makes the logits FP32 at birth: the
         final hidden [B,S,H] and the head [V,H] are upcast (H/V the size of
@@ -157,14 +167,23 @@ class ChronosMLXModel(nn.Module):
             moe.reset_iteration_routing()
             moe.open_pack_scope()
         try:
-            return self._forward(input_ids, cache, available_expert_masks, logits_dtype, recurrent_depth)
+            return self._forward(input_ids, cache, available_expert_masks, logits_dtype, recurrent_depth,
+                                 modality_inputs, modality_mask)
         finally:
             for moe in moes:
                 moe.close_pack_scope()
 
-    def _forward(self, input_ids, cache, available_expert_masks, logits_dtype, depth_override=None):
+    def _forward(self, input_ids, cache, available_expert_masks, logits_dtype, depth_override=None,
+                 modality_inputs=None, modality_mask=None):
         B, S = input_ids.shape
         x = self.dropout(self.embed_tokens(input_ids))   # [B, S, H]
+        object.__setattr__(self, "last_modality_states", {})
+        if self.multimodal_fusion is not None:
+            x, states = self.multimodal_fusion(x, modality_inputs, modality_mask)
+            object.__setattr__(self, "last_modality_states", states)
+        elif modality_inputs:
+            raise ValueError("modality_inputs were provided, but this checkpoint has no enabled modalities; "
+                             "set config.modalities before constructing the model")
 
         # Each attention layer builds its own boolean causal / window mask
         # (fused SDPA); no additive mask is materialized in the compute dtype.
@@ -380,6 +399,9 @@ class ChronosMLXModel(nn.Module):
         proj_layers = mlx_model.lookahead_router.proj.layers
         _assign_linear(proj_layers[0], sd, "model.lookahead_router.proj.0.weight", missing)
         _assign_linear(proj_layers[2], sd, "model.lookahead_router.proj.2.weight", missing)
+        if mlx_model.multimodal_fusion is not None:
+            from chronos.mlx.multimodal import load_torch_fusion_state
+            load_torch_fusion_state(mlx_model.multimodal_fusion, sd, _to_mx, missing)
 
         if missing:
             raise RuntimeError(

@@ -165,3 +165,59 @@ def test_mlx_grouped_fallback_matches_dense_oracle():
         assert _rel(a, b) < 1e-4
     # Unavailable experts receive no gradient (they were not executed).
     assert mx.abs(sg[0][1]).max().item() == 0.0 and mx.abs(sg[0][4]).max().item() == 0.0
+
+
+def _lazy_moe(dtype, seed=5):
+    from mlx.utils import tree_map
+    from chronos.mlx.moe import ChronosMLXMOE
+    from chronos.mlx.moe_kernels import gather_mm_supported
+    if not gather_mm_supported():
+        pytest.skip("mlx < 0.32.4")
+    mx.random.seed(seed)
+    moe = ChronosMLXMOE(moe_cfg())
+    moe.update(tree_map(lambda a: a.astype(dtype), moe.parameters()))
+    moe.eval()
+    return moe, (mx.random.normal((2, 9, 48)) * 0.5).astype(dtype)
+
+
+@pytest.mark.parametrize("dtype_name,stream_name", [("float32", "cpu"), ("bfloat16", "gpu")])
+def test_mlx_lazy_set_mask_runs_the_full_memory_kernel(dtype_name, stream_name):
+    """All experts live: the lazy (python-set) path equals the full-memory sparse path
+    bit for bit, so lazy greedy decoding can no longer drift from the full decode."""
+    if stream_name == "gpu" and not mx.metal.is_available():
+        pytest.skip("no Metal GPU")
+    device = mx.cpu if stream_name == "cpu" else mx.gpu
+    previous = mx.default_device()
+    mx.set_default_device(device)
+    try:
+        moe, x = _lazy_moe(getattr(mx, dtype_name))
+        touched = []
+        moe.runtime_touch_expert = touched.append
+        full = moe(x)
+        lazy = moe(x, available_expert_mask=set(range(moe.num_experts)))
+        mx.eval(full, lazy)
+        assert mx.array_equal(full, lazy).item()
+        assert touched and set(touched) <= set(range(moe.num_experts))
+    finally:
+        mx.set_default_device(previous)
+
+
+def test_mlx_lazy_misses_fall_back_to_shared_expert_like_the_loop_path():
+    """Missing experts are served by the shared expert, same as the per-expert loop."""
+    previous = mx.default_device()
+    mx.set_default_device(mx.cpu)
+    try:
+        moe, x = _lazy_moe(mx.float32)
+        moe.runtime_miss_policy = "fallback_diagnostic"
+        for avail in ({0, 2, 3, 5}, {1}, set()):
+            grouped = moe(x, available_expert_mask=avail)
+            moe.sparse_dispatch = False
+            loop = moe(x, available_expert_mask=avail)
+            moe.sparse_dispatch = True
+            mx.eval(grouped, loop)
+            assert _rel(grouped, loop) < 1e-5, avail
+        moe.runtime_miss_policy = "sync_on_demand"
+        with pytest.raises(RuntimeError):
+            mx.eval(moe(x, available_expert_mask={0}))
+    finally:
+        mx.set_default_device(previous)

@@ -8,6 +8,12 @@ Layout under a shard folder (written by any task's own builder):
   token array (``.bin``), int64 record offsets (``.idx``, n+1 entries) and
   int32 prompt lengths (``.plen``).  Only tokens after the prompt are
   supervised, so the loss covers the assistant reply alone.
+* optional ``sft/.../<stem>.lmask``: one uint8 per token of ``.bin`` (1 =
+  supervised).  Multi-turn records (tool calls, tool results, several
+  assistant turns) need it: the assistant's text and ``tool_calls`` are
+  learned, user/system/tool-result tokens are context.  When present it
+  replaces the ``.plen`` rule for that stem; ``.plen`` stays the first
+  supervised offset so older readers keep working.
 
 An optional ``shards_manifest.json`` may record ``"dtype": "uint16"|"uint32"``.
 """
@@ -67,12 +73,19 @@ class SFTRecords:
     def __init__(self, folder: str, dtype=np.uint16, seed: int = 0, pad_id: int = 0):
         stems = sorted(f[:-5] for f in os.listdir(folder) if f.endswith(".plen"))
         self.tokens, self.offsets, self.plens, self.index = [], [], [], []
+        self.lmasks = []
         for si, stem in enumerate(stems):
             base = os.path.join(folder, stem)
             tok = np.memmap(base + ".bin", dtype=dtype, mode="r")
             off = np.fromfile(base + ".idx", dtype=np.int64)
             plen = np.fromfile(base + ".plen", dtype=np.int32)
+            lmask = None
+            if os.path.exists(base + ".lmask"):
+                lmask = np.memmap(base + ".lmask", dtype=np.uint8, mode="r")
+                if lmask.size != tok.size:
+                    raise ValueError(f"{base}.lmask has {lmask.size} entries for {tok.size} tokens")
             self.tokens.append(tok); self.offsets.append(off); self.plens.append(plen)
+            self.lmasks.append(lmask)
             self.index.append(np.stack([np.full(len(plen), si), np.arange(len(plen)),
                                         np.diff(off)], axis=1))
         self.index = np.concatenate(self.index) if self.index else np.zeros((0, 3), np.int64)
@@ -107,6 +120,18 @@ class SFTRecords:
             off = self.offsets[si][ri]
             seq = self.tokens[si][off:off + n]
             ids[r, :n] = seq
-            p = int(self.plens[si][ri])
-            labels[r, p:n] = seq[p:]
+            lm = self.lmasks[si]
+            if lm is not None:
+                keep = np.asarray(lm[off:off + n]).astype(bool)
+                labels[r, :n] = np.where(keep, seq, -100)
+            else:
+                p = int(self.plens[si][ri])
+                labels[r, p:n] = seq[p:]
         return ids, labels
+
+    def supervised_tokens(self) -> int:
+        """Tokens that carry loss over every record (``.lmask`` or ``.plen`` rule)."""
+        total = 0
+        for off, plen, lm in zip(self.offsets, self.plens, self.lmasks):
+            total += int(np.asarray(lm).sum()) if lm is not None else int(off[-1]) - int(plen.sum())
+        return total
