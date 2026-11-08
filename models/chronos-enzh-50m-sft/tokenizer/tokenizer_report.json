@@ -1,0 +1,156 @@
+{
+  "trainer": {
+    "vocab_size": 16384,
+    "char_coverage": 0.9999,
+    "max_alphabet_fraction": 0.4,
+    "min_pair_frequency": 2,
+    "language_temperature": 0.5,
+    "max_token_chars": 16,
+    "min_bucket_share": 0.01,
+    "max_bucket_weight": 4.0
+  },
+  "train_stats": {
+    "bucket_weights": {
+      "zh": 1.5614307556099176,
+      "latin": 0.8370905448559004,
+      "other": 4.0
+    },
+    "unique_pretokens": 1477446,
+    "alphabet_size": 5173,
+    "merges": 10891,
+    "final_vocab": 16384
+  },
+  "heldout_eval": {
+    "zh": {
+      "texts": 5000,
+      "bytes_per_token": 4.513,
+      "chars_per_token": 1.599,
+      "tokens_per_word": 13.135,
+      "tokens_per_han": 0.74,
+      "byte_fallback_rate": 0.00178,
+      "roundtrip_failures": 0
+    },
+    "latin": {
+      "texts": 5000,
+      "bytes_per_token": 4.054,
+      "chars_per_token": 4.045,
+      "tokens_per_word": 1.536,
+      "tokens_per_han": 727.937,
+      "byte_fallback_rate": 7e-05,
+      "roundtrip_failures": 0
+    },
+    "ja": {
+      "texts": 1,
+      "bytes_per_token": 2.6,
+      "chars_per_token": 1.0,
+      "tokens_per_word": 10.0,
+      "tokens_per_han": 3.333,
+      "byte_fallback_rate": 0.0,
+      "roundtrip_failures": 0
+    },
+    "vocab_utilization": 0.7906
+  },
+  "sources": {
+    "Translation Training Data/corpus_v1/pairs/train.opus100.*.parquet": {
+      "files": 4,
+      "records": 872950,
+      "texts_seen": 1745341,
+      "sampled": 600000,
+      "buckets": {
+        "zh": 298771,
+        "latin": 301198,
+        "ja": 31
+      }
+    },
+    "Translation Training Data/corpus_v1/pairs/train.wmt19_*.parquet": {
+      "files": 26,
+      "records": 3866610,
+      "texts_seen": 7733144,
+      "sampled": 600000,
+      "buckets": {
+        "latin": 300782,
+        "zh": 299218
+      }
+    },
+    "Translation Training Data/corpus_v1/pairs/train.iic_wmt.*.parquet": {
+      "files": 43,
+      "records": 16126,
+      "texts_seen": 32251,
+      "sampled": 32251,
+      "buckets": {
+        "zh": 15632,
+        "latin": 16619
+      }
+    }
+  },
+  "elapsed_s": 152.8,
+  "vocab_size": 16384,
+  "fingerprint": "2ac4028c0d6884e2469ac1489613f0bb1b30cfd3139a48a61a3bc78ba8ab0df5",
+  "special_tokens": [
+    "<|endoftext|>",
+    "<|im_start|>",
+    "<|im_end|>",
+    "<|en|>",
+    "<|zh|>",
+    "<|translate|>",
+    "<|pad|>",
+    "<|reserved_0|>",
+    "<|reserved_1|>",
+    "<|reserved_2|>",
+    "<|reserved_3|>",
+    "<|reserved_4|>",
+    "<|reserved_5|>",
+    "<|reserved_6|>",
+    "<|reserved_7|>",
+    "<|reserved_8|>",
+    "<|reserved_9|>",
+    "<|reserved_10|>",
+    "<|reserved_11|>",
+    "<|reserved_12|>",
+    "<|reserved_13|>",
+    "<|reserved_14|>",
+    "<|reserved_15|>",
+    "<|reserved_16|>",
+    "<|reserved_17|>",
+    "<|reserved_18|>",
+    "<|reserved_19|>",
+    "<|reserved_20|>",
+    "<|reserved_21|>",
+    "<|reserved_22|>",
+    "<|reserved_23|>",
+    "<|reserved_24|>",
+    "<|reserved_25|>",
+    "<|reserved_26|>",
+    "<|reserved_27|>",
+    "<|reserved_28|>",
+    "<|reserved_29|>",
+    "<|reserved_30|>",
+    "<|reserved_31|>",
+    "<|reserved_32|>",
+    "<|reserved_33|>",
+    "<|reserved_34|>",
+    "<|reserved_35|>",
+    "<|reserved_36|>",
+    "<|reserved_37|>",
+    "<|reserved_38|>",
+    "<|reserved_39|>",
+    "<|reserved_40|>",
+    "<|reserved_41|>",
+    "<|reserved_42|>",
+    "<|reserved_43|>",
+    "<|reserved_44|>",
+    "<|reserved_45|>",
+    "<|reserved_46|>",
+    "<|reserved_47|>",
+    "<|reserved_48|>",
+    "<|reserved_49|>",
+    "<|reserved_50|>",
+    "<|reserved_51|>",
+    "<|reserved_52|>",
+    "<|reserved_53|>",
+    "<|reserved_54|>",
+    "<|reserved_55|>",
+    "<|reserved_56|>"
+  ],
+  "algorithm": "chronos-bpe-v1"
+}

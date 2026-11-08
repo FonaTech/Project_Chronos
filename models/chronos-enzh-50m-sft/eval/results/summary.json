@@ -1,0 +1,528 @@
+{
+ "about": "Measured 2026-11-09, Apple M5 Max, MLX bfloat16 greedy (zh->en: torch CPU float32), Project_Chronos 0.3.2a0, sacrebleu 2.6.0. Per-sentence outputs are published for the author-written self-test only; third-party test sets are summarised.",
+ "sets": {
+  "flores_devtest": {
+   "backend": "mlx",
+   "device": "gpu",
+   "dtype": "bfloat16",
+   "pairs": "flores_devtest.jsonl",
+   "split": false,
+   "seconds": 239.6,
+   "refused": 0,
+   "all": {
+    "n": 1012,
+    "bleu": 33.48,
+    "chrf": 29.52
+   },
+   "by_source_tokens": {
+    "0-32": {
+     "n": 417,
+     "bleu": 33.1,
+     "chrf": 28.66,
+     "total": 417
+    },
+    "33-64": {
+     "n": 561,
+     "bleu": 33.86,
+     "chrf": 29.97,
+     "total": 561
+    },
+    "65-96": {
+     "n": 31,
+     "bleu": 31.13,
+     "chrf": 28.93,
+     "total": 31
+    },
+    "97-128": {
+     "n": 3,
+     "bleu": 30.72,
+     "chrf": 27.97,
+     "total": 3
+    }
+   },
+   "by_category": {
+    "pairs": {
+     "n": 1012,
+     "bleu": 33.48,
+     "chrf": 29.52
+    }
+   }
+  },
+  "wmt22_enzh_split": {
+   "backend": "mlx",
+   "device": "gpu",
+   "dtype": "bfloat16",
+   "pairs": "wmt22_enzh.jsonl",
+   "split": true,
+   "seconds": 371.8,
+   "refused": 1,
+   "all": {
+    "n": 2036,
+    "bleu": 32.6,
+    "chrf": 28.83
+   },
+   "by_source_tokens": {
+    "0-32": {
+     "n": 1401,
+     "bleu": 31.19,
+     "chrf": 27.26,
+     "total": 1401
+    },
+    "33-64": {
+     "n": 559,
+     "bleu": 34.38,
+     "chrf": 30.47,
+     "total": 559
+    },
+    "65-96": {
+     "n": 72,
+     "bleu": 30.31,
+     "chrf": 27.93,
+     "total": 72
+    },
+    "97-128": {
+     "n": 4,
+     "bleu": 35.84,
+     "chrf": 33.32,
+     "total": 4
+    },
+    "129-inf": {
+     "n": 0,
+     "total": 1
+    }
+   },
+   "by_category": {
+    "pairs": {
+     "n": 2036,
+     "bleu": 32.6,
+     "chrf": 28.83
+    }
+   }
+  },
+  "wmt24pp_enzh_split": {
+   "backend": "mlx",
+   "device": "gpu",
+   "dtype": "bfloat16",
+   "pairs": "wmt24pp_enzh.jsonl",
+   "split": true,
+   "seconds": 363.3,
+   "refused": 1,
+   "all": {
+    "n": 959,
+    "bleu": 26.89,
+    "chrf": 24.43
+   },
+   "by_source_tokens": {
+    "0-32": {
+     "n": 418,
+     "bleu": 19.74,
+     "chrf": 18.21,
+     "total": 418
+    },
+    "33-64": {
+     "n": 206,
+     "bleu": 22.75,
+     "chrf": 21.6,
+     "total": 206
+    },
+    "65-96": {
+     "n": 131,
+     "bleu": 29.65,
+     "chrf": 26.16,
+     "total": 131
+    },
+    "97-128": {
+     "n": 103,
+     "bleu": 29.44,
+     "chrf": 26.4,
+     "total": 103
+    },
+    "129-inf": {
+     "n": 101,
+     "bleu": 28.62,
+     "chrf": 26.18,
+     "total": 102
+    }
+   },
+   "by_category": {
+    "pairs": {
+     "n": 959,
+     "bleu": 26.89,
+     "chrf": 24.43
+    }
+   }
+  },
+  "selftest": {
+   "backend": "mlx",
+   "device": "gpu",
+   "dtype": "bfloat16",
+   "pairs": "selftest.json",
+   "split": false,
+   "seconds": 4.3,
+   "refused": 0,
+   "all": {
+    "n": 34,
+    "bleu": 43.57,
+    "chrf": 37.68
+   },
+   "by_source_tokens": {
+    "0-32": {
+     "n": 32,
+     "bleu": 43.65,
+     "chrf": 37.38,
+     "total": 32
+    },
+    "33-64": {
+     "n": 2,
+     "bleu": 42.37,
+     "chrf": 40.0,
+     "total": 2
+    }
+   },
+   "by_category": {
+    "complex": {
+     "n": 3,
+     "bleu": 36.22,
+     "chrf": 30.9
+    },
+    "daily": {
+     "n": 5,
+     "bleu": 37.35,
+     "chrf": 33.22
+    },
+    "idiom": {
+     "n": 3,
+     "bleu": 21.2,
+     "chrf": 21.87
+    },
+    "instruction_in_source": {
+     "n": 2,
+     "bleu": 29.21,
+     "chrf": 24.5
+    },
+    "news": {
+     "n": 5,
+     "bleu": 40.74,
+     "chrf": 34.09
+    },
+    "numbers_names": {
+     "n": 5,
+     "bleu": 68.1,
+     "chrf": 67.12
+    },
+    "paragraph": {
+     "n": 1,
+     "bleu": 37.76,
+     "chrf": 37.98
+    },
+    "question_imperative": {
+     "n": 3,
+     "bleu": 50.15,
+     "chrf": 43.4
+    },
+    "science": {
+     "n": 5,
+     "bleu": 49.23,
+     "chrf": 41.45
+    },
+    "url_code": {
+     "n": 2,
+     "bleu": 13.95,
+     "chrf": 8.3
+    }
+   }
+  },
+  "zh_en_disabled_sft": {
+   "tags_in_vocab": {
+    "<|zh|>": 4,
+    "<|en|>": 3,
+    "<|im_end|>": 2
+   },
+   "n": 200,
+   "chat_zh_en_instruction": {
+    "bleu_13a": 0.0,
+    "chrf": 0.37,
+    "selftest": [
+     {
+      "src": "今天天气很好，我们去公园散步吧。",
+      "ref": "The weather is nice today, let's take a walk in the park.",
+      "hyp": ""
+     },
+     {
+      "src": "这家公司去年的营业收入增长了百分之十五。",
+      "ref": "The company's revenue grew by 15 percent last year.",
+      "hyp": ""
+     },
+     {
+      "src": "研究人员发现了一种新的抗生素。",
+      "ref": "Researchers have discovered a new antibiotic.",
+      "hyp": ""
+     },
+     {
+      "src": "请在下午三点之前提交报告。",
+      "ref": "Please submit the report before 3 p.m.",
+      "hyp": ""
+     },
+     {
+      "src": "他从小就喜欢读历史书。",
+      "ref": "He has loved reading history books since he was a child.",
+      "hyp": ""
+     },
+     {
+      "src": "这座城市的地铁系统非常方便。",
+      "ref": "The subway system in this city is very convenient.",
+      "hyp": ""
+     }
+    ]
+   },
+   "pretrain_tags": {
+    "bleu_13a": 0.0,
+    "chrf": 0.47,
+    "selftest": [
+     {
+      "src": "今天天气很好，我们去公园散步吧。",
+      "ref": "The weather is nice today, let's take a walk in the park.",
+      "hyp": "m"
+     },
+     {
+      "src": "这家公司去年的营业收入增长了百分之十五。",
+      "ref": "The company's revenue grew by 15 percent last year.",
+      "hyp": "ark"
+     },
+     {
+      "src": "研究人员发现了一种新的抗生素。",
+      "ref": "Researchers have discovered a new antibiotic.",
+      "hyp": "op"
+     },
+     {
+      "src": "请在下午三点之前提交报告。",
+      "ref": "Please submit the report before 3 p.m.",
+      "hyp": "ch"
+     },
+     {
+      "src": "他从小就喜欢读历史书。",
+      "ref": "He has loved reading history books since he was a child.",
+      "hyp": "then"
+     },
+     {
+      "src": "这座城市的地铁系统非常方便。",
+      "ref": "The subway system in this city is very convenient.",
+      "hyp": "翻译"
+     }
+    ]
+   }
+  },
+  "zh_en_pretrain_control": {
+   "tags_in_vocab": {
+    "<|zh|>": 4,
+    "<|en|>": 3,
+    "<|im_end|>": 2
+   },
+   "n": 200,
+   "chat_zh_en_instruction": {
+    "bleu_13a": 0.01,
+    "chrf": 2.81,
+    "selftest": [
+     {
+      "src": "今天天气很好，我们去公园散步吧。",
+      "ref": "The weather is nice today, let's take a walk in the park.",
+      "hyp": "adoroo 摩托罗拉（山坡）摩托罗拉（山坡）摩托罗拉（山坡）摩托罗拉（山坡"
+     },
+     {
+      "src": "这家公司去年的营业收入增长了百分之十五。",
+      "ref": "The company's revenue grew by 15 percent last year.",
+      "hyp": ""
+     },
+     {
+      "src": "研究人员发现了一种新的抗生素。",
+      "ref": "Researchers have discovered a new antibiotic.",
+      "hyp": ""
+     },
+     {
+      "src": "请在下午三点之前提交报告。",
+      "ref": "Please submit the report before 3 p.m.",
+      "hyp": ""
+     },
+     {
+      "src": "他从小就喜欢读历史书。",
+      "ref": "He has loved reading history books since he was a child.",
+      "hyp": "摩托罗拉（）译文：她喜欢读历史书。"
+     },
+     {
+      "src": "这座城市的地铁系统非常方便。",
+      "ref": "The subway system in this city is very convenient.",
+      "hyp": "摩托罗拉（）译文：德国人说，"
+     }
+    ]
+   },
+   "pretrain_tags": {
+    "bleu_13a": 17.15,
+    "chrf": 47.65,
+    "selftest": [
+     {
+      "src": "今天天气很好，我们去公园散步吧。",
+      "ref": "The weather is nice today, let's take a walk in the park.",
+      "hyp": "It's very good today. Let's go for a walk in the park."
+     },
+     {
+      "src": "这家公司去年的营业收入增长了百分之十五。",
+      "ref": "The company's revenue grew by 15 percent last year.",
+      "hyp": "The company's turnover in the past year has grown by 15 per cent."
+     },
+     {
+      "src": "研究人员发现了一种新的抗生素。",
+      "ref": "Researchers have discovered a new antibiotic.",
+      "hyp": "The researchers found a new antibiotics."
+     },
+     {
+      "src": "请在下午三点之前提交报告。",
+      "ref": "Please submit the report before 3 p.m.",
+      "hyp": "Please submit a report by 3 p.m."
+     },
+     {
+      "src": "他从小就喜欢读历史书。",
+      "ref": "He has loved reading history books since he was a child.",
+      "hyp": "He likes to read history books since he was a child."
+     },
+     {
+      "src": "这座城市的地铁系统非常方便。",
+      "ref": "The subway system in this city is very convenient.",
+      "hyp": "The metro system in this city is very convenient."
+     }
+    ]
+   }
+  },
+  "long_input_flores_devtest": {
+   "note": "k consecutive sentences as one input (whole) vs split; measured before the loop guard, length limit lifted",
+   "1": {
+    "blocks": 120,
+    "src_tokens_median": 38,
+    "src_tokens_max": 96,
+    "whole": {
+     "bleu": 35.47,
+     "chrf": 31.84,
+     "hyp_ref_len_ratio": 0.847
+    },
+    "split": {
+     "bleu": 35.47,
+     "chrf": 31.84,
+     "hyp_ref_len_ratio": 0.847
+    }
+   },
+   "2": {
+    "blocks": 120,
+    "src_tokens_median": 74,
+    "src_tokens_max": 146,
+    "whole": {
+     "bleu": 28.21,
+     "chrf": 25.52,
+     "hyp_ref_len_ratio": 0.784
+    },
+    "split": {
+     "bleu": 34.22,
+     "chrf": 30.07,
+     "hyp_ref_len_ratio": 0.866
+    }
+   },
+   "3": {
+    "blocks": 120,
+    "src_tokens_median": 107,
+    "src_tokens_max": 187,
+    "whole": {
+     "bleu": 20.64,
+     "chrf": 20.06,
+     "hyp_ref_len_ratio": 0.714
+    },
+    "split": {
+     "bleu": 34.08,
+     "chrf": 30.4,
+     "hyp_ref_len_ratio": 0.849
+    }
+   },
+   "4": {
+    "blocks": 120,
+    "src_tokens_median": 150,
+    "src_tokens_max": 250,
+    "whole": {
+     "bleu": 13.27,
+     "chrf": 14.3,
+     "hyp_ref_len_ratio": 0.728
+    },
+    "split": {
+     "bleu": 34.05,
+     "chrf": 30.38,
+     "hyp_ref_len_ratio": 0.862
+    }
+   },
+   "6": {
+    "blocks": 120,
+    "src_tokens_median": 219,
+    "src_tokens_max": 338,
+    "whole": {
+     "bleu": 4.36,
+     "chrf": 6.33,
+     "hyp_ref_len_ratio": 0.653
+    },
+    "split": {
+     "bleu": 35.38,
+     "chrf": 31.35,
+     "hyp_ref_len_ratio": 0.875
+    }
+   }
+  },
+  "wmt24pp_enzh_whole": {
+   "backend": "mlx",
+   "device": "gpu",
+   "dtype": "bfloat16",
+   "seconds": 304.6,
+   "refused": 0,
+   "all": {
+    "n": 960,
+    "bleu": 17.71,
+    "chrf": 17.78
+   },
+   "by_source_tokens": {
+    "0-32": {
+     "n": 418,
+     "bleu": 19.21,
+     "chrf": 17.93,
+     "total": 418
+    },
+    "33-64": {
+     "n": 206,
+     "bleu": 20.93,
+     "chrf": 20.51,
+     "total": 206
+    },
+    "65-96": {
+     "n": 131,
+     "bleu": 25.07,
+     "chrf": 23.13,
+     "total": 131
+    },
+    "97-128": {
+     "n": 103,
+     "bleu": 22.34,
+     "chrf": 21.22,
+     "total": 103
+    },
+    "129-inf": {
+     "n": 102,
+     "bleu": 6.91,
+     "chrf": 9.67,
+     "total": 102
+    }
+   },
+   "by_category": {
+    "pairs": {
+     "n": 960,
+     "bleu": 17.71,
+     "chrf": 17.78
+    }
+   },
+   "pairs": "wmt24pp_enzh.jsonl",
+   "split": false,
+   "note": "each item as one input, length limit lifted (--no-limit), measured before the loop guard"
+  }
+ }
+}
