@@ -591,6 +591,28 @@ def _ce_stage_loss(model, input_ids, labels, modality_inputs=None, modality_mask
                                      draft_kl=draft_kl, token_mask=real_token_mask(labels), input_ids=input_ids)
 
 
+def _tile_media(batch, copies: int) -> dict:
+    """Model kwargs with the batch's media repeated ``copies`` times along the
+    batch axis (chosen‖rejected pairs, GRPO groups); ``{}`` for text-only."""
+    media = batch.get("modality_inputs") if isinstance(batch, dict) else None
+    if not media:
+        return {}
+    from chronos.mlx.multimodal import _mx
+    tiled = {k: mx.concatenate([_mx(v)] * copies, axis=0) if copies > 1 else _mx(v)
+             for k, v in media.items() if v is not None}
+    mask = batch.get("modality_mask")
+    if mask is not None:
+        mask = _mx(mask, mx.float32)
+        mask = mx.concatenate([mask] * copies, axis=0) if copies > 1 else mask
+    return {"modality_inputs": tiled, "modality_mask": mask}
+
+
+def _frozen_media(frozen, media: dict) -> dict:
+    """A text-only reference/teacher is a valid source for a multimodal
+    student (Torch distill parity): pass media only if it can fuse them."""
+    return media if media and getattr(frozen, "multimodal_fusion", None) is not None else {}
+
+
 def _dpo_stage_loss(model, reference, batch, beta: float = 0.1, router_ref=None):
     x_c = _ids_to_mx(batch["x_chosen"])
     x_r = _ids_to_mx(batch["x_rejected"])
@@ -599,12 +621,13 @@ def _dpo_stage_loss(model, reference, batch, beta: float = 0.1, router_ref=None)
     m_c = _ids_to_mx(batch["mask_chosen"])
     m_r = _ids_to_mx(batch["mask_rejected"])
     x = mx.concatenate([x_c, x_r], axis=0)
-    logits, lookahead, _cache = model(x, logits_dtype=mx.float32)
+    media = _tile_media(batch, 2)            # chosen and rejected answer the same prompt media
+    logits, lookahead, _cache = model(x, logits_dtype=mx.float32, **media)
     B = x_c.shape[0]
     lp_c = _aligned_sequence_logprob(logits[:B], y_c, m_c)
     lp_r = _aligned_sequence_logprob(logits[B:], y_r, m_r)
     if reference is not None:
-        ref_logits, _ref_lp, _ref_cache = reference(x, logits_dtype=mx.float32)
+        ref_logits, _ref_lp, _ref_cache = reference(x, logits_dtype=mx.float32, **_frozen_media(reference, media))
         ref_c = mx.stop_gradient(_aligned_sequence_logprob(ref_logits[:B], y_c, m_c))
         ref_r = mx.stop_gradient(_aligned_sequence_logprob(ref_logits[B:], y_r, m_r))
         base = -mx.mean(nn.log_sigmoid(beta * ((lp_c - lp_r) - (ref_c - ref_r))))
@@ -621,7 +644,7 @@ def _orpo_stage_loss(model, batch, beta: float = 0.1, lambda_or: float = 0.1, ro
     m_c = _ids_to_mx(batch["mask_chosen"])
     m_r = _ids_to_mx(batch["mask_rejected"])
     x = mx.concatenate([x_c, x_r], axis=0)
-    logits, lookahead, _cache = model(x, logits_dtype=mx.float32)
+    logits, lookahead, _cache = model(x, logits_dtype=mx.float32, **_tile_media(batch, 2))
     B = x_c.shape[0]
     lp_c = _aligned_sequence_logprob(logits[:B], y_c, m_c, average=True)
     lp_r = _aligned_sequence_logprob(logits[B:], y_r, m_r, average=True)
@@ -645,9 +668,13 @@ def _distill_stage_loss(
     alpha: float = 0.7,
     temperature: float = 4.0,
     router_ref=None,
+    modality_inputs=None,
+    modality_mask=None,
 ):
-    logits, lookahead, _cache = model(input_ids, logits_dtype=mx.float32)
-    t_logits, _tlp, _tcache = teacher(teacher_input_ids if teacher_input_ids is not None else input_ids, logits_dtype=mx.float32)
+    media = {"modality_inputs": modality_inputs, "modality_mask": modality_mask} if modality_inputs else {}
+    logits, lookahead, _cache = model(input_ids, logits_dtype=mx.float32, **media)
+    t_logits, _tlp, _tcache = teacher(teacher_input_ids if teacher_input_ids is not None else input_ids,
+                                      logits_dtype=mx.float32, **_frozen_media(teacher, media))
     V = min(logits.shape[-1], t_logits.shape[-1])
     S = min(logits.shape[1], t_logits.shape[1])
     logits_kd = logits[:, :S, :V]
@@ -674,7 +701,8 @@ def _grpo_stage_loss(model, reference, batch, beta: float = 0.04, router_ref=Non
     ids = _ids_to_mx(batch["ids"])
     response_mask = mx.array(batch["response_mask"]).astype(mx.float32)
     advantages = mx.array(batch["advantages"]).astype(mx.float32)
-    logits, lookahead, _cache = model(ids, logits_dtype=mx.float32)
+    media = _tile_media(batch, int(ids.shape[0]))   # one prompt's media for every trajectory
+    logits, lookahead, _cache = model(ids, logits_dtype=mx.float32, **media)
     lp_tok = _shifted_token_logprobs(logits, ids)
     mask = response_mask[:, 1:]
     seq_lp = (lp_tok * mask).sum(axis=1) / mx.maximum(mask.sum(axis=1), 1.0)
@@ -682,7 +710,7 @@ def _grpo_stage_loss(model, reference, batch, beta: float = 0.04, router_ref=Non
 
     kl = mx.zeros((), dtype=logits.dtype)
     if reference is not None:
-        ref_logits, _ref_lp, _ref_cache = reference(ids, logits_dtype=mx.float32)
+        ref_logits, _ref_lp, _ref_cache = reference(ids, logits_dtype=mx.float32, **_frozen_media(reference, media))
         ref_lp_tok = mx.stop_gradient(_shifted_token_logprobs(ref_logits, ids))
         log_ratio = ref_lp_tok - lp_tok
         kl = ((mx.exp(log_ratio) - log_ratio - 1.0) * mask).sum() / mx.maximum(mask.sum(), 1.0)
@@ -699,6 +727,8 @@ def _capture_router_ref(model, batch, stage: str) -> mx.array | None:
         ids = _ids_to_mx(raw_ids)
     elif stage in {"dpo", "orpo"}:
         ids = mx.concatenate([_ids_to_mx(batch["x_chosen"]), _ids_to_mx(batch["x_rejected"])], axis=0)
+        tiled = _tile_media(batch, 2)
+        media, media_mask = tiled.get("modality_inputs"), tiled.get("modality_mask")
     else:
         return None
     _logits, _lookahead, _cache = model(ids, modality_inputs=media, modality_mask=media_mask)
@@ -717,13 +747,38 @@ def _sample_next(logits: mx.array, temperature: float) -> mx.array:
     return mx.random.categorical(mx.log(probs + 1e-9)).astype(mx.int32)
 
 
-def _rollout_one(model, prompt_ids: mx.array, max_gen_len: int, temperature: float, eos_token_id: int | None) -> tuple[mx.array, list[int]]:
+def _encoded_media(model, media: dict) -> dict:
+    """Rollout kwargs with raw image/audio encoded once into ``*_embeds``.
+
+    Every decode step re-applies the fusion (Torch ``generate`` parity); the
+    encoder output is constant, so it is computed once and passed through
+    the pre-encoded path (same tokens, same offsets, same validity)."""
+    if not media:
+        return {}
+    fusion = getattr(model, "multimodal_fusion", None)
+    inputs = dict(media["modality_inputs"])
+    if fusion is not None:
+        from chronos.mlx.multimodal import _mx
+        for name, encoder in (("image", fusion.image_encoder), ("audio", fusion.audio_encoder)):
+            raw = inputs.get(name)
+            if raw is None or encoder is None or inputs.get(f"{name}_embeds") is not None:
+                continue
+            inputs.pop(name)
+            inputs[f"{name}_embeds"] = mx.stop_gradient(encoder(_mx(raw, mx.float32)))
+            mask = inputs.pop(f"{name}_mask", None)
+            if mask is not None:
+                inputs[f"{name}_embeds_mask"] = mask
+    return {"modality_inputs": inputs, "modality_mask": media.get("modality_mask")}
+
+
+def _rollout_one(model, prompt_ids: mx.array, max_gen_len: int, temperature: float, eos_token_id: int | None,
+                 media: dict | None = None) -> tuple[mx.array, list[int]]:
     ids = prompt_ids
     cache = None
     generated: list[int] = []
     for _ in range(max(1, int(max_gen_len))):
         token_in = ids if cache is None else ids[:, -1:]
-        logits, _lookahead, cache = model(token_in, cache=cache)
+        logits, _lookahead, cache = model(token_in, cache=cache, **(media or {}))
         next_id = _sample_next(logits[:, -1, :], temperature).reshape(1, 1)
         mx.eval(next_id)
         tok = int(next_id.item())
@@ -735,7 +790,28 @@ def _rollout_one(model, prompt_ids: mx.array, max_gen_len: int, temperature: flo
     return ids, generated
 
 
-def _build_grpo_batch(model, prompt: str, tokenizer, reward_fn, args) -> dict:
+def _grpo_prompt_media(item, args):
+    """``(prompt_text, media)`` for a GRPO prompt: a string, or the
+    ``{"prompt", "record"}`` dict of ``load_grpo_prompt_records`` (its
+    image/audio resolved here, once per step, with the dataset loaders)."""
+    if not isinstance(item, dict):
+        return str(item), None
+    from chronos.data.flexible_dataset import record_media
+    get = (lambda k, d: getattr(args, k, d)) if args is not None else (lambda _k, d: d)
+    found = record_media(item.get("record") or {}, image_size=int(get("image_size", 224)),
+                         audio_sample_rate=int(get("audio_sample_rate", 16000)),
+                         max_audio_seconds=float(get("max_audio_seconds", 30.0)),
+                         media_error_policy=str(get("media_error_policy", "warn")))
+    if found is None:
+        return str(item["prompt"]), None
+    media, mask = found
+    batched = {k: v.unsqueeze(0) for k, v in media.items()}      # one prompt → batch of 1
+    return str(item["prompt"]), {"modality_inputs": batched, "modality_mask": mask.unsqueeze(0)}
+
+
+def _build_grpo_batch(model, prompt, tokenizer, reward_fn, args) -> dict:
+    prompt, media = _grpo_prompt_media(prompt, args)
+    rollout_media = _encoded_media(model, media)
     rendered = tokenizer.apply_chat_template(
         [{"role": "user", "content": prompt}],
         tokenize=False,
@@ -757,6 +833,7 @@ def _build_grpo_batch(model, prompt: str, tokenizer, reward_fn, args) -> dict:
             max_gen_len=max_gen_len,
             temperature=temperature,
             eos_token_id=tokenizer.eos_token_id,
+            media=rollout_media,
         )
         trajectories.append(full_ids)
         rewards.append(float(reward_fn(prompt, response_tokens, tokenizer)))
@@ -775,11 +852,14 @@ def _build_grpo_batch(model, prompt: str, tokenizer, reward_fn, args) -> dict:
     denom = mx.maximum(mx.sqrt(((adv * adv).mean())), 1e-6)
     advantages = adv / denom
     mx.eval(advantages)
-    return {
+    out = {
         "ids": ids_rows,
         "response_mask": mask_rows,
         "advantages": advantages.tolist(),
     }
+    if media:      # the policy update re-encodes (encoder gradients), tiled per trajectory
+        out.update(media)
+    return out
 
 
 @dataclass
@@ -1072,9 +1152,7 @@ def run_mlx_stage(
         if stage == "orpo":
             return _orpo_stage_loss(m, batch, beta=beta, lambda_or=lambda_or, router_ref=router_ref)
         if stage == "distill":
-            ids, labels, media, _media_mask = batch_modalities(batch)
-            if media:
-                raise ValueError("MLX distill does not take modality inputs yet; use pretrain/sft or the PyTorch backend")
+            ids, labels, media, media_mask = batch_modalities(batch)
             ids = _ids_to_mx(ids)
             labels = _ids_to_mx(labels)
             teacher_vocab = int(getattr(getattr(teacher, "config", config), "vocab_size", config.vocab_size))
@@ -1087,6 +1165,8 @@ def run_mlx_stage(
                 alpha=alpha,
                 temperature=temperature,
                 router_ref=router_ref,
+                modality_inputs=media,
+                modality_mask=media_mask,
             )
         if stage == "grpo":
             return _grpo_stage_loss(m, reference, batch, beta=beta, router_ref=router_ref)
@@ -1195,7 +1275,7 @@ def run_mlx_stage(
                     break
                 train_batch = _build_grpo_batch(
                     model,
-                    str(batch),
+                    batch if isinstance(batch, dict) else str(batch),
                     tokenizer,
                     reward_fn,
                     args,

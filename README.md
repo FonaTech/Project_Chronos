@@ -289,8 +289,10 @@ feed the PyTorch/export pipeline.
 Memory, media and tools on MLX:
 
 - Every MLX model caps the MLX buffer cache at `min(RAM/8, 16 GiB)` before it allocates weights (`chronos.mlx.memory`). A recipe's `extra.mlx_cache_limit_gb` or `CHRONOS_MLX_CACHE_LIMIT_GB` may lower the cap, never raise it. The cap bounds reclaimable cache only; weights, activations and gradients are not limited.
-- Image and audio encoders and the gated cross-attention fusion run on MLX in pretrain and SFT, with the same weights and numerics as PyTorch (`chronos.mlx.multimodal`). DPO, ORPO, GRPO and distillation with media still use PyTorch.
-- Tool-call SFT: the chat template renders `tools`, assistant `tool_calls` and `tool` results. `chronos.data.chat_records.encode_chat` gives each token a loss flag (assistant text and calls are learned, everything else is context), and `write_sft_records` writes `.lmask` shards that `SFTRecords` reads.
+- Image and audio encoders and the gated cross-attention fusion run on MLX in all six stages, with the same weights and numerics as PyTorch (`chronos.mlx.multimodal`). In DPO and ORPO, both answers of a pair condition on the prompt's media. In GRPO, every rollout conditions on it. Preference and GRPO records carry media in the same `image`, `audio` and `*_embeds` fields as SFT. The PyTorch DPO, ORPO and GRPO trainers are text-only, so `auto` routes media data in those stages to MLX.
+- Tool calls:
+  - Training: the chat template renders `tools`, assistant `tool_calls` and `tool` results. `chronos.data.chat_records.encode_chat` gives each token a loss flag (assistant text and calls are learned; everything else is context), and `write_sft_records` writes `.lmask` shards that `SFTRecords` reads.
+  - Serving: when a request carries `tools`, `chronos serve` parses the model's `<tool_call>` output into Ollama `message.tool_calls` or OpenAI `tool_calls`, in streaming and non-streaming responses.
 
 The full six-stage comparison harness lives in `tools/compare_minimind_chronos_v3.py`.
 

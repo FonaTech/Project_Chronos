@@ -532,6 +532,18 @@ def _coerce_max_steps(value) -> int | None:
     return steps if steps > 0 else None
 
 
+def _stage_collate(mode: str, modalities, multimodal_collate, preference_collate):
+    """DataLoader collate for a stage: media batches need the multimodal rules
+    (CE stages) or the pair rules (DPO/ORPO); text-only keeps the default."""
+    if not modalities:
+        return None
+    if mode in {"pretrain", "sft", "distill"}:
+        return multimodal_collate
+    if mode in {"dpo", "orpo"}:
+        return preference_collate
+    return None
+
+
 def _planned_train_steps(data_iter, epochs: int, max_steps=None) -> int:
     """Return the real UI progress denominator in micro/batch steps.
 
@@ -1064,6 +1076,10 @@ class TrainSession:
             num_experts=int(cfg.get("num_experts", 4)),
             steps=int(cfg.get("max_steps", 0)) or None,
             weight_decay=float(cfg.get("weight_decay", 0.01)),
+            image_size=int(cfg.get("image_size", 224)),
+            audio_sample_rate=int(cfg.get("audio_sample_rate", 16000)),
+            max_audio_seconds=float(cfg.get("max_audio_seconds", 30.0)),
+            media_error_policy=cfg.get("media_error_policy", "warn"),
         )
 
     def _record_stage_metric(self, mode: str, step: int, result, tps: float = 0.0):
@@ -1281,15 +1297,15 @@ class TrainSession:
 
             requested_backend = (cfg.get("train_backend") or "auto").strip().lower() or "auto"
             resolved_backend, device = resolve_training_device(requested_backend)
-            if resolved_backend == "mlx" and model_cfg.modalities and mode not in {"pretrain", "sft"}:
-                # MLX trains the image/audio encoders and fusion in pretrain/SFT;
-                # the preference and distillation stages stay on PyTorch.
-                if requested_backend != "auto":
-                    raise ValueError(f"MLX 多模态训练目前支持 pretrain/sft；{mode} 请选择 auto 或 PyTorch MPS/CUDA 后端。")
-                supported = set(training_available())
-                target = next(name for name in ("cuda", "xpu", "mps", "cpu") if name in supported)
-                resolved_backend, device = resolve_training_device(target)
-                self._put(f"[data] Modalities {model_cfg.modalities}: using {resolved_backend} for {mode}.")
+            if resolved_backend != "mlx" and model_cfg.modalities and mode in {"dpo", "orpo", "grpo"}:
+                # MLX conditions DPO/ORPO pairs and GRPO rollouts on the prompt's
+                # image/audio; the PyTorch preference trainers are text-only and
+                # would silently drop the media.
+                if requested_backend != "auto" or "mlx" not in set(training_available()):
+                    raise ValueError(f"多模态 {mode.upper()} 训练需要 MLX 后端（PyTorch 的 {mode.upper()} 只支持文本）。"
+                                     "请选择 auto 或 MLX。")
+                resolved_backend, device = resolve_training_device("mlx")
+                self._put(f"[data] Modalities {model_cfg.modalities}: using mlx for {mode}.")
             cfg["train_backend"] = requested_backend
             cfg["device"] = device
             cfg["dtype"] = _normalize_dtype_for_trainer(cfg.get("dtype"))
@@ -1339,8 +1355,8 @@ class TrainSession:
                 tokenizer = self._load_tokenizer()
                 from chronos.data.flexible_dataset import (
                     FlexibleDataset, StreamingSFTDataset, MultimodalStreamingDataset,
-                    MultimodalStreamingSFTDataset, StreamingDPODataset,
-                    dataset_modality_summary, multimodal_collate,
+                    MultimodalStreamingSFTDataset, StreamingDPODataset, MultimodalStreamingDPODataset,
+                    dataset_modality_summary, multimodal_collate, preference_collate,
                 )
                 modality_summary = dataset_modality_summary(data_path)
                 detected_modalities = modality_summary.get("detected_modalities", [])
@@ -1367,7 +1383,16 @@ class TrainSession:
                         if detected_modalities else StreamingSFTDataset(data_path, tokenizer, max_length=max_seq_len)
                     )
                 elif mode in {"dpo", "orpo"}:
-                    full_ds = StreamingDPODataset(data_path, tokenizer, max_length=max_seq_len)
+                    if cfg.get("auto_detect_modalities", True) and detected_modalities:
+                        model_cfg_kwargs["modalities"] = detected_modalities
+                    full_ds = (
+                        MultimodalStreamingDPODataset(data_path, tokenizer, max_length=max_seq_len,
+                            image_size=int(cfg.get("image_size", 224)),
+                            audio_sample_rate=int(cfg.get("audio_sample_rate", 16000)),
+                            max_audio_seconds=float(cfg.get("max_audio_seconds", 30.0)),
+                            media_error_policy=cfg.get("media_error_policy", "warn"))
+                        if detected_modalities else StreamingDPODataset(data_path, tokenizer, max_length=max_seq_len)
+                    )
                 else:
                     full_ds = None
                 # Deterministic val split: every 1/val_ratio-th record goes to val
@@ -1388,7 +1413,7 @@ class TrainSession:
                     DataLoader(
                         train_ds,
                         batch_size=batch_size,
-                        collate_fn=multimodal_collate if detected_modalities and mode in {"pretrain", "sft", "distill"} else None,
+                        collate_fn=_stage_collate(mode, detected_modalities, multimodal_collate, preference_collate),
                         **dataloader_kwargs(device=device, num_workers=cfg.get("num_workers", "auto"), shuffle=True),
                     )
                     if train_ds is not None else None
@@ -1397,7 +1422,7 @@ class TrainSession:
                     DataLoader(
                         val_ds,
                         batch_size=batch_size,
-                        collate_fn=multimodal_collate if detected_modalities and mode in {"pretrain", "sft", "distill"} else None,
+                        collate_fn=_stage_collate(mode, detected_modalities, multimodal_collate, preference_collate),
                         **dataloader_kwargs(device=device, num_workers=cfg.get("num_workers", "auto"), shuffle=False),
                     )
                     if val_ds is not None else None
@@ -1411,8 +1436,10 @@ class TrainSession:
                 workers = None
             if mode in {"grpo"}:
                 tokenizer = self._load_tokenizer()
-                from chronos.trainer.grpo_trainer import load_grpo_prompts
-                prompts = load_grpo_prompts(data_path, max_prompts=None)
+                from chronos.trainer.grpo_trainer import load_grpo_prompt_records, load_grpo_prompts
+                # MLX resolves each record's image/audio per step; Torch GRPO is text-only.
+                prompts = (load_grpo_prompt_records(data_path, max_prompts=None) if resolved_backend == "mlx"
+                           else load_grpo_prompts(data_path, max_prompts=None))
                 if not prompts:
                     raise ValueError(f"[{mode.upper()}] no prompts found in {data_path}")
             else:

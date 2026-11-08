@@ -299,8 +299,10 @@ checkpoint 保存事件、stop 事件、verify 结果都会同步到界面。Sto
 MLX 上的内存、多模态与工具调用：
 
 - 每个 MLX 模型在分配权重前把 MLX 缓冲区缓存上限设为 `min(内存/8, 16 GiB)`（`chronos.mlx.memory`）。配方的 `extra.mlx_cache_limit_gb` 或 `CHRONOS_MLX_CACHE_LIMIT_GB` 只能调低，不能调高。上限只约束可回收缓存，不限制权重、激活和梯度。
-- 图像、音频编码器和门控交叉注意力融合在 MLX 上支持预训练和 SFT，权重与数值和 PyTorch 一致（`chronos.mlx.multimodal`）。带媒体的 DPO、ORPO、GRPO 和蒸馏仍走 PyTorch。
-- 工具调用 SFT：chat 模板支持 `tools`、assistant 的 `tool_calls` 和 `tool` 结果。`chronos.data.chat_records.encode_chat` 为每个 token 标出是否计 loss（assistant 文本和调用参与学习，其余为上下文），`write_sft_records` 写出 `SFTRecords` 可读的 `.lmask` 分片。
+- 图像、音频编码器和门控交叉注意力融合在 MLX 上覆盖全部 6 个阶段，权重与数值和 PyTorch 一致（`chronos.mlx.multimodal`）。DPO/ORPO 的一对回答以 prompt 的媒体为共同条件，GRPO 的每条 rollout 也以该媒体为条件。偏好数据和 GRPO 数据的媒体字段与 SFT 相同：`image`、`audio`、`*_embeds`。PyTorch 的 DPO/ORPO/GRPO 只支持文本，所以这三个阶段遇到带媒体的数据时，`auto` 会选 MLX。
+- 工具调用：
+  - 训练：chat 模板支持 `tools`、assistant 的 `tool_calls` 和 `tool` 结果。`chronos.data.chat_records.encode_chat` 为每个 token 标出是否计 loss（assistant 文本和调用参与学习，其余为上下文），`write_sft_records` 写出 `SFTRecords` 可读的 `.lmask` 分片。
+  - 推理：请求带 `tools` 时，`chronos serve` 把模型输出的 `<tool_call>` 解析成 Ollama 的 `message.tool_calls` 或 OpenAI 的 `tool_calls`，流式与非流式都支持。
 
 完整 6 阶段端到端对比见 `tools/compare_minimind_chronos_v3.py`。
 
