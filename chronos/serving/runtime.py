@@ -17,6 +17,8 @@ from dataclasses import dataclass, field
 
 import torch
 
+from chronos.tokenizer.visible import decode_visible
+
 
 def _rss_mb() -> float:
     try:
@@ -297,7 +299,7 @@ class ChronosRuntime:
                     if t in eos:
                         return
                     generated.append(t)
-                    text = tok.decode(generated, skip_special_tokens=True)
+                    text = decode_visible(tok, generated)   # keeps <tool_call> even if special
                     if text.endswith("�"):
                         return                       # wait for the rest of a multi-byte char
                     delta, emitted_text = text[len(emitted_text):], text

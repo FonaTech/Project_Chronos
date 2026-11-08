@@ -138,7 +138,7 @@ def test_v3_presets_build_and_fill_every_widget():
         CONFIG_INPUT_ORDER, DEFAULT_PRESET, V3_PRESET_META, get_preset, preset_names, values_in_input_order,
     )
     names = preset_names()
-    assert DEFAULT_PRESET in names and "MiniMind-MoE (default)" in names
+    assert DEFAULT_PRESET in names and "Chronos-v2 legacy (768H, 6400 vocab)" in names
     assert sum(n.startswith("Chronos-v3") for n in names) == 5
     for name in names:
         cfg = get_preset(name)

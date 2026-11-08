@@ -1,0 +1,15 @@
+Legacy 6400-token tokenizer (data files only)
+
+tokenizer.json and tokenizer_config.json are copied unchanged from
+minimind (https://github.com/jingyaogong/minimind), commit
+24896cd2c4e9328a0911cf69ff61ace17a459b71. Copyright jingyaogong.
+Licensed under the Apache License, Version 2.0 (see LICENSE in this folder).
+
+sha256
+  tokenizer.json         71f32c68cf63a15355a8fc171b7594b3d41870fe0ddb54fc6aefa55f73a4a668
+  tokenizer_config.json  d7cd6a60c9f191c4f9ffec69b2eb289ad2f960366724f328b681ae1e46e4c110
+
+Chronos does not use any minimind code. These files are kept so that
+checkpoints that never recorded a tokenizer (vocab_size 6400, trained
+before 0.3.2) still decode. New models should train their own
+tokenizer with `chronos tokenizer` (Chronos Tokenizer Builder).

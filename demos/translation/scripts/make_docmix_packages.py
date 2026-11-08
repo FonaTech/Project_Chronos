@@ -1,7 +1,7 @@
 """Self-contained MLX training packages for the doc-mix sets (A: 15%/4k/24h, B: 5%/1k/8h, C: 1%/1k/1h).
 
-Each package carries its data, tokenizer, eval sets, Chronos source, vendored
-minimind, a recipe with relative paths, pinned requirements, launch/monitor
+Each package carries its data, tokenizer, eval sets, Chronos source (no
+third-party kernel since 0.3.2), a recipe with relative paths, pinned requirements, launch/monitor
 scripts and SHA256SUMS.  Usage::
 
     python demos/translation/scripts/make_docmix_packages.py OUT_DIR [A B C]
@@ -19,14 +19,13 @@ import time
 DEMO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 REPO = os.path.abspath(os.environ.get("CHRONOS_REPO") or os.path.dirname(os.path.dirname(DEMO)))
 sys.path[:0] = [REPO, DEMO]
-from chronos_translate.bundle.builder import TOKENIZER_FILES, FLORES_REL, FLORES_FILES, MINIMIND_PARTS, sha256_file  # noqa: E402
+from chronos_translate.bundle.builder import TOKENIZER_FILES, FLORES_REL, FLORES_FILES, sha256_file  # noqa: E402
 from chronos.config_schema import model_config_kwargs  # noqa: E402
 
 DATA = os.path.join(REPO, "Translation Training Data")
 DOCMIX = os.path.join(DATA, "docmix_v1")
 RAW = os.path.join(DATA, "raw")
 TOKENIZER = os.path.join(DATA, "tokenizer_v1")
-MINIMIND = os.path.expanduser("~/.cache/chronos/minimind-master")
 PLAN = os.path.join(DEMO, "recipes", "docmix_plan.json")
 SKIP = {"__pycache__", ".DS_Store"}
 # The extension's own recipes and tests are not needed inside a package.
@@ -232,7 +231,6 @@ else
   fi
 fi
 export PYTHONPATH="$HERE/src"
-export CHRONOS_MINIMIND_DIR="$HERE/third_party/minimind"
 export TOKENIZERS_PARALLELISM=false
 export PYTHONNOUSERSITE=1
 "$PY" -c 'import mlx.core as mx; i = mx.device_info(mx.gpu); print("[pkg] GPU:", i.get("device_name"), "| 内存", round(i.get("memory_size", 0) / 2**30), "GiB | 推荐工作集", round(i.get("max_recommended_working_set_size", 0) / 2**30), "GiB")'
@@ -256,7 +254,6 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 cd "$HERE"
 PY="${CHRONOS_PY:-$HERE/.venv/bin/python}"
 export PYTHONPATH="$HERE/src"
-export CHRONOS_MINIMIND_DIR="$HERE/third_party/minimind"
 export PYTHONNOUSERSITE=1
 exec "$PY" -m chronos.monitor.server --runs-dir "$HERE" --host 127.0.0.1 --port "${PORT:-7870}" "$@"
 """
@@ -370,9 +367,6 @@ def build(key, out_root, plan):
     _copytree(os.path.join(DEMO, "chronos_translate"), os.path.join(tmp, "src", "chronos_translate"))
     for name in ("LICENSE", "THIRD_PARTY_NOTICES.md", "pyproject.toml"):
         _copy(os.path.join(REPO, name), os.path.join(tmp, "src", name))
-    for part in MINIMIND_PARTS:
-        s = os.path.join(MINIMIND, part)
-        (_copytree if os.path.isdir(s) else _copy)(s, os.path.join(tmp, "third_party", "minimind", part))
     rec = recipe(key, cfg, plan[key], docmix)
     _json(os.path.join(tmp, "recipe.json"), rec)
     _write(os.path.join(tmp, "requirements-train.txt"), REQUIREMENTS)

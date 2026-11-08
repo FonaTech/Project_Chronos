@@ -14,8 +14,7 @@ Usage:
         --device     cpu \
         --max_new_tokens 64
 """
-import sys
-import chronos.deps  # ensure minimind on sys.path
+import chronos.deps  # default tokenizer path
 
 import argparse
 import math
@@ -108,7 +107,7 @@ def run_benchmark(args):
         chronos.deps.get_tokenizer_path()
     )
 
-    from dataset.lm_dataset import PretrainDataset
+    from chronos.data.flexible_dataset import FlexibleDataset as PretrainDataset
     dataset = PretrainDataset(args.data_path, tokenizer, max_length=args.max_seq_len)
     loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False)
 

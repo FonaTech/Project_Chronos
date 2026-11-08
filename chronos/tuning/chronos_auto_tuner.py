@@ -10,7 +10,6 @@ import dataclasses
 from dataclasses import dataclass, field
 from typing import List
 
-import chronos.deps  # ensure minimind on sys.path
 
 from chronos.tuning._base_tuner import (
     AutoTuner, SearchSpaceConfig, AutoTuneResult, _gc_collect,

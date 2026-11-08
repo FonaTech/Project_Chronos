@@ -2,7 +2,6 @@
 import argparse
 import os
 
-import chronos.deps  # noqa
 
 from chronos.backend import resolve_training_device
 from chronos.model.model_chronos import ChronosForCausalLM
@@ -25,7 +24,7 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--data_path", required=True)
     p.add_argument("--teacher_path", required=True,
-                   help="Path to a Chronos or MiniMind .pth teacher checkpoint.")
+                   help="Path to a Chronos .pth teacher checkpoint.")
     p.add_argument("--from_weight", default="grpo",
                    help="Student starting checkpoint stem.")
     p.add_argument("--save_dir", default="out")

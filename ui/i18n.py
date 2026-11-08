@@ -152,7 +152,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         # ── M8d: M6/M7/M8 widget labels ─────────────────────────────
         "config.preset":         "预设模板",
         "config.load_preset":    "📥 载入预设",
-        "config.reset_minimind": "↻ 重置为 MiniMind-MoE",
+        "config.reset_minimind": "↻ 重置为默认（v2 旧版形状）",
         "config.cfg_path":       "配置文件路径 (.json)",
         "config.save_cfg":       "💾 保存配置到文件",
         "config.load_cfg":       "📂 从文件载入配置",
@@ -332,7 +332,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         # ── M8d ───────────────────────────────────────────────────
         "config.preset":         "預設範本",
         "config.load_preset":    "📥 載入預設",
-        "config.reset_minimind": "↻ 重置為 MiniMind-MoE",
+        "config.reset_minimind": "↻ 重置為預設（v2 舊版形狀）",
         "config.cfg_path":       "配置檔案路徑 (.json)",
         "config.save_cfg":       "💾 儲存配置到檔案",
         "config.load_cfg":       "📂 從檔案載入配置",
@@ -512,7 +512,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         # ── M8d ───────────────────────────────────────────────────
         "config.preset":         "Preset",
         "config.load_preset":    "📥 Load Preset",
-        "config.reset_minimind": "↻ Reset to MiniMind-MoE",
+        "config.reset_minimind": "↻ Reset to defaults (v2 legacy shape)",
         "config.cfg_path":       "Config file path (.json)",
         "config.save_cfg":       "💾 Save Config to File",
         "config.load_cfg":       "📂 Load Config from File",
@@ -692,7 +692,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         # ── M8d ───────────────────────────────────────────────────
         "config.preset":         "プリセット",
         "config.load_preset":    "📥 プリセット読込",
-        "config.reset_minimind": "↻ MiniMind-MoE にリセット",
+        "config.reset_minimind": "↻ 既定値（v2 旧形状）にリセット",
         "config.cfg_path":       "設定ファイルパス (.json)",
         "config.save_cfg":       "💾 設定をファイルに保存",
         "config.load_cfg":       "📂 ファイルから設定を読込",

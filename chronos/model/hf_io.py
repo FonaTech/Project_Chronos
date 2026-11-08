@@ -68,7 +68,7 @@ def save_chronos_pretrained(
     if paging is not None:
         paging.materialize_all()
 
-    # MiniMind/Chronos tie ``lm_head.weight`` to ``model.embed_tokens.weight``
+    # Chronos ties ``lm_head.weight`` to ``model.embed_tokens.weight``
     # but doesn't declare it via ``_tied_weights_keys``, which trips
     # safetensors' shared-tensor detector. Clone lm_head once before saving;
     # restore the tie after.
@@ -115,7 +115,7 @@ def load_chronos_pretrained(
     from chronos.model.model_chronos import ChronosForCausalLM
     model = ChronosForCausalLM.from_pretrained(save_directory, **from_pretrained_kwargs)
 
-    # MiniMind/Chronos precompute RoPE frequencies as *persistent* buffers.
+    # Chronos precomputes RoPE frequencies from config (FP32, not buffers).
     # When the checkpoint is saved as fp16 and reloaded, these deterministic
     # buffers get truncated to zeros/NaNs. Recompute them from scratch —
     # they are a pure function of config.
@@ -131,22 +131,15 @@ def load_chronos_pretrained(
 
 
 def _rehydrate_rope_buffers(model) -> None:
-    """Recompute ``freqs_cos`` and ``freqs_sin`` on the inner ChronosModel.
-    These are deterministic from config; the precompute logic lives inside
-    ``ChronosModel.__init__``. We invoke it via a fresh ChronosModel and
-    copy the buffers across. Cheap — only runs once per load."""
-    try:
-        inner = getattr(model, "model", None)
-        if inner is None:
-            return
-        cfg = model.config
-        from chronos.model.model_chronos import ChronosModel
-        fresh = ChronosModel(cfg)
-        if hasattr(inner, "freqs_cos") and hasattr(fresh, "freqs_cos"):
-            inner.freqs_cos = fresh.freqs_cos
-        if hasattr(inner, "freqs_sin") and hasattr(fresh, "freqs_sin"):
-            inner.freqs_sin = fresh.freqs_sin
-    except Exception:
-        # Rehydration is best-effort; fall through silently so an unexpected
-        # config shape doesn't block the load.
-        pass
+    """Point the inner model's ``freqs_cos/sin`` at fresh FP32 tables.
+
+    They are a pure function of config (``kernel.rope_tables``), so no model
+    is rebuilt; a half-precision save can never truncate them.
+    """
+    inner = getattr(model, "model", None)
+    if inner is None or not hasattr(inner, "freqs_cos"):
+        return
+    from chronos.model.kernel import rope_tables
+    cfg = model.config
+    inner.freqs_cos, inner.freqs_sin = rope_tables(
+        cfg.head_dim, cfg.max_position_embeddings, cfg.rope_theta, cfg.rope_scaling, inner.freqs_cos.device)

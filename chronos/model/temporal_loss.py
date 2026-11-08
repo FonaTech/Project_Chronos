@@ -243,7 +243,7 @@ def load_balance_loss(
     num_experts_per_tok: int,
 ) -> torch.Tensor:
     """
-    Standard auxiliary load-balancing loss (same formulation as minimind).
+    Standard auxiliary load-balancing loss (Switch-Transformer style, E·Σ f_i·P_i over top-k).
 
     Args:
         router_logits: [N, num_experts]  (N = B*S flattened)

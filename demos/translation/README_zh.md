@@ -23,17 +23,17 @@ Chronos 内核（`chronos/`）用于训练通用模型，不含任何翻译特�
 
 ```sh
 git clone https://github.com/FonaTech/Project_Chronos.git && cd Project_Chronos
-pip install -e '.[mlx,serve]'               # 内核（或：pip install --pre 'Project_Chronos[mlx,serve]==0.3.1a3'）
+pip install -e '.[mlx,serve]'               # 内核（或：pip install --pre 'Project_Chronos[mlx,serve]==0.3.2a0'）
 pip install -e demos/translation            # 本扩展（sacrebleu、sacremoses、pyarrow 固定版本）
 chronos-translate --version
 ```
 
-扩展固定依赖 `Project_Chronos==0.3.1a3`。请检出对应标签（`git checkout v0.3.1a3`），使两边版本一致。
+扩展固定依赖 `Project_Chronos==0.3.2a0`。请检出对应标签（`git checkout v0.3.2a0`），使两边版本一致。
 模型包需要这两个 wheel，可以从检出目录构建：
 
 ```sh
-python -m build --outdir dist .                     # dist/project_chronos-0.3.1a3-py3-none-any.whl
-python -m build --outdir dist demos/translation     # dist/chronos_translate-0.3.1a3-py3-none-any.whl
+python -m build --outdir dist .                     # dist/project_chronos-0.3.2a0-py3-none-any.whl
+python -m build --outdir dist demos/translation     # dist/chronos_translate-0.3.2a0-py3-none-any.whl
 ```
 
 扩展测试在仓库根目录运行：`pytest demos/translation/tests`。

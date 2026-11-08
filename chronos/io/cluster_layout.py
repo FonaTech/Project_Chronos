@@ -17,8 +17,7 @@ Usage:
         --data_path  ./dataset/calib.jsonl \
         --output_dir ./expert_cache_clustered
 """
-import sys
-import chronos.deps  # ensure minimind on sys.path
+import chronos.deps  # default tokenizer path
 
 import os
 import json
@@ -406,7 +405,7 @@ def build_clustered_expert_cache(
     infer expert co-occurrence, cluster experts, and write .ctsr shards plus
     cluster_manifest.json for Chronos lazy loading.
     """
-    import chronos.deps
+    import chronos.deps  # default tokenizer path
     from chronos.data.flexible_dataset import FlexibleDataset
     from chronos.model.moe_chronos import ChronosMOEFeedForward
 

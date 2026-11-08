@@ -136,6 +136,72 @@ Web UI: the Tokenizer tab (extract → train → evaluate) and the Serve tab (st
 
 ---
 
+## Native kernel (0.3.2): minimind removed
+
+Up to 0.3.1a3, Chronos took its config base, RoPE tables, gated FFN, dense attention and trainer utilities from [minimind](https://github.com/jingyaogong/minimind). It loaded them at import time: `chronos.deps` git-cloned the `master` branch into `~/.cache/chronos/minimind-master/` and put that folder first on `sys.path`. 0.3.2 replaces those pieces with `chronos/model/kernel.py`. Nothing is downloaded, and `sys.path` is not changed.
+
+**Why it was migrated**
+
+- **Reproducibility.** The clone followed an unpinned `master`, so two installs could run different kernel code.
+- **Offline installs.** On a machine without the cache, `import chronos` ran `git clone` and failed without network access.
+- **Namespace collisions.** minimind's top-level `model`, `trainer` and `dataset` packages went first on `sys.path`. They shadowed any user module with the same name.
+- **Dense mode was broken.** `use_hybrid_attention=False` used minimind's `Attention`, which crashed in every recurrent mode (`The size of tensor a (8) must match the size of tensor b (1024)`). It also could not use the shared KV cache.
+- **BF16 checkpoints were overwritten as FP16.** The Torch pretrain save called minimind's `lm_checkpoint`. That function rewrote the release file `chronos_<H>_moe.pth` as FP16 right after Chronos had saved it in BF16.
+- **Trainer logs were lost.** The Web UI captured trainer output by patching `trainer_utils.Logger`. The trainers import `Logger` by name at load time, so the patch never reached them.
+
+**What the native kernel does**
+
+- `ChronosBaseConfig` keeps the old field names and defaults. RoPE/YaRN tables and FFN parameter names are unchanged too, so existing checkpoints and sidecars load as before.
+- One FP32 RoPE table per `(dim, base, scaling, device)` is shared by all layers and grows on demand. Before, every attention layer kept its own copy.
+- `GlobalAttention` is the dense GQA path. It is the sliding-window kernel without a window, so all three recurrent modes, int8 KV, padding masks and speculative rollback work on it.
+- Logging uses a sink registry (`add_log_sink`). Resume state goes to `chronos_<H>_moe_resume.pth`, and the release checkpoint keeps its dtype.
+- The 6400-token tokenizer that old checkpoints use ships as data only (`chronos/assets/tokenizers/legacy_6400`, Apache-2.0, sha256 recorded in its `NOTICE`).
+
+**Old vs new, measured 2026-11-08**
+
+Setup: Apple M5 Max, PyTorch 2.10 on CPU, FP32, 4 threads, median of 5–7 runs, each kernel in its own process, runs alternated twice. The 50M en→zh SFT run was training on the GPU at the same time, so absolute timings carry noise. Old = 0.3.1a3 + minimind `24896cd`.
+
+| Check | 0.3.1a3 + minimind | 0.3.2 native |
+|---|---|---|
+| Logits, `out/chronos_256_moe.pth` and the 50M en→zh checkpoint (full, padded and prefill+decode paths) | reference | bit-identical (max abs diff 0) |
+| Random-init `state_dict` and config values (same seed) | reference | identical |
+| `import chronos` with no cache and no network | fails (`git clone` error) | works |
+| minimind on `sys.path`, top-level `model` module imported | yes | no |
+| RoPE table memory, 50M shape (1024 positions) | 3.50 MiB | 0.50 MiB |
+| RoPE table memory, 768H base shape (32768 positions) | 216 MiB | 24 MiB |
+| Dense GQA mode (`use_hybrid_attention=False`) | crashes | works; prefill+decode vs full forward ≤ 1e-6 |
+| Release checkpoint dtype after BF16 Torch pretrain | FP16 | BF16 |
+| Trainer lines captured by the Web UI sink | 0 of 2 | 2 of 2 |
+| Train step, 50M shape, batch 4×128 | 0.318–0.326 s | 0.317–0.321 s |
+| Prefill 128 tokens, 50M shape | 40.0–40.7 ms | 41.4–42.8 ms |
+| Decode tokens/s, 50M shape | 146–157 | 146–151 |
+
+A repeat with 40 prefill runs per process gave medians of 64–86 ms (old) and 74–86 ms (new) as the training load changed; neither kernel was consistently faster. Compute speed is unchanged within noise: the kernel keeps the same math. The gains are in memory, robustness and the bugs listed above. The parity check runs in CI as `tests/test_native_kernel.py`, which covers config defaults, RoPE bit-identity, dense mode, imports, logging, resume and the bundled tokenizer.
+
+`chronos.deps` remains as a shim: `get_tokenizer_path()` returns the bundled tokenizer (`CHRONOS_DEFAULT_TOKENIZER` overrides it), and `ensure_minimind()` is a no-op with a deprecation warning. The comparison tools in `tools/compare_minimind_chronos*.py` still use minimind as an external baseline, from a checkout you provide (`--minimind-dir` or `CHRONOS_MINIMIND_DIR`). `benchmark_compare.py` now compares Chronos with a dense GQA baseline built from the same kernel.
+
+### MLX training: compiled step and activation recomputation (0.3.2)
+
+Up to 0.3.1a3 the MLX trainers ran every micro step eagerly and kept every activation for the backward pass. 0.3.2 adds both missing pieces to `chronos longrun` and to the Stage 1–2 MLX trainer (pretrain, SFT):
+
+- **Compiled micro step** (`chronos/mlx/training/compiled.py`, on by default). Loss and gradients run as one `mx.compile` graph per signature. The executed recurrent depth, the ACT switch, input shapes and plain config values are part of the signature, so a step never reuses a stale graph. Weights and the RNG state are compile inputs and outputs, so dropout and the cache-miss simulation consume the RNG stream exactly as before. Multimodal batches, lazy (paged) experts and any signature that fails to trace run eagerly, and the reason is logged once. `CHRONOS_MLX_COMPILE=auto|on|off` or the recipe's `extra.mlx_compile` switches it.
+- **Activation recomputation** (`chronos/mlx/checkpointing.py`, `activation_checkpointing=true`; the planner's memory-constrained tiers turn it on). Each block call becomes one recomputed region. A plain `mx.checkpoint` is wrong here in two ways, both measured on mlx 0.32.4. Dropout masks and the cache-miss draws would be drawn again during recomputation; they are recorded in the forward pass and replayed. A region that returns the same graph node twice keeps the gradient of only one copy. A block's KV cache and its shared view are such a pair whenever the SWA window covers the sequence (a full-length slice is a new Python object over the same node), and the gradients were 37–40% off. Region outputs are therefore packed into one array per dtype.
+
+**Measured 2026-11-08.** Setup: Apple M5 Max, mlx 0.32.4, bf16, the 50M en→zh recipe's model config from random init, real en→zh shards, the recipe's step sizes (SFT 8 micro-batches per step, pretrain 16). Median of the second half of 16 (SFT) or 12 (pretrain) steps. The 72-hour run was training on the same GPU, so absolute timings carry noise.
+
+| Micro step | SFT s/step | SFT peak memory | Pretrain s/step | Pretrain peak memory |
+|---|---|---|---|---|
+| Eager (0.3.1a3) | 2.915 | 5.62 GB | 7.154 | 6.07 GB |
+| Compiled (new default) | 2.700 (1.08×) | 5.86 GB | 6.057 (1.18×) | 6.28 GB |
+| Recomputation + compiled | 3.148 | 3.50 GB | 7.357 | 3.62 GB |
+| Recomputation, eager | 3.663 | 3.42 GB | — | — |
+
+The loss curves of all variants follow the eager one: within 2e-3 over 16 SFT steps and 2e-4 over 12 pretrain steps. The first compiled step also traces the graph. Recomputation cuts peak memory by 38–40%. With compilation on, a step then takes 17% (SFT) or 21% (pretrain) longer than the compiled step without recomputation, and 8% or 3% longer than the old eager step. At 50M parameters memory is not the limit, so recomputation stays off by default; it is meant for larger models or longer sequences on the same machine.
+
+Exactness is tested per micro step on the same weights, batch and RNG state inside the real LongRun loop (`tests/test_longrun.py`, `tests/test_mlx_checkpointing.py`). On CPU FP32 the recomputed step's gradients match the eager ones within 4e-7 relative, the compiled step's within 1.7e-5, and with both on within 1e-4. That is FP32 reassociation: scaling the weights by (1 + 1e-7·N(0,1)) moves the eager gradient by 1.8e-4. On the M5 GPU, FP32 matrix products round like TF32. There, the eager gradient itself differs from the CPU FP32 one by 1.5e-2, and the recomputed one differs from the eager one by 1.4e-4.
+
+---
+
 ## Three-tier storage (M1: cluster-aware safetensors)
 
 ```mermaid
@@ -294,7 +360,7 @@ Memory, media and tools on MLX:
   - Training: the chat template renders `tools`, assistant `tool_calls` and `tool` results. `chronos.data.chat_records.encode_chat` gives each token a loss flag (assistant text and calls are learned; everything else is context), and `write_sft_records` writes `.lmask` shards that `SFTRecords` reads.
   - Serving: when a request carries `tools`, `chronos serve` parses the model's `<tool_call>` output into Ollama `message.tool_calls` or OpenAI `tool_calls`, in streaming and non-streaming responses.
 
-The full six-stage comparison harness lives in `tools/compare_minimind_chronos_v3.py`.
+The full six-stage comparison harness lives in `tools/compare_minimind_chronos_v3.py` (needs a minimind checkout via `--minimind-dir`).
 
 ---
 
@@ -468,10 +534,7 @@ pip install -e demos/translation          # en↔zh demo extension, from a check
 pip install vllm
 ```
 
-> **minimind dependency**: Project Chronos uses [minimind](https://github.com/jingyaogong/minimind) as its MoE kernel.
-> If it is not found locally, Chronos clones it automatically into `~/.cache/chronos/minimind-master/` on first import (this needs `git` and network access).
-> Set `CHRONOS_MINIMIND_DIR=/path/to/minimind` to use a local copy instead; model bundles ship one under `third_party/minimind` and their launcher sets the variable.
-> minimind is licensed under **Apache-2.0**. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for attribution details.
+> **No external kernel**: since 0.3.2 the kernel is self-contained (`chronos/model/kernel.py`). Installing and importing Chronos needs no `git` and no network. See [Native kernel (0.3.2)](#native-kernel-032-minimind-removed) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 **Requirements**: Python 3.10+, PyTorch 2.6+
 
@@ -573,7 +636,7 @@ Bundles belong to the translation extension (`demos/translation`). Build the two
 
 ```bash
 chronos-translate bundle build --run-dir runs/enzh_50m_v1 --which best --pack \
-    --wheel dist/project_chronos-0.3.1a3-py3-none-any.whl --wheel dist/chronos_translate-0.3.1a3-py3-none-any.whl
+    --wheel dist/project_chronos-0.3.2a0-py3-none-any.whl --wheel dist/chronos_translate-0.3.2a0-py3-none-any.whl
 ```
 
 | Bundle path | Content |
@@ -581,8 +644,7 @@ chronos-translate bundle build --run-dir runs/enzh_50m_v1 --which best --pack \
 | `model/` | weights + `.config.json` sidecar, tokenizer (`model/tokenizer/`) |
 | `eval/` | FLORES+ dev/devtest (CC BY-SA 4.0) for `bundle eval` / `probe` |
 | `data/sft_valid/` | the run's SFT validation shards |
-| `third_party/minimind/` | vendored minimind (Apache-2.0), so no git clone is needed |
-| `wheels/`, `bin/setup.sh`, `bin/chronos` | offline install of the kernel and extension wheels into `.venv`; launcher that sets `CHRONOS_BUNDLE` / `CHRONOS_MINIMIND_DIR` and sends `bundle …` to `chronos-translate` |
+| `wheels/`, `bin/setup.sh`, `bin/chronos` | offline install of the kernel and extension wheels into `.venv`; launcher that sets `CHRONOS_BUNDLE` and sends `bundle …` to `chronos-translate` |
 | `recipes/source_run_spec.json`, `recommended.json` | the recipe that produced the weights; fine-tune tiers `smoke` / `quick` / `standard` / `full` |
 | `bundle.json` | provenance (step, tokens, valid CE), measured quality probe, SHA-256 of every file |
 
@@ -675,8 +737,10 @@ python benchmark_training_backends.py --backends cpu mps mlx --dtypes auto bfloa
 
 ### End-to-end comparison (minimind vs Chronos)
 
+minimind is an external baseline here; pass your own checkout (Chronos does not download it).
+
 ```bash
-python tools/compare_minimind_chronos_v3.py \
+python tools/compare_minimind_chronos_v3.py --minimind-dir /path/to/minimind \
     --pretrain_steps 150 --align_steps 30 --distill_steps 30 \
     --simulated_ssd_ms 30 --device cpu \
     --output results/compare_results_v3.json
@@ -729,9 +793,10 @@ tuner.start(
 ```text
 Project_Chronos/
 ├── chronos/
-│   ├── deps.py                    # Auto-download minimind if missing
+│   ├── deps.py                    # Shim: default tokenizer path (no downloads)
 │   ├── __init__.py                # AutoConfig / AutoModelForCausalLM registration
 │   ├── model/
+│   │   ├── kernel.py              # Native base: ChronosBaseConfig, shared RoPE/YaRN tables, FFN, GlobalAttention, logging, resume state
 │   │   ├── config.py              # ChronosConfig (v3 fields, v2 migration)
 │   │   ├── recurrent.py           # Loop/group embeddings, contractive step, tensor-only ACT
 │   │   ├── precision_ops.py       # RMSNorm/SDPA/RoPE with one compute dtype
@@ -756,7 +821,8 @@ Project_Chronos/
 │   │   ├── attention.py / moe.py / model.py / expert_store.py / inference.py
 │   │   ├── moe_kernels.py         # Sorted gather_mm dispatch (mlx >= 0.32.4)
 │   │   ├── speculative.py         # MLX self-speculative decoding (Torch parity)
-│   │   └── training/              # longrun.py, telemetry.py, recipes/
+│   │   ├── checkpointing.py       # Activation recomputation with replayed draws
+│   │   └── training/              # longrun.py, compiled.py (mx.compile step), telemetry.py, recipes/
 │   ├── runtime/
 │   │   ├── speculative.py         # Recurrent-depth self-speculative decoding
 │   │   ├── cache_manager.py       # prefetch_for_next_step / ensure_resident
@@ -943,7 +1009,7 @@ mindmap
 
 ## Third-party attribution
 
-Project Chronos builds on **jingyaogong**'s [minimind](https://github.com/jingyaogong/minimind), licensed under **Apache-2.0**. Full attribution lives in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+Project Chronos started from **jingyaogong**'s [minimind](https://github.com/jingyaogong/minimind) (Apache-2.0). Since 0.3.2 no minimind code is used or downloaded. The native kernel keeps minimind's config field names and RoPE layout for checkpoint compatibility, and the legacy 6400-token tokenizer ships as data files with their licence. Full attribution lives in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ---
 

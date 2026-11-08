@@ -103,7 +103,8 @@ def resolve_checkpoint_tokenizer(checkpoint_path: str | None = None, explicit: s
     1. ``explicit``;
     2. ``<checkpoint dir>/tokenizer`` (bundle layout);
     3. the ``tokenizer.path`` recorded in the sidecar config;
-    4. the minimind tokenizer, only when ``fallback`` is set.
+    4. the bundled legacy 6400-token tokenizer (``chronos.deps.get_tokenizer_path``),
+       only when ``fallback`` is set.
 
     A path that exists but holds no ``tokenizer.json`` raises an error.
     It is never silently skipped, because a wrong vocabulary corrupts training without failing.

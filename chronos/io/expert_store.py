@@ -9,9 +9,6 @@ Responsibilities:
 - Evict VRAM weights via LRU when budget is exceeded
 - Track per-expert residency state for soft-gating mask generation
 """
-import sys
-import chronos.deps  # ensure minimind on sys.path
-
 import contextlib
 import os
 import threading
@@ -313,7 +310,7 @@ class ExpertStore:
             return torch.float32
 
     def _build_live_expert(self):
-        from model.model_minimind import FeedForward
+        from chronos.model.kernel import FeedForward
         # No random initialization or temporary full allocation on a cache miss.
         with torch.device("meta"):
             return FeedForward(self.config, intermediate_size=self.config.moe_intermediate_size)

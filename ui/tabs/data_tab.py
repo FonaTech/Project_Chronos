@@ -20,7 +20,6 @@ from __future__ import annotations
 
 from ui.gradio_compat import gr
 
-import chronos.deps  # noqa: F401
 from ui.i18n import t, register_translatable
 from chronos.workbench.data import (  # noqa: F401  (re-exported)
     _ANSWER_KEYS, _CHAT_KEYS, _PROMPT_KEYS, _extract_text, _fields, _scan, record_schema,

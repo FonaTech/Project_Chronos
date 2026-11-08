@@ -1,7 +1,6 @@
 """train_chronos_sft.py — Stage 2 (SFT) entry point."""
 import argparse
 
-import chronos.deps  # noqa
 
 from chronos.backend import resolve_training_device
 from chronos.model.model_chronos import ChronosForCausalLM

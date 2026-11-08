@@ -7,8 +7,7 @@ Pluggable reward models for GRPO. Two built-ins:
   No external dependencies, used in smoke tests and when no real reward
   model is configured.
 - ``LMRewardModel`` — wraps an HF AutoModel that exposes a ``.get_score(...)``
-  method (the minimind convention, see
-  ``minimind-master/trainer/trainer_utils.py:160``). Loads lazily so
+  method (the ABI of InternLM2-style reward checkpoints). Loads lazily so
   importing this file never forces an HF network download.
 
 Any callable ``score(prompt: str, response_tokens: List[int], tokenizer) -> float``
@@ -18,6 +17,8 @@ that protocol.
 from __future__ import annotations
 
 from typing import List, Optional
+
+from chronos.tokenizer.visible import decode_visible
 
 
 TOY_VOCAB = {
@@ -42,7 +43,7 @@ class ToyReward:
         return self.score(prompt, response_tokens, tokenizer)
 
     def score(self, prompt: str, response_tokens: List[int], tokenizer) -> float:
-        text = tokenizer.decode(response_tokens, skip_special_tokens=True)
+        text = decode_visible(tokenizer, response_tokens)
         words = text.split()
         if not words:
             return -1.0
@@ -58,7 +59,7 @@ class LMRewardModel:
     """HF-backed reward model.
 
     Wraps any ``AutoModel`` that exposes ``get_score(tokenizer, messages) -> float``
-    (the reward-model ABI used by minimind and several open reward-model
+    (the ABI of InternLM2-style and several other open reward-model
     checkpoints). The model is loaded lazily on the first call so that
     importing this module is free.
 
@@ -67,8 +68,7 @@ class LMRewardModel:
         reward = LMRewardModel("path/to/internlm2-1_8b-reward")
         r = reward.score(prompt, response_tokens, tokenizer)
 
-    The score is clipped to [-3.0, 3.0] to keep GRPO advantages well-scaled,
-    matching the minimind convention.
+    The score is clipped to [-3.0, 3.0] to keep GRPO advantages well-scaled.
     """
 
     def __init__(self, model_path: str, device: str = "cpu",
@@ -98,7 +98,7 @@ class LMRewardModel:
 
     def score(self, prompt: str, response_tokens: List[int], tokenizer) -> float:
         self._load()
-        response = tokenizer.decode(response_tokens, skip_special_tokens=True)
+        response = decode_visible(tokenizer, response_tokens)   # tool tags survive
         messages = [
             {"role": "user", "content": prompt},
             {"role": "assistant", "content": response},

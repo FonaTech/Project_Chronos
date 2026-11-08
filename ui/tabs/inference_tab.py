@@ -238,7 +238,7 @@ def build_inference_tab(config_state: gr.State):
                     # qw: (n_heads * head_dim, hidden); kw: (n_kv * head_dim, hidden)
                     # head_dim is typically hidden_size // n_heads, but we can't
                     # split q without knowing head_dim. Conservative: assume the
-                    # ratio matches MiniMind defaults (head_dim = h // num_heads).
+                    # ratio matches the ChronosBaseConfig defaults (head_dim = h // num_heads).
                     # Solve via the kw / qw ratio assuming both share head_dim.
                     out["num_attention_heads_total_dim"] = int(qw.shape[0])
                     out["num_kv_heads_total_dim"] = int(kw.shape[0])
@@ -256,7 +256,7 @@ def build_inference_tab(config_state: gr.State):
                     total_q = int(qnope.shape[0] + qrope.shape[0])
                     h = out["hidden_size"]
                     if total_q > 0 and h % total_q == 0:
-                        # For MiniMind/Chronos checkpoints head_dim is
+                        # For Chronos checkpoints head_dim is
                         # hidden_size / num_attention_heads, so total_q equals
                         # hidden_size and n_heads is recovered by divisibility.
                         pass

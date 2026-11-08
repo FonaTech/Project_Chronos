@@ -1,7 +1,6 @@
 """train_chronos_grpo.py — Stage 5 (GRPO) entry point."""
 import argparse
 
-import chronos.deps  # noqa
 
 from chronos.backend import resolve_training_device
 from chronos.model.model_chronos import ChronosForCausalLM

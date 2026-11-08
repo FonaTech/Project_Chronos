@@ -8,8 +8,8 @@ Gradio tab and the benchmark tools all call it.
 import os
 import time
 
-import chronos.deps  # noqa: F401  (auto-bootstrap minimind on sys.path)
 from chronos.trainer.device_utils import configure_cpu_threads, cpu_thread_snapshot
+from chronos.tokenizer.visible import decode_visible
 
 
 INFERENCE_BACKEND_CHOICES = ("mlx", "cuda", "xpu", "mps", "cpu")
@@ -215,7 +215,7 @@ def _decode_generation_diagnostics(tokenizer, tokens: list[int], stats: dict | N
         "bos": getattr(tokenizer, "bos_token_id", None),
     }
     raw_text = tokenizer.decode(tokens, skip_special_tokens=False) if tokens else ""
-    clean_text = tokenizer.decode(tokens, skip_special_tokens=True) if tokens else ""
+    clean_text = decode_visible(tokenizer, tokens) if tokens else ""
     first_token_id = tokens[0] if tokens else None
     first_token_kind = ""
     for name, token_id in special_ids.items():
@@ -1260,7 +1260,7 @@ def _inference_tokenizer_dir(cfg, model_path_val: str) -> str:
     """The tokenizer that belongs to the checkpoint, not a fixed default.
 
     Order: config ``tokenizer_path``; the checkpoint's bundled ``tokenizer/``
-    or the path in its sidecar; the minimind tokenizer only as the last resort
+    or the path in its sidecar; the bundled legacy 6400 tokenizer only as the last resort
     (older checkpoints that never recorded one).
     """
     from chronos.model.checkpoint import resolve_checkpoint_tokenizer

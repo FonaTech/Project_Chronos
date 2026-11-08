@@ -4,7 +4,9 @@ chronos/mlx/inference.py — MLX inference engine for Project Chronos.
 Mirrors ChronosInferenceEngine (PyTorch) but uses:
 - ChronosMLXModel for forward passes
 - MLXExpertStore (unified memory, no H2D stream)
-- mx.compile() for static-graph acceleration
+- Lazy MLX graphs evaluated per decode step (decode shapes change every
+  token, so the step is not traced with mx.compile; RoPE uses a shapeless
+  compiled kernel)
 - Async prefetch via Python threading (SSD → unified memory)
 
 Usage:

@@ -1,7 +1,6 @@
 """train_chronos_dpo.py — Stage 3 (DPO) entry point."""
 import argparse
 
-import chronos.deps  # noqa
 import torch
 
 from chronos.backend import resolve_training_device

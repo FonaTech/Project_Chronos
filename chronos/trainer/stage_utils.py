@@ -68,7 +68,7 @@ def add_topology_args(parser, *, defaults: bool = False):
     parser.add_argument("--vocab_size", type=int, default=(6400 if defaults else None))
     parser.add_argument("--tokenizer_path", default=None,
                         help="Tokenizer directory (tokenizer.json). Default: the checkpoint's own tokenizer "
-                             "(<ckpt dir>/tokenizer or its config metadata), else minimind.")
+                             "(<ckpt dir>/tokenizer or its config metadata), else the bundled legacy 6400 tokenizer.")
     parser.add_argument("--recurrent_groups", type=int, default=(2 if defaults else None))
     parser.add_argument("--recurrent_depth", type=int, default=(4 if defaults else None))
     parser.add_argument("--min_recurrent_depth", type=int, default=(2 if defaults else None))
@@ -225,8 +225,8 @@ def load_stage_tokenizer(args, config, checkpoint_path: str | None = None):
     """Load the tokenizer that matches ``checkpoint_path`` (or ``--tokenizer_path``).
 
     Raises an error when the tokenizer has more entries than ``config.vocab_size``.
-    A larger tokenizer would emit ids the embedding cannot hold. The minimind
-    tokenizer (6400 entries) used on a 16k-vocabulary checkpoint fails the other
+    A larger tokenizer would emit ids the embedding cannot hold. The legacy
+    6400-entry tokenizer used on a 16k-vocabulary checkpoint fails the other
     way: it trains silently on the wrong ids.
     """
     from transformers import AutoTokenizer

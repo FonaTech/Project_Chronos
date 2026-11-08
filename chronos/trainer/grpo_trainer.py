@@ -31,8 +31,7 @@ import torch.nn.functional as F
 from torch import optim
 from torch.utils.data import DataLoader
 
-import chronos.deps  # noqa
-from trainer.trainer_utils import Logger  # type: ignore
+from chronos.model.kernel import Logger
 
 from chronos.model.config import ChronosConfig
 from chronos.model.model_chronos import ChronosForCausalLM

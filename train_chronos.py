@@ -12,13 +12,12 @@ Usage:
         --device cuda:0
 """
 import sys
-import chronos.deps  # ensure minimind on sys.path
 
 import argparse
 from torch.utils.data import DataLoader
 
 from chronos.backend import resolve_training_device
-from trainer.trainer_utils import setup_seed, Logger
+from chronos.model.kernel import Logger, setup_seed
 from chronos.data.flexible_dataset import (
     FlexibleDataset as PretrainDataset,
     MultimodalStreamingDataset,

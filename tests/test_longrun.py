@@ -39,6 +39,7 @@ def _train(run, steps):
     import time
     if run.state["phase_total"] is None:
         run.state["phase_total"] = 12          # fixed schedule (skip the throughput probe)
+    run.spec.schedule = "steps"                # LR by step, not by wall clock (compile traces take time)
     run.run_phase(0, time.monotonic() + 3600, max_steps=steps)
 
 
@@ -62,6 +63,63 @@ def test_resume_is_bit_exact(tmp_path):
     assert a.keys() == b.keys()
     worst = max(float(mx.abs(a[k] - b[k]).max().item()) for k in a)
     assert worst == 0.0, worst
+
+
+def test_compiled_and_recomputed_steps_match_eager_inside_longrun(tmp_path, monkeypatch):
+    """Inside the real LongRun loop (accumulation, clipping, AdamW, dropout
+    and the cache-miss simulation on), every micro step's gradients with
+    ``mx.compile`` and/or activation recomputation equal the eager ones on
+    the same weights, batch and RNG state.
+
+    (Whole trajectories are not compared: AdamW's first updates are close to
+    sign(g), so FP32 rounding differences of 1e-7 between fused and unfused
+    kernels flip tiny components and the weights drift apart by ~lr.)"""
+    import random
+    from mlx.utils import tree_flatten
+    from chronos.mlx.training.compiled import CompiledStep
+    from chronos.mlx.training.longrun import LongRun
+    monkeypatch.delenv("CHRONOS_MLX_COMPILE", raising=False)
+    shards = str(tmp_path / "shards"); _tiny_shards(shards)
+    spec = _spec(str(tmp_path / "run"), shards)
+    spec.model_config.update(dropout=0.1, fallback_mask_prob=0.2)
+    spec.extra = {"mlx_compile": "off"}
+    worst = {}
+    with mx.stream(mx.cpu):
+        run = LongRun(spec, log=lambda *_: None)
+        model, plain = run.model, run._micro_step
+        compiled = CompiledStep(model, run._loss_fn, mode="on")
+
+        def flat(g):
+            return {k: mx.array(v) for k, v in tree_flatten(g)}
+
+        def check(grad_fn, ids, labels):
+            seed, state = int(mx.random.randint(0, 2 ** 30, ()).item()), random.getstate()
+            variants = {}
+            for name, fn, ckpt in (("recompute", grad_fn, True), ("compiled", compiled, False),
+                                   ("both", compiled, True)):
+                mx.random.seed(seed); random.setstate(state)
+                model.config.activation_checkpointing = ckpt
+                variants[name] = flat(plain(fn, ids, labels)[1])
+            model.config.activation_checkpointing = False
+            mx.random.seed(seed); random.setstate(state)
+            loss, grads = plain(grad_fn, ids, labels)
+            ref = flat(grads)
+            norm = sum(float(mx.sum(v * v)) for v in ref.values()) ** 0.5
+            for name, g in variants.items():
+                err = sum(float(mx.sum((g[k] - ref[k]) ** 2)) for k in ref) ** 0.5 / norm
+                worst[name] = max(worst.get(name, 0.0), err)
+            return loss, grads
+
+        run._micro_step = check
+        _train(run, 3)
+    assert compiled.stats["eager"] == 0 and compiled.stats["compiled"] == 12
+    assert set(worst) == {"recompute", "compiled", "both"}
+    # Separately each is a reordering of the same FP32 sums (measured
+    # <= 4e-7 / 1.7e-5).  Together the fused recomputed MLA backward reorders
+    # more of them: measured up to 1e-4 relative, while scaling these weights
+    # by (1 + 1e-7 * N(0,1)) alone moves the eager gradient by 1.8e-4.  A
+    # structural error (a dropped cotangent, a redrawn mask) is >= 1e-1.
+    assert worst["recompute"] <= 1e-5 and worst["compiled"] <= 1e-4 and worst["both"] <= 1e-3, worst
 
 
 def test_task_eval_hook_feeds_validation_and_final_rows(tmp_path):

@@ -342,6 +342,10 @@ class LongRun:
         self.telemetry = telemetry
         self.heartbeat = telemetry.Heartbeat(spec.run_dir)
         self.precision = getattr(self.model, "_chronos_precision", None)
+        # mx.compile of the micro step: recipe ``extra.mlx_compile`` (auto|on|off),
+        # else CHRONOS_MLX_COMPILE, else auto.
+        from chronos.mlx.training.compiled import env_mode
+        self.compile_mode = env_mode(str((spec.extra or {}).get("mlx_compile") or "auto"))
         self.runtime = telemetry.runtime_info(self.model, spec, self.precision)
         if self.cache_limit is not None:
             self.runtime["mlx_cache_limit_gb"] = self.cache_limit["limit_gb"]
@@ -494,7 +498,10 @@ class LongRun:
         if self.state["rng"].get(phase.name):
             source.set_rng_state(self.state["rng"][phase.name])
         accum = max(1, phase.tokens_per_step // phase.micro_tokens)
-        grad_fn = nn.value_and_grad(self.model, self._loss_fn)
+        if getattr(self, "_grad_fn", None) is None:   # one compiled step (and its graphs) per run
+            from chronos.mlx.training.compiled import make_grad_fn
+            self._grad_fn = make_grad_fn(self.model, self._loss_fn, mode=self.compile_mode, log=self.log)
+        grad_fn = self._grad_fn
         controller = self.model.recurrent_controller
         top_k = int(self.config.num_experts_per_tok)
         t_phase = time.monotonic()

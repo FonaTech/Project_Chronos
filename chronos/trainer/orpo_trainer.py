@@ -25,8 +25,7 @@ import torch.nn.functional as F
 from torch import optim
 from torch.utils.data import DataLoader
 
-import chronos.deps  # noqa
-from trainer.trainer_utils import Logger, is_main_process  # type: ignore
+from chronos.model.kernel import Logger, is_main_process
 from chronos.data.flexible_dataset import StreamingDPODataset as DPODataset
 
 from chronos.model.config import ChronosConfig

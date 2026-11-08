@@ -12,6 +12,8 @@ from typing import Any, Mapping, Optional
 
 import torch
 
+from chronos.tokenizer.visible import decode_visible
+
 from .api_compat import (
     message_text,
     openai_chat_response,
@@ -60,7 +62,7 @@ class ChronosServingAdapter:
             modality_mask=(torch.ones(ids.shape[0]) if modalities else None),
         )
         generated = output[:, ids.shape[1]:]
-        text = self.tokenizer.decode(generated[0].tolist(), skip_special_tokens=True)
+        text = decode_visible(self.tokenizer, generated[0].tolist())
         stats = dict(getattr(self.engine, "last_stats", {}) or {})
         stats.setdefault("prompt_tokens", int(ids.shape[1]))
         stats.setdefault("completion_tokens", int(generated.shape[1]))
