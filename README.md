@@ -426,6 +426,22 @@ All lambda terms are searchable with Optuna TPE, together with structural hyperp
 
 ---
 
+## Released model: chronos-enzh-50m-sft
+
+[`models/chronos-enzh-50m-sft/`](models/chronos-enzh-50m-sft/) packages a 49.7M-parameter Chronos v3 model (12.1M active per token) trained for 69 hours on one Apple M5 Max: configuration, tokenizer, trained prompt, decoding settings, a driver (`translate.py`) and the evaluation behind every number. The weights (99.5 MB, bfloat16 safetensors) are attached to the release [`enzh-50m-sft-v1`](https://github.com/FonaTech/Project_Chronos/releases/tag/enzh-50m-sft-v1).
+
+- **Boundary:** English → Chinese only, one sentence (≤ 128 tokens) at a time. Chinese → English is disabled: English-only fine-tuning erased it (FLORES+ BLEU 0.00 after SFT). The driver refuses input outside the boundary.
+- **Measured** (MLX bf16, greedy): FLORES+ devtest BLEU 33.48 / chrF 29.52; WMT22 BLEU 32.60 / chrF 28.83; WMT24++ BLEU 26.89 / chrF 24.43 (split into sentences).
+- **Research use only.** The training corpora's licences are unknown; see the folder's `NOTICE`.
+
+```bash
+cd models/chronos-enzh-50m-sft
+pip install --pre "Project_Chronos[mlx]==0.3.2a0"   # or "Project_Chronos==0.3.2a0" without MLX
+python translate.py --download && python translate.py "The meeting was moved to Friday."
+```
+
+---
+
 ## Installation
 
 ```bash

@@ -430,6 +430,22 @@ D_{\mathrm{KL}}
 
 ---
 
+## 已发布模型：chronos-enzh-50m-sft
+
+[`models/chronos-enzh-50m-sft/`](models/chronos-enzh-50m-sft/) 打包了一个 4,969 万参数的 Chronos v3 模型（每个 token 激活 1,209 万），在一台 Apple M5 Max 上训练了 69 小时。目录中有模型配置、分词器、训练时的 prompt、解码参数、驱动脚本（`translate.py`），以及每个数字背后的评测。权重（99.5 MB，bfloat16 safetensors）作为附件放在 release [`enzh-50m-sft-v1`](https://github.com/FonaTech/Project_Chronos/releases/tag/enzh-50m-sft-v1) 中。
+
+- **边界：** 只做英译中，每次一句（≤ 128 token）。中译英已屏蔽：只含英译中的微调抹掉了这一能力（SFT 后 FLORES+ BLEU 0.00）。驱动会拒绝边界以外的输入。
+- **实测**（MLX bf16，贪心解码）：FLORES+ devtest BLEU 33.48 / chrF 29.52；WMT22 BLEU 32.60 / chrF 28.83；WMT24++ BLEU 26.89 / chrF 24.43（分句）。
+- **仅供研究使用。** 训练语料的许可未知，见目录中的 `NOTICE`。
+
+```bash
+cd models/chronos-enzh-50m-sft
+pip install --pre "Project_Chronos[mlx]==0.3.2a0"   # 不用 MLX 时装 "Project_Chronos==0.3.2a0"
+python translate.py --download && python translate.py "The meeting was moved to Friday."
+```
+
+---
+
 ## 安装
 
 ```bash

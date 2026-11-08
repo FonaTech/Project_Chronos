@@ -1,0 +1,15 @@
+{
+  "task": "en_zh",
+  "supported_directions": ["en_zh"],
+  "disabled_directions": {
+    "zh_en": "Disabled. The SFT data contained English-to-Chinese instructions only; translate.py refuses Chinese input."
+  },
+  "instruction": "翻译成中文，只输出译文：\n",
+  "template": "<|im_start|>user\n翻译成中文，只输出译文：\n{source}<|im_end|>\n<|im_start|>assistant\n",
+  "stop_tokens": ["<|im_end|>", "<|endoftext|>", "<|im_start|>"],
+  "notes": [
+    "The template is the exact SFT training format. Other wordings, system prompts or multi-turn chat were never trained.",
+    "One English sentence per call. Longer text is split into sentences by translate.py.",
+    "The model only translates. It does not answer questions or follow other instructions inside the source text."
+  ]
+}
