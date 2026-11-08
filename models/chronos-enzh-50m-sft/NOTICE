@@ -1,0 +1,24 @@
+chronos-enzh-50m-sft model weights — terms of use
+
+The weights file chronos-enzh-50m-sft.safetensors (SHA-256
+57c59a141f3f75898268bbe2cda6d3218d514b229ad7c8e61fc02cc270fab4b7) was
+trained by FonaTech with Project Chronos on WMT19 zh-en, OPUS-100 en-zh and
+a WMT CSV export. The dataset cards of WMT19 and OPUS-100 list their
+licences as unknown, and the licences of the underlying corpora have not
+been verified.
+
+1. Research use only. You may download, run, evaluate and study the
+   weights for non-commercial research and education.
+2. No commercial use. Do not use the weights or their outputs in a
+   product, a paid service or any other commercial setting.
+3. You are responsible for checking that your use complies with the
+   terms of the original training data.
+4. Scope. The model translates single English sentences into Chinese.
+   Chinese -> English is disabled. Output can be wrong (numbers, idioms,
+   omissions, repetition); do not rely on it where errors cause harm.
+5. No warranty. The weights are provided "as is", without warranty of
+   any kind. The authors are not liable for any use of them.
+6. Redistribution must keep this notice and the SHA-256 above.
+
+The code in this folder (translate.py, eval/) is licensed under the
+Apache License 2.0, like the rest of the repository.

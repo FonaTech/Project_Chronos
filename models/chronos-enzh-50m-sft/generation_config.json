@@ -1,0 +1,11 @@
+{
+  "do_sample": false,
+  "repetition_penalty": 1.0,
+  "kv_cache": true,
+  "max_new_tokens": 160,
+  "max_new_tokens_rule": "min(max_new_tokens, int(1.6 * source_tokens) + 16)",
+  "max_source_tokens": 128,
+  "split_sentences": true,
+  "notes": "Greedy decoding, the setting of the reported evaluations. max_source_tokens is the per-sentence limit (longer sentences are refused): quality holds up to 128 source tokens and collapses above it (WMT24++ en->zh, items over 128 tokens: BLEU 6.91). A degenerate repetition loop stops generation.",
+  "loop_guard": "stop when the tail repeats a 1-8 token pattern max(4, ceil(8/p)) times; keep one copy; warn"
+}
