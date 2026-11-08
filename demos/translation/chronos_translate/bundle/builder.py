@@ -14,8 +14,6 @@ TOKENIZER_FILES = ("tokenizer.json", "tokenizer_config.json", "special_tokens_ma
                    "chronos_tokenizer.json", "tokenizer_report.json")
 FLORES_REL = os.path.join("facebook__flores__eng-zho", "data", "pair", "eng_Latn-zho_Hans")
 FLORES_FILES = ("dev-00000-of-00001.parquet", "devtest-00000-of-00001.parquet")
-# minimind sub-packages Chronos imports (model.*, trainer.trainer_utils, dataset.lm_dataset).
-MINIMIND_PARTS = ("model", "trainer", "dataset", "LICENSE")
 # Never shipped: they hold absolute local paths, optimizer state or caches.
 _SKIP_NAMES = {"__pycache__", ".DS_Store"}
 
@@ -149,7 +147,8 @@ def build_bundle(run_dir: str, out_dir: str | None = None, *, phase: str = "pret
     """Assemble a bundle from a run directory (read-only on the run).
 
     ``wheel``: one path or a list of paths (the kernel and the
-    ``chronos_translate`` wheels) copied to ``wheels/`` for ``bin/setup.sh``."""
+    ``chronos_translate`` wheels) copied to ``wheels/`` for ``bin/setup.sh``.
+    ``minimind_dir`` is ignored since 0.3.2 (the kernel is self-contained)."""
     from chronos.model.checkpoint import checkpoint_config_path, tokenizer_metadata
     from . import docs, recommend
     run_dir = os.path.abspath(run_dir)
@@ -204,16 +203,7 @@ def build_bundle(run_dir: str, out_dir: str | None = None, *, phase: str = "pret
         valid_src = os.path.join(spec["shards_dir"], "sft", "valid")
         if os.path.isdir(valid_src):
             _copytree(valid_src, os.path.join(out_dir, "data", "sft_valid"))
-    # minimind (Apache-2.0) so the recipient needs neither git nor network.
-    from chronos.deps import ensure_minimind
-    mm = minimind_dir or str(ensure_minimind())
-    for part in MINIMIND_PARTS:
-        src = os.path.join(mm, part)
-        if os.path.isdir(src):
-            _copytree(src, os.path.join(out_dir, "third_party", "minimind", part))
-        elif os.path.isfile(src):
-            _copy(src, os.path.join(out_dir, "third_party", "minimind", part))
-    mm_rev = _git_head(mm)
+    del minimind_dir                      # kept for callers of the pre-0.3.2 signature
     for whl in ([wheel] if isinstance(wheel, str) else list(wheel or ())):
         _copy(whl, os.path.join(out_dir, "wheels", os.path.basename(whl)))
     # Recipes: the exact spec that produced these weights (paths made relative).
@@ -238,7 +228,6 @@ def build_bundle(run_dir: str, out_dir: str | None = None, *, phase: str = "pret
         "tokenizer": {"dir": "model/tokenizer", **{k: v for k, v in tok_meta.items() if k != "path"}},
         "training": prov,
         "eval": {"flores_plus": flores, "licence": "CC BY-SA 4.0", "root": "eval"},
-        "third_party": {"minimind": {"dir": "third_party/minimind", "licence": "Apache-2.0", "commit": mm_rev}},
         "chronos_version": _chronos_version(),
         "chronos_translate_version": _extension_version(),
     }
@@ -250,17 +239,6 @@ def build_bundle(run_dir: str, out_dir: str | None = None, *, phase: str = "pret
         json.dump(manifest, fh, ensure_ascii=False, indent=2)
     log(f"[bundle] wrote {out_dir} ({len(manifest['files'])} files)")
     return out_dir
-
-
-def _git_head(path: str) -> str | None:
-    head = os.path.join(path, ".git", "HEAD")
-    try:
-        ref = open(head, encoding="utf-8").read().strip()
-        if ref.startswith("ref: "):
-            return open(os.path.join(path, ".git", ref[5:]), encoding="utf-8").read().strip()
-        return ref
-    except OSError:
-        return None
 
 
 def _chronos_version() -> str:

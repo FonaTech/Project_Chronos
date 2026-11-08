@@ -65,7 +65,6 @@ LAUNCHER = """#!/bin/sh
 # bundle …`); every other command goes to the Chronos kernel CLI.
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 export CHRONOS_BUNDLE="${CHRONOS_BUNDLE:-$HERE}"
-export CHRONOS_MINIMIND_DIR="${CHRONOS_MINIMIND_DIR:-$HERE/third_party/minimind}"
 BIN=chronos
 if [ "${1:-}" = bundle ]; then BIN=chronos-translate; fi
 if [ -x "$HERE/.venv/bin/$BIN" ]; then exec "$HERE/.venv/bin/$BIN" "$@"; fi
@@ -171,9 +170,8 @@ def _readme_en(m: dict, recs: dict) -> str:
         "`--residency planned` (default) evicts the page needed latest; `window` keeps LRU order. "
         "`--decay`, `--ram-ratio`, `--decode-wait` and `--verify-wait` tune it; `--help` lists the defaults. "
         "The page counts are printed to stderr.", "",
-        "`bin/chronos` sets `CHRONOS_BUNDLE` and `CHRONOS_MINIMIND_DIR` (the vendored minimind in "
-        "`third_party/`), so nothing is fetched from the network. Without `bin/`, export both variables and call "
-        "`chronos-translate bundle …` directly.", "",
+        "`bin/chronos` sets `CHRONOS_BUNDLE`; nothing is fetched from the network. Without `bin/`, export "
+        "`CHRONOS_BUNDLE` and call `chronos-translate bundle …` directly.", "",
         "## Next stage: SFT (fine-tuning) on Apple silicon (MLX)", "",
         "```sh",
         "# 1. your pairs: .jsonl {\"en\":…, \"zh\":…} | .csv | .tsv | .parquet",
@@ -213,7 +211,7 @@ def _readme_en(m: dict, recs: dict) -> str:
         "## Files", "",
         "`bundle.json` (identity, provenance, sha256 of every file) · `model/` (weights, config sidecar, tokenizer) · "
         "`recipes/source_run_spec.json` (the exact training spec) · `recommended.json` (next-stage parameters) · "
-        "`eval/` (FLORES+) · `data/sft_valid/` (held-out SFT validation shards) · `examples/` · `third_party/` · "
+        "`eval/` (FLORES+) · `data/sft_valid/` (held-out SFT validation shards) · `examples/` · "
         "`wheels/` · `bin/`. Verify integrity any time with `bin/chronos bundle check`.", "",
         "See `NOTICE.md` before redistributing: the weights are for **research use only**.", "",
     ]
@@ -264,8 +262,8 @@ def _readme_zh(m: dict, recs: dict) -> str:
         "`--residency planned`（默认）优先淘汰最晚才会用到的页，`window` 保持 LRU 顺序。"
         "可用 `--decay`、`--ram-ratio`、`--decode-wait`、`--verify-wait` 调整，默认值见 `--help`。"
         "页读取统计打印到 stderr。", "",
-        "`bin/chronos` 会设置 `CHRONOS_BUNDLE` 和 `CHRONOS_MINIMIND_DIR`（指向 `third_party/` 里随包附带的 minimind），"
-        "全程不需要联网。不用 `bin/` 时，手动导出这两个变量后直接调用 `chronos-translate bundle …`。", "",
+        "`bin/chronos` 会设置 `CHRONOS_BUNDLE`，全程不需要联网。不用 `bin/` 时，手动导出 `CHRONOS_BUNDLE` "
+        "后直接调用 `chronos-translate bundle …`。", "",
         "## 下一阶段：SFT 微调（Apple silicon / MLX）", "",
         "```sh",
         "# 1. 准备平行语料：.jsonl {\"en\":…, \"zh\":…} | .csv | .tsv | .parquet",
@@ -301,7 +299,7 @@ def _readme_zh(m: dict, recs: dict) -> str:
         "## 文件", "",
         "`bundle.json`（身份、来源、每个文件的 sha256）· `model/`（权重、配置 sidecar、分词器）· "
         "`recipes/source_run_spec.json`（产生这份权重的训练配置）· `recommended.json`（下一阶段参数）· "
-        "`eval/`（FLORES+）· `data/sft_valid/`（留出的 SFT 验证分片）· `examples/` · `third_party/` · `wheels/` · "
+        "`eval/`（FLORES+）· `data/sft_valid/`（留出的 SFT 验证分片）· `examples/` · `wheels/` · "
         "`bin/`。随时可用 `bin/chronos bundle check` 校验完整性。", "",
         "再分发前请阅读 `NOTICE.md`：权重**仅供研究使用**。", "",
     ]
@@ -309,7 +307,6 @@ def _readme_zh(m: dict, recs: dict) -> str:
 
 
 def _notice(m: dict) -> str:
-    mm = (m.get("third_party") or {}).get("minimind") or {}
     return "\n".join([
         "# NOTICE", "",
         "## Weights: research use only", "",
@@ -324,9 +321,8 @@ def _notice(m: dict) -> str:
         "evaluation only**. Do not use them commercially or redistribute them as a product without checking the "
         "licences of the underlying corpora yourself.", "",
         "## Code", "",
-        "- Chronos (`wheels/`, `bin/`): Apache-2.0.",
-        f"- minimind (`third_party/minimind/`, commit `{mm.get('commit') or 'unknown'}`): Apache-2.0, "
-        "© jingyaogong. Its `LICENSE` file is included.",
+        "- Chronos (`wheels/`, `bin/`): Apache-2.0. Since 0.3.2 the kernel has no third-party model code; "
+        "see `THIRD_PARTY_NOTICES.md` in the Chronos wheel.",
         "- FLORES+ files in `eval/` keep their CC BY-SA 4.0 licence (attribution: the FLORES+ / OLDI project).", "",
         "## No warranty", "",
         "Provided as is. Machine translation output can be wrong; check it before relying on it.", "",

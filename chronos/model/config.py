@@ -1,12 +1,9 @@
-import sys
-import chronos.deps  # ensure minimind on sys.path
-
-from model.model_minimind import MiniMindConfig
+from chronos.model.kernel import ChronosBaseConfig
 
 
-class ChronosConfig(MiniMindConfig):
+class ChronosConfig(ChronosBaseConfig):
     """
-    Extends MiniMindConfig with Project Chronos-specific fields:
+    Extends ChronosBaseConfig with Project Chronos-specific fields:
     - lookahead_steps: how many future token steps to predict expert routing for
     - num_shared_experts: experts always resident in VRAM as fallback
     - lambda_balance / lambda_temporal: loss coefficients
@@ -231,7 +228,7 @@ class ChronosConfig(MiniMindConfig):
         self.offload_miss_policy_default: str = kwargs.pop("offload_miss_policy_default", "on_demand")
         self.recommended_resident_experts: int | None = kwargs.pop("recommended_resident_experts", None)
         self.offload_working_set_experts: int | None = kwargs.pop("offload_working_set_experts", None)
-        # M7: regularization defaults. MiniMindConfig defaults dropout=0.0
+        # M7: regularization defaults. ChronosBaseConfig defaults dropout=0.0
         # and weight_decay isn't even a config field — both major causes
         # of overfitting on small corpora. Override here.
         kwargs.setdefault("dropout", 0.1)

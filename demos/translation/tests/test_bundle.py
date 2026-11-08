@@ -97,7 +97,8 @@ def test_build_records_best_validation_and_leaks_no_paths(bundle, run_dir):
     assert m["training"]["step"] == 20 and m["training"]["valid_ce"] == 2.5     # min valid CE, not the last
     assert m["training"]["tokens_seen"] == 2000 and m["prompt_format"] == "pretrain_tags"
     assert m["eval"]["flores_plus"] == ["dev-00000-of-00001.parquet", "devtest-00000-of-00001.parquet"]
-    assert "model" in os.listdir(os.path.join(bundle, "third_party", "minimind"))
+    assert not os.path.exists(os.path.join(bundle, "third_party"))         # no vendored kernel since 0.3.2
+    assert "third_party" not in m
     home = os.path.expanduser("~")
     for rel in ("recipes/source_run_spec.json", m["model"]["config"], "bundle.json", "recommended.json"):
         text = open(os.path.join(bundle, rel), encoding="utf-8").read()

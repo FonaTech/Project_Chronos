@@ -884,7 +884,7 @@ def create_app(workdir: str = ".", *, runs_dir: str = "runs", api_key: str | Non
         return {"running": running, "url": url, "addr": addr, "auth": ui.serve.auth if running else False,
                 "log": log}
 
-    # ── benchmark (MiniMind vs Chronos script in the repo) ──────────────
+    # ── benchmark (benchmark_compare.py; external baseline optional) ──
     bench_script = os.path.join(REPO_ROOT, "benchmark_compare.py")
     bench_results = os.path.join(REPO_ROOT, "benchmark_results.json")
 

@@ -8,6 +8,7 @@ M5 deliverables (HF safetensors I/O + BackendDispatcher).
 Run::
 
     python tools/compare_minimind_chronos_v3.py \\
+        --minimind-dir /path/to/minimind \\
         --pretrain_steps 150 --align_steps 30 --distill_steps 30 \\
         --simulated_ssd_ms 30 --device cpu \\
         --output results/compare_results_v3.json
@@ -28,7 +29,7 @@ _REPO = os.path.dirname(_HERE)
 if _REPO not in sys.path:
     sys.path.insert(0, _REPO)
 
-import chronos.deps  # noqa: E402
+import chronos.deps  # noqa: E402  (tokenizer path)
 from chronos.backend import BackendDispatcher  # noqa: E402
 
 # Reuse the v2 harness entirely, then add stages.

@@ -18,7 +18,7 @@ corpus with matched hyperparameters. After training, we measure:
   5. final_ce_loss          — sanity that Chronos is in the same ballpark.
 
 Run:
-    python tools/compare_minimind_chronos.py --steps 200 --device cpu \
+    python tools/compare_minimind_chronos.py --minimind-dir /path/to/minimind --steps 200 --device cpu \
         --output results/compare_results.json
 """
 from __future__ import annotations
@@ -42,7 +42,11 @@ _REPO = os.path.dirname(_HERE)
 if _REPO not in sys.path:
     sys.path.insert(0, _REPO)
 
-import chronos.deps  # noqa: E402  -- ensures minimind on sys.path
+from tools._minimind_baseline import require_minimind  # noqa: E402
+
+require_minimind()   # external baseline: --minimind-dir or CHRONOS_MINIMIND_DIR
+
+import chronos.deps  # noqa: E402  (tokenizer path)
 
 from transformers import AutoTokenizer  # noqa: E402
 

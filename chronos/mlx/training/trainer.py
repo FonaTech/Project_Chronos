@@ -1172,7 +1172,23 @@ def run_mlx_stage(
             return _grpo_stage_loss(m, reference, batch, beta=beta, router_ref=router_ref)
         raise ValueError(f"unknown MLX stage: {stage}")
 
-    grad_fn = nn.value_and_grad(model, loss_fn)
+    eager_grad = nn.value_and_grad(model, loss_fn)
+    text_grad = None
+    if stage in {"pretrain", "sft"}:
+        # Text batches take the compiled micro step (``CHRONOS_MLX_COMPILE``,
+        # default auto); media batches and other stages stay eager.
+        from chronos.mlx.training.compiled import make_grad_fn
+        text_grad = make_grad_fn(model, lambda m, ids, labels: _ce_stage_loss(m, ids, labels),
+                                 mode=getattr(args, "mlx_compile", None) if args is not None else None,
+                                 log=print)
+
+    def grad_fn(m, batch):
+        if text_grad is not None:
+            ids, labels, media, _mask = batch_modalities(batch)
+            if not media:
+                return text_grad(m, _ids_to_mx(ids), _ids_to_mx(labels))
+        return eager_grad(m, batch)
+
     _emit({
         "event": "start",
         "stage": stage,

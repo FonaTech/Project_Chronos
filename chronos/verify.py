@@ -8,7 +8,6 @@ from typing import Any
 import torch
 import torch.nn.functional as F
 
-import chronos.deps  # noqa: F401
 from chronos.backend import available as available_backends
 from chronos.model.checkpoint import load_checkpoint_state_dict, load_state_dict_controlled
 from chronos.model.model_chronos import ChronosForCausalLM

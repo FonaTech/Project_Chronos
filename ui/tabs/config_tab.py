@@ -19,7 +19,7 @@ from ui.estimator import (
 )
 from ui.planner_panel import build_planner_panel
 from ui.presets import (
-    CONFIG_INPUT_ORDER, DEFAULT_PRESET, MINIMIND_MOE_DEFAULTS, preset_names, get_preset, values_in_input_order,
+    CONFIG_INPUT_ORDER, DEFAULT_PRESET, BASE_MOE_DEFAULTS, preset_names, get_preset, values_in_input_order,
     save_config, load_config,
 )
 
@@ -58,7 +58,7 @@ def _estimate(cfg_dict: dict):
     """Compute estimator outputs from a config dict.
 
     A moe_intermediate_size of 0 (or missing) is treated as "auto-derive
-    from hidden_size", matching MiniMindConfig's default rule. This keeps
+    from hidden_size", matching the ChronosBaseConfig default rule. This keeps
     the estimator consistent with what the trainer actually builds.
     """
     arch = ArchConfig.from_config(cfg_dict)
@@ -91,7 +91,7 @@ def merge_config_inputs(previous: dict, values: list) -> dict:
     """Apply editor fields by name while retaining loaded fields without widgets."""
     if len(values) != len(CONFIG_INPUT_ORDER):
         raise ValueError(f"Config editor expects {len(CONFIG_INPUT_ORDER)} values, received {len(values)}")
-    cfg = dict(previous or MINIMIND_MOE_DEFAULTS)
+    cfg = dict(previous or BASE_MOE_DEFAULTS)
     for key, value in zip(CONFIG_INPUT_ORDER, values):
         if key == "modalities":
             value = value if isinstance(value, list) else str(value or "").split(",")
@@ -99,7 +99,7 @@ def merge_config_inputs(previous: dict, values: list) -> dict:
         elif key == "dtype":
             value = _normalize_dtype_name(value)
         else:
-            default = MINIMIND_MOE_DEFAULTS.get(key)
+            default = BASE_MOE_DEFAULTS.get(key)
             if value is None:
                 value = default
             if isinstance(default, bool):
@@ -510,7 +510,7 @@ def build_config_tab():
             return config_result(get_preset(name))
 
         def reset_minimind():
-            return config_result(get_preset("MiniMind-MoE (default)"))
+            return config_result(get_preset("Chronos-v2 legacy (768H, 6400 vocab)"))
 
         def do_save(previous, path, *values):
             try:

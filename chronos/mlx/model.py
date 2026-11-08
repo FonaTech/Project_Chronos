@@ -6,7 +6,9 @@ Architecture mirrors the PyTorch version (ChronosForCausalLM) but uses:
 - MLAAttentionMLX (even layers) / SlidingWindowAttentionMLX (odd layers)
 - ChronosMLXMOE for feed-forward
 - LookaheadRouter as a plain Linear projection
-- mx.compile()-friendly: no Python control flow on runtime shapes
+- Training micro steps are compiled by chronos/mlx/training/compiled.py
+  (one graph per depth/shape/config signature; Python decisions such as
+  the executed depth are resolved outside the trace)
 
 On Apple Silicon, mx.eval() materialises arrays into Metal shared memory.
 Prefetch = eagerly eval expert weights during the prefetch window.
@@ -16,6 +18,7 @@ import mlx.core as mx
 import mlx.nn as nn
 
 from chronos.mlx.attention import MLAAttentionMLX, SlidingWindowAttentionMLX
+from chronos.mlx.checkpointing import call_block
 from chronos.mlx.moe import ChronosMLXMOE, FeedForwardMLX
 from chronos.mlx.recurrent import RecurrentControllerMLX, auxiliary_state
 from chronos.config_schema import resolve_recurrent_attention_mode, recurrent_cache_layout
@@ -79,7 +82,7 @@ class ChronosMLXBlock(nn.Module):
                 self.self_attn = SlidingWindowAttentionMLX(config)
         else:
             self.self_attn = SlidingWindowAttentionMLX(config)
-            self.self_attn.window_size = 2**63 - 1
+            self.self_attn.window_size = None     # dense causal GQA (a 2**63 window overflowed int32)
 
         if getattr(config, 'use_moe', True):
             self.mlp = ChronosMLXMOE(config)
@@ -197,9 +200,14 @@ class ChronosMLXModel(nn.Module):
 
         cfg = self.config
         object.__setattr__(self, "last_recurrent_state", None)
+        # Activation recomputation (Torch parity: training, no incoming cache).
+        recompute = self.training and bool(getattr(cfg, "activation_checkpointing", False))
+
         def run(i, hidden, slot=None, **kw):
             avail = available_expert_masks[i] if available_expert_masks is not None else None
             c = cache[i if slot is None else slot] if "kv_override" not in kw else None
+            if recompute and c is None:
+                return call_block(self.layers[i], hidden, mask=mask, cache=None, available_expert_mask=avail, **kw)
             return self.layers[i](hidden, mask=mask, cache=c, available_expert_mask=avail, **kw)
 
         if cfg.recurrent_enabled and cfg.recurrent_depth > 1:

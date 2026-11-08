@@ -9,13 +9,16 @@ Design notes vs. the PyTorch version:
   boolean mask built here; softmax is FP32 inside the kernel, so the
   low-precision chain has no score/probability casts.
 - SlidingWindow: slice oldest tokens with array indexing, not assignment.
-- mx.compile()-friendly: no Python branches on runtime tensor shapes.
+- RoPE rotation is one shapeless-compiled kernel; the attention path itself
+  is compiled as part of the training step (chronos/mlx/training/compiled.py).
 """
 import math
 from functools import partial
 
 import mlx.core as mx
 import mlx.nn as nn
+
+from chronos.mlx.checkpointing import Dropout as TapeDropout   # replayed under recomputation
 
 from chronos.mlx.kv_quant import kv_read, kv_store
 
@@ -26,7 +29,7 @@ def _rope_freqs(
     base: float = 1_000_000.0,
     rope_scaling: dict | None = None,
 ) -> mx.array:
-    """Precompute MiniMind/PyTorch-compatible RoPE tables [max_len, dim].
+    """Precompute RoPE tables [max_len, dim] matching ``chronos.model.kernel.precompute_freqs_cis``.
 
     The PyTorch path uses duplicated cos/sin columns and rotate-half over the
     whole last dimension. MLX must mirror that exactly for checkpoint parity.
@@ -210,8 +213,8 @@ class MLAAttentionMLX(_RopeCacheMixin, nn.Module):
         self.k_rope_proj  = nn.Linear(self.kv_latent_dim, self.n_kv_heads * self.rope_dim, bias=False)
         self.v_proj       = nn.Linear(self.kv_latent_dim, self.n_kv_heads * self.head_dim, bias=False)
         self.o_proj       = nn.Linear(self.n_heads * self.head_dim, H, bias=False)
-        self.attn_dropout = nn.Dropout(config.dropout)
-        self.resid_dropout = nn.Dropout(config.dropout)
+        self.attn_dropout = TapeDropout(config.dropout)
+        self.resid_dropout = TapeDropout(config.dropout)
         self.dropout_p = float(config.dropout)
 
         self._init_rope_cache(config, self.head_dim, rotated_dim=self.rope_dim)
@@ -338,8 +341,8 @@ class SlidingWindowAttentionMLX(_RopeCacheMixin, nn.Module):
         self.o_proj = nn.Linear(self.n_heads * self.head_dim, H, bias=False)
         self.q_norm = nn.RMSNorm(self.head_dim, eps=config.rms_norm_eps)
         self.k_norm = nn.RMSNorm(self.head_dim, eps=config.rms_norm_eps)
-        self.attn_dropout = nn.Dropout(config.dropout)
-        self.resid_dropout = nn.Dropout(config.dropout)
+        self.attn_dropout = TapeDropout(config.dropout)
+        self.resid_dropout = TapeDropout(config.dropout)
         self.dropout_p = float(config.dropout)
 
         self._init_rope_cache(config, self.head_dim)
@@ -388,7 +391,9 @@ class SlidingWindowAttentionMLX(_RopeCacheMixin, nn.Module):
         # attention leaks future tokens into early queries during long prefill.
         q_positions = mx.arange(S)[:, None] + cached_len
         k_positions = mx.arange(T_full)[None, :]
-        allowed = (k_positions <= q_positions) & (k_positions > q_positions-self.window_size)
+        allowed = k_positions <= q_positions
+        if self.window_size is not None:              # None: dense (use_hybrid_attention=False)
+            allowed = allowed & (k_positions > q_positions - self.window_size)
 
         scale = 1.0 / math.sqrt(self.head_dim)
         out = self._attend(q.transpose(0, 2, 1, 3), k.transpose(0, 2, 1, 3), v.transpose(0, 2, 1, 3),
@@ -396,15 +401,15 @@ class SlidingWindowAttentionMLX(_RopeCacheMixin, nn.Module):
         out = out.transpose(0, 2, 1, 3).reshape(B, S, -1)
 
         # Cache stores [B, T, nKV, d] (pre-repeat, pre-transpose)
-        keep = self.window_size + int(self.cache_slack)
+        keep = None if self.window_size is None else self.window_size + int(self.cache_slack)
         if self.kv_int8 and kv_override is None:
             # Quantize only the new tokens (each token once), then evict.
             qk = kv_store(k_new, cache[0] if cache is not None else None, self.kv_group)
             qv = kv_store(v_new, cache[1] if cache is not None else None, self.kv_group)
-            start = max(0, qk.shape[1] - keep)
+            start = 0 if keep is None else max(0, qk.shape[1] - keep)
             new_cache = (qk[:, start:], qv[:, start:], past_len + S)
         else:
-            new_cache = (k[:, -keep:], v[:, -keep:], past_len + S)
+            new_cache = (k, v, past_len + S) if keep is None else (k[:, -keep:], v[:, -keep:], past_len + S)
         if return_shared_kv:
             return self.resid_dropout(self.o_proj(out)), new_cache, (k, v, past_len + S)
         return self.resid_dropout(self.o_proj(out)), new_cache

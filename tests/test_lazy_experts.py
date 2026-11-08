@@ -120,8 +120,8 @@ def test_class_default_is_off_and_new_config_entry_points_turn_it_on(monkeypatch
     import train_chronos
     monkeypatch.setattr(sys, "argv", ["train_chronos.py", "--data_path", "unused.jsonl"])
     assert train_chronos.parse_args().lambda_cluster_locality == DEFAULT_LAMBDA
-    from ui.presets import MINIMIND_MOE_DEFAULTS
-    assert MINIMIND_MOE_DEFAULTS["lambda_cluster_locality"] == DEFAULT_LAMBDA
+    from ui.presets import BASE_MOE_DEFAULTS
+    assert BASE_MOE_DEFAULTS["lambda_cluster_locality"] == DEFAULT_LAMBDA
 
 
 def test_finetune_spec_turns_cluster_locality_on_by_default(tmp_path):

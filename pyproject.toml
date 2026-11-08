@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "Project_Chronos"
-version = "0.3.1a3"
+version = "0.3.2a0"
 description = "Storage-aware recurrent-depth MoE: lookahead expert prefetch, SSD-lazy experts, hybrid MLA/SWA attention, self-speculative decoding"
 readme = "README.md"
 license = "Apache-2.0"
@@ -68,6 +68,7 @@ include = ["chronos*", "ui*"]
 ui = ["event_contract.js", "presets_v3.json"]
 "chronos.monitor" = ["static/*.html", "static/*.js", "static/*.css"]
 "chronos.webui" = ["static/*.html", "static/*.js", "static/*.css", "static/*.svg", "i18n/*.json"]
+"chronos.assets" = ["tokenizers/*/*.json", "tokenizers/*/LICENSE", "tokenizers/*/NOTICE"]
 
 [tool.black]
 line-length = 100

@@ -31,6 +31,9 @@ class RecurrentControllerMLX(nn.Module):
                 or self.training_progress >= cfg.depth_schedule_warmup_fraction)
 
     def execution_depth(self, cfg, training):
+        pinned = getattr(self, "_pinned_depth", None)
+        if pinned is not None and training:
+            return pinned          # sampled once per step by a compiled training step
         ceiling = cfg.recurrent_depth if training else cfg.max_inference_depth
         if not training or cfg.recurrent_strategy == "fixed" or cfg.recurrent_depth_jitter == 0:
             return ceiling

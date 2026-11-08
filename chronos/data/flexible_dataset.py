@@ -9,8 +9,8 @@ the six Chronos training stages without ever loading the file into RAM:
                            instruction+output, conversations, messages).
   StreamingSFTDataset   — supervised fine-tuning. Uses the tokenizer's
                            chat template; only assistant tokens contribute
-                           to the loss (label = -100 elsewhere). Drop-in
-                           for minimind's SFTDataset.
+                           to the loss (label = -100 elsewhere). Reads the
+                           common `conversations` jsonl layout.
   StreamingDPODataset   — preference pairs. Returns the dict shape DPO /
                            ORPO trainers expect.
 
@@ -605,7 +605,7 @@ def multimodal_collate(batch):
 # ── SFT (conversations → assistant-token loss mask) ─────────────────
 
 class StreamingSFTDataset(_StreamingJSONLBase):
-    """Streaming counterpart to minimind's SFTDataset.
+    """Streaming chat-SFT dataset (``conversations`` jsonl records).
 
     Reads `conversations: [{role, content, ...}, ...]` records, applies
     the tokenizer's chat template, and masks every position outside an
@@ -617,7 +617,7 @@ class StreamingSFTDataset(_StreamingJSONLBase):
         self.tokenizer = tokenizer
         self.max_length = max_length
         # Sentinels marking the assistant turn boundary in encoded form.
-        # Same formulation minimind uses (`bos`+'assistant\n' / `eos`+'\n').
+        # ChatML-style turn markers (`bos`+'assistant\n' / `eos`+'\n').
         self.bos_id = tokenizer(
             f'{tokenizer.bos_token}assistant\n', add_special_tokens=False
         ).input_ids
@@ -741,7 +741,7 @@ class MultimodalStreamingSFTDataset(StreamingSFTDataset):
 # ── DPO / ORPO (chosen + rejected pair) ─────────────────────────────
 
 class StreamingDPODataset(_StreamingJSONLBase):
-    """Streaming counterpart to minimind's DPODataset.
+    """Streaming preference-pair dataset (``chosen`` / ``rejected`` jsonl records).
 
     Returns the dict shape the DPO/ORPO trainers expect:
       {x_chosen, y_chosen, mask_chosen, x_rejected, y_rejected, mask_rejected}

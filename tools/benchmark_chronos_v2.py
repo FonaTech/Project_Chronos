@@ -30,7 +30,6 @@ from typing import Any
 import torch
 import torch.nn.functional as F
 
-import chronos.deps  # noqa: F401 - registers the bundled MiniMind package
 from chronos.model.config import ChronosConfig
 from chronos.model.model_chronos import ChronosForCausalLM
 from chronos.runtime.inference_engine import ChronosInferenceEngine

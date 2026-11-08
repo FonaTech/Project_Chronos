@@ -4,21 +4,21 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "chronos-translate"
-version = "0.3.1a3"
+version = "0.3.2a0"
 description = "English-Chinese translation demo for the Chronos kernel: corpus pipeline, BLEU/chrF runs, model bundles"
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.10"
 dependencies = [
-    "Project_Chronos==0.3.1a3",
+    "Project_Chronos==0.3.2a0",
     "sacrebleu==2.6.0",
     "sacremoses==0.2.0",
     "pyarrow==23.0.1",
 ]
 
 [project.optional-dependencies]
-mlx = ["Project_Chronos[mlx]==0.3.1a3"]
-serve = ["Project_Chronos[serve]==0.3.1a3"]
+mlx = ["Project_Chronos[mlx]==0.3.2a0"]
+serve = ["Project_Chronos[serve]==0.3.2a0"]
 
 [project.scripts]
 chronos-translate = "chronos_translate.cli:main"

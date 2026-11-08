@@ -168,7 +168,9 @@ def test_mlx_reports_real_components_and_preserves_checkpoint_on_finite_explosio
     events = []
     result = trainer.run_mlx_stage(stage="pretrain", config=cfg, checkpoint_path=None,
         save_dir=str(tmp_path), loader=DataLoader(TensorDataset(ids, ids), batch_size=1),
-        args=SimpleNamespace(steps=3, epochs=1, log_interval=1, dtype="bfloat16", grad_clip=1.),
+        # mlx_compile off: the injected loss changes per Python call, which a
+        # compiled graph (traced once) would not replay.
+        args=SimpleNamespace(steps=3, epochs=1, log_interval=1, dtype="bfloat16", grad_clip=1., mlx_compile="off"),
         progress_callback=events.append)
     assert result.failure_reason == "finite_loss_divergence"
     assert result.stopped and result.checkpoint_path.endswith(".recovery.pth")

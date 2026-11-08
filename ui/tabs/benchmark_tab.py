@@ -1,5 +1,5 @@
 """
-ui/tabs/benchmark_tab.py — MiniMind vs Chronos comparison view.
+ui/tabs/benchmark_tab.py — dense baseline vs Chronos comparison view.
 
 Renders the comparison_results.json as:
 
@@ -14,7 +14,6 @@ import os
 from ui.gradio_compat import gr
 import pandas as pd
 
-import chronos.deps  # noqa: F401
 from ui.i18n import t, register_translatable
 from chronos.trainer.device_utils import configure_cpu_threads, cpu_thread_snapshot
 
@@ -37,10 +36,10 @@ def _format_table(data: dict) -> str:
     if not data:
         return "_No benchmark data yet. Click **Run** to start._"
 
-    mm = data.get("minimind", {}) or {}
+    mm = data.get("baseline") or data.get("minimind") or {}   # "minimind": files before 0.3.2
     ch = data.get("chronos", {}) or {}
 
-    rows = ["| Metric | MiniMind | Chronos | Δ (Chronos − MiniMind) | Better |",
+    rows = ["| Metric | Baseline | Chronos | Δ (Chronos − Baseline) | Better |",
             "|---|---|---|---|---|"]
     for label, key, unit, lower_is_better in CHART_METRICS:
         mv = mm.get(key)
@@ -56,9 +55,9 @@ def _format_table(data: dict) -> str:
             sign = "−" if d < 0 else ("+" if d > 0 else "±")
             delta = f"{sign}{abs(d):.4g} {unit}"
             if lower_is_better:
-                better = "**Chronos**" if cv < mv else ("MiniMind" if cv > mv else "tie")
+                better = "**Chronos**" if cv < mv else ("Baseline" if cv > mv else "tie")
             else:
-                better = "**Chronos**" if cv > mv else ("MiniMind" if cv < mv else "tie")
+                better = "**Chronos**" if cv > mv else ("Baseline" if cv < mv else "tie")
         rows.append(f"| {label} | {mvs} | {cvs} | {delta} | {better} |")
 
     extra = []
@@ -82,7 +81,7 @@ def _format_table(data: dict) -> str:
 def _to_chart_df(data: dict) -> pd.DataFrame:
     """Convert benchmark JSON into a long-format DataFrame for gr.BarPlot."""
     rows = []
-    for model_key, label_key in (("minimind", "MiniMind"), ("chronos", "Chronos")):
+    for model_key, label_key in (("baseline", "Baseline"), ("minimind", "MiniMind"), ("chronos", "Chronos")):
         d = data.get(model_key, {}) or {}
         for label, key, unit, _lower in CHART_METRICS:
             v = d.get(key)
@@ -136,7 +135,7 @@ def build_benchmark_tab():
         chart = gr.BarPlot(
             value=initial_df,
             x="metric", y="value", color="model",
-            title="MiniMind vs Chronos — comparison metrics",
+            title="Baseline vs Chronos — comparison metrics",
             tooltip=["model", "metric", "value", "unit"],
             height=320,
         )

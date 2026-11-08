@@ -1,12 +1,9 @@
-import sys
-import chronos.deps  # ensure minimind on sys.path
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from transformers.activations import ACT2FN
 
-from model.model_minimind import FeedForward, MOEFeedForward
+from .kernel import FeedForward
 from .config import ChronosConfig
 
 
@@ -38,13 +35,13 @@ def _run_expert(expert: nn.Module, x: torch.Tensor) -> torch.Tensor:
 
 class ChronosMOEFeedForward(nn.Module):
     """
-    Extends MOEFeedForward with:
+    Routed SwiGLU experts plus:
     1. shared_experts: always resident in VRAM, used as soft fallback
     2. soft_gate: when target experts are unavailable (cache miss), blend
        their routing weight into shared experts instead of blocking on I/O
 
-    Training (available_expert_mask=None): identical to MOEFeedForward,
-    plus stores per-token routing probs for temporal_locality_loss.
+    Training (available_expert_mask=None): softmax top-k dispatch with a
+    load-balance term, plus stores per-token routing probs for temporal_locality_loss.
 
     Inference (available_expert_mask provided): routes cache-miss tokens
     to shared experts with zero latency.

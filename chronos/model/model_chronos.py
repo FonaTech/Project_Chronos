@@ -1,15 +1,10 @@
-import sys
-import chronos.deps  # ensure minimind on sys.path
-
 import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from transformers import PreTrainedModel, GenerationMixin
 
-from model.model_minimind import (
-    precompute_freqs_cis, Attention, FeedForward,
-)
+from .kernel import FeedForward, rope_tables
 from .config import ChronosConfig
 from .precision_ops import RMSNorm, lm_head_logits
 from .lookahead_router import LookaheadRouter
@@ -60,10 +55,7 @@ class ChronosBlock(nn.Module):
     def __init__(self, layer_id: int, config: ChronosConfig):
         super().__init__()
         self.layer_id = layer_id
-        if getattr(config, 'use_hybrid_attention', True):
-            self.self_attn = make_attention(layer_id, config)
-        else:
-            self.self_attn = Attention(config)
+        self.self_attn = make_attention(layer_id, config)
         self.input_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.post_attention_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.mlp = ChronosMOEFeedForward(config) if config.use_moe else FeedForward(config)
@@ -133,7 +125,7 @@ def apply_repetition_penalty(logits, input_ids, penalty: float):
 
 class ChronosModel(nn.Module):
     """
-    Backbone: identical to MiniMindModel but:
+    Backbone: pre-norm decoder (native kernel, ``chronos.model.kernel``) that:
     - Uses ChronosBlock (with ChronosMOEFeedForward)
     - Inserts LookaheadRouter after block 0
     - Exposes router_probs_seq for temporal loss computation
@@ -154,16 +146,11 @@ class ChronosModel(nn.Module):
         self.recurrent_controller = RecurrentController(config)
         # Pure-text models carry no image/audio encoder parameters or compute.
         self.multimodal_fusion = MultimodalFusion(config) if config.modalities else None
-        freqs_cos, freqs_sin = precompute_freqs_cis(
-            dim=config.head_dim,
-            end=config.max_position_embeddings,
-            rope_base=config.rope_theta,
-            rope_scaling=config.rope_scaling,
-        )
         # Plain FP32 attributes (not buffers): ``model.to(bf16)`` must not
-        # round them.  Attention layers own their own FP32 tables; these are
-        # kept for callers that read the model-level RoPE.
-        self.freqs_cos, self.freqs_sin = freqs_cos.float(), freqs_sin.float()
+        # round them.  The table is the shared one every SWA/global layer
+        # uses (``kernel.rope_tables``), so it costs no extra memory.
+        self.freqs_cos, self.freqs_sin = rope_tables(
+            config.head_dim, config.max_position_embeddings, config.rope_theta, config.rope_scaling, "cpu")
         self.last_recurrent_state = None
 
     def _run_block(
@@ -385,14 +372,8 @@ class ChronosModel(nn.Module):
         if needed_len <= current_len and self.freqs_cos.device == device:
             return
         target_len = max(needed_len, current_len * 2, int(self.config.max_position_embeddings))
-        freqs_cos, freqs_sin = precompute_freqs_cis(
-            dim=self.config.head_dim,
-            end=target_len,
-            rope_base=self.config.rope_theta,
-            rope_scaling=self.config.rope_scaling,
-        )
-        self.freqs_cos = freqs_cos.to(device=device)
-        self.freqs_sin = freqs_sin.to(device=device)
+        self.freqs_cos, self.freqs_sin = rope_tables(
+            self.config.head_dim, target_len, self.config.rope_theta, self.config.rope_scaling, device)
         self.config.max_position_embeddings = max(
             int(self.config.max_position_embeddings),
             target_len,

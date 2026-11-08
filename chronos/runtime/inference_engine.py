@@ -13,9 +13,6 @@ Usage:
     output_ids = engine.generate(input_ids, max_new_tokens=200)
     print(engine.last_stats)
 """
-import sys
-import chronos.deps  # ensure minimind on sys.path
-
 import time
 from typing import Dict, Hashable, List, Optional
 

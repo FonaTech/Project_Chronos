@@ -17,8 +17,9 @@ from contextlib import contextmanager
 from types import SimpleNamespace
 
 
-import chronos.deps  # auto-bootstrap minimind on sys.path
-from ui.presets import MINIMIND_MOE_DEFAULTS
+import chronos.deps  # default tokenizer path
+from chronos.tokenizer.visible import decode_visible
+from ui.presets import BASE_MOE_DEFAULTS
 from chronos.backend import training_available, resolve_training_device
 from chronos.trainer.device_utils import (
     autocast_context,
@@ -597,7 +598,7 @@ def _prepare_training_run_config(
     teacher_path: str | None,
     sample_prompt: str | None,
 ) -> tuple[dict, dict]:
-    merged = dict(MINIMIND_MOE_DEFAULTS)
+    merged = dict(BASE_MOE_DEFAULTS)
     merged.update(dict(cfg) if cfg else {})
     # Per-stage hyperparameters (Config tab → auto plan) override the shared
     # values for this stage only; architecture keys are never stage-specific.
@@ -859,23 +860,14 @@ def _cleanup_training_dataset_artifact(path: str | None) -> dict:
 
 @contextmanager
 def _trainer_logger_sink(put_line):
-    from trainer import trainer_utils as _tu  # type: ignore
+    """Forward every trainer ``Logger`` line to ``put_line`` while active.
 
-    orig_logger = _tu.Logger
-
-    def _hook(content):
-        line = str(content)
-        put_line(line)
-        try:
-            orig_logger(content)
-        except Exception:
-            pass
-
-    _tu.Logger = _hook
-    try:
+    The old version swapped a module attribute, which trainers that had
+    already bound ``Logger`` by name never saw; the sink registry reaches all.
+    """
+    from chronos.model.kernel import add_log_sink
+    with add_log_sink(put_line):
         yield
-    finally:
-        _tu.Logger = orig_logger
 
 
 def _sniff_checkpoint(path: str) -> dict:
@@ -1186,7 +1178,7 @@ class TrainSession:
                 gen = torch.cat([gen, nxt], dim=-1)
                 if int(nxt.item()) == (tokenizer.eos_token_id or -1):
                     break
-        txt = tokenizer.decode(gen[0, ids.shape[1]:].tolist(), skip_special_tokens=True)
+        txt = decode_visible(tokenizer, gen[0, ids.shape[1]:].tolist())
         if was_training:
             model.train()
         self.last_sample = txt
@@ -2024,7 +2016,7 @@ class TrainSession:
                                     gen = torch.cat([gen, nxt], dim=-1)
                                     if int(nxt.item()) == (tokenizer.eos_token_id or -1):
                                         break
-                            txt = tokenizer.decode(gen[0, ids.shape[1]:].tolist(), skip_special_tokens=True)
+                            txt = decode_visible(tokenizer, gen[0, ids.shape[1]:].tolist())
                             model.train()
                             self.last_sample = txt
                             self.last_sample_step = global_step
@@ -2083,7 +2075,7 @@ class TrainSession:
 
 
 def resolve_tokenizer_dir(configured: str | None) -> str:
-    """Config ``tokenizer_path`` (a Chronos Tokenizer Builder output) wins; else minimind."""
+    """Config ``tokenizer_path`` (a Chronos Tokenizer Builder output) wins; else the bundled legacy one."""
     configured = os.path.expanduser(str(configured or "").strip())
     if configured:
         if not os.path.isfile(os.path.join(configured, "tokenizer.json")):

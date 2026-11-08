@@ -13,7 +13,8 @@ The "SSD prefetch" concept maps differently:
 Key differences from the CUDA backend:
   - No ExpertStore.promote_to_vram() — mx.eval() pins to Metal on first use
   - No H2D stream — Metal handles async via its own command queue
-  - torch.compile unavailable; mx.compile() used instead
+  - torch.compile unavailable; the training micro step uses mx.compile()
+    (chronos/mlx/training/compiled.py, CHRONOS_MLX_COMPILE=auto|on|off)
   - All modules are mlx.nn.Module, not torch.nn.Module
 """
 __all__ = [

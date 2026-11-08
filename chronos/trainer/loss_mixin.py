@@ -309,7 +309,7 @@ def capture_reference_routing(model, calibration_batch, device, *, modality_inpu
         try:
             _ = model(ids, use_cache=False, modality_inputs=modality_inputs, modality_mask=modality_mask)
         except TypeError:
-            _ = model(ids)  # minimind models don't accept use_cache kwarg here
+            _ = model(ids)  # plain HF-style models without the Chronos kwargs
         router_4d = collect_router_probs(model)
         if router_4d is None:
             ref = None

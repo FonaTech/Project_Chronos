@@ -2,6 +2,44 @@
 
 ## [Unreleased]
 
+## [0.3.2a0] — 2026-11-08 (beta)
+
+This release replaces the minimind kernel with a native one, compiles the MLX training step, adds MLX activation recomputation, and keeps tool-call tags that a custom tokenizer registers as special tokens. README "Native kernel (0.3.2)" has the migration reasons and the measured comparison.
+
+### Changed
+- `chronos/model/kernel.py` replaces the minimind kernel (config base, RoPE/YaRN, gated FFN, dense attention, trainer utilities).
+  - `import chronos` no longer clones anything or changes `sys.path`, and works offline.
+  - Config field names and defaults, RoPE tables and FFN parameter names are unchanged. Logits are bit-identical on `out/chronos_256_moe.pth` and the 50M en→zh checkpoint (full, padded and prefill+decode paths).
+  - All layers share one FP32 RoPE table per `(dim, base, scaling, device)`: 3.50 → 0.50 MiB at the 50M shape, 216 → 24 MiB at the 768H base shape.
+  - Resume state is written to `chronos_<H>_moe_resume.pth`; the release checkpoint keeps its dtype.
+- `chronos.deps` is a shim. `get_tokenizer_path()` returns the bundled legacy 6400-token tokenizer (`CHRONOS_DEFAULT_TOKENIZER` overrides it); `ensure_minimind()` is a no-op with a deprecation warning.
+- `tools/compare_minimind_chronos*.py` use minimind only as an external baseline, from `--minimind-dir` or `CHRONOS_MINIMIND_DIR`. Model bundles no longer ship `third_party/minimind`.
+- `benchmark_compare.py` compares Chronos with a dense GQA baseline built from the same kernel (result key `baseline`, formerly `minimind`).
+- The preset "MiniMind-MoE (default)" is now "Chronos-v2 legacy (768H, 6400 vocab)", and `MINIMIND_MOE_DEFAULTS` is now `BASE_MOE_DEFAULTS`. The old names remain as aliases.
+- MLX training micro steps are compiled by default (`chronos longrun`, and `run_mlx_stage` pretrain and SFT). `CHRONOS_MLX_COMPILE=auto|on|off` or a recipe's `extra.mlx_compile` switches it.
+
+### Added
+- `chronos.mlx.training.compiled`: one `mx.compile` graph per signature for loss and gradients.
+  - The recurrent depth is sampled once per step outside the trace. Depth, the ACT switch, shapes and plain config values select the graph.
+  - Weights and the RNG state are compile inputs and outputs, so dropout and the cache-miss simulation consume the RNG stream as in eager mode.
+  - Router probabilities, loss components and recurrent diagnostics are returned from the graph and written back to the modules.
+  - Multimodal batches, lazy experts and signatures that fail to trace run eagerly; the reason is logged once.
+  - Measured on real en→zh shards with the 50M config (M5 Max, bf16, shared GPU): 1.08× (SFT) and 1.18× (pretrain) per step, loss curves within 2e-3 of eager.
+- `chronos.mlx.checkpointing`: MLX activation recomputation for `activation_checkpointing=true`.
+  - Each block call is one recomputed region. Dropout masks, the cache-miss draws and routing indices are recorded in the forward pass and replayed during recomputation.
+  - Region outputs are packed per dtype. mlx 0.32.4 keeps the gradient of only one copy when a checkpointed function returns the same graph node twice, and a full-length cache slice is such a copy.
+  - Measured peak memory: 5.62 → 3.50 GB (SFT) and 6.07 → 3.62 GB (pretrain), at 17% and 21% more time per step than the compiled step alone. It stays off by default at 50M; the planner's memory-constrained tiers enable it.
+- `chronos.tokenizer.visible.decode_visible`: hides control tokens and keeps `<tool_call>`, `</tool_call>`, `<tools>` and `</tools>` as text, for HF tokenizers and `ChronosTokenizer`. Serving, the workbench and GRPO rewards use it.
+- Tests: `tests/test_native_kernel.py`, `tests/test_tool_tags_special_tokens.py`, `tests/test_mlx_checkpointing.py`, and per-micro-step exactness of the compiled and recomputed steps inside the LongRun loop (`tests/test_longrun.py`).
+
+### Fixed
+- Tool calls were lost when a custom HF tokenizer registered `<tool_call>` as a special token: decoding with `skip_special_tokens=True` removed the tags, so the parser saw bare JSON.
+- Dense mode (`use_hybrid_attention=False`) crashed on Torch in every recurrent mode, and on MLX with an int32 overflow (a 2**63 window). It now runs dense causal GQA; prefill+decode matches the full forward within 1e-6.
+- The Torch pretrain save rewrote the BF16 release checkpoint as FP16.
+- Trainer log lines did not reach the Web UI.
+- RoPE tables: with many torch threads, a cached table's prefix differed by one ulp from a shorter table (measured with 18 threads on torch 2.10). The tables are now built single-threaded.
+- `tools/compare_minimind_chronos*.py` used `chronos.deps` without importing it.
+
 ## [0.3.1a3] — 2026-11-08 (beta)
 
 This release fixes the router masks and the lazy-expert decode. It also adds a document-level cluster objective, MLX multimodal training in all six stages, tool-call SFT records and tool-call parsing in `chronos serve`, a kernel-level MLX cache limit and progress-based ETAs.

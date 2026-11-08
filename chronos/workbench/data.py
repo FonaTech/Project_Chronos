@@ -12,7 +12,6 @@ import os
 import statistics
 from collections import Counter
 
-import chronos.deps  # noqa: F401
 
 _CHAT_KEYS = ("conversations", "messages", "dialog", "dialogue")
 _PROMPT_KEYS = ("prompt", "question", "query", "input", "instruction")

@@ -4,11 +4,13 @@ chronos/mlx/moe.py — MLX-native ChronosMOEFeedForward.
 Soft gating is expressed as weighted sum (compile-safe):
     out = avail[i] * expert_out + (1 - avail[i]) * shared_out
 
-mx.compile() traces a single graph — no Python branches on mask values.
+No Python branches on mask values, so a compiled training step
+(chronos/mlx/training/compiled.py) keeps one graph per signature.
 """
 import mlx.core as mx
 import mlx.nn as nn
 
+from chronos.mlx.checkpointing import draw, recomputing, recorded, side_output_sink
 from chronos.mlx.moe_kernels import (
     gather_mm_supported, grouped_swiglu, sparse_dispatch_ok, stack_expert_weights, training_availability,
 )
@@ -22,7 +24,7 @@ def _sparse_ok(dtype) -> bool:
 
 
 class FeedForwardMLX(nn.Module):
-    """SwiGLU FFN matching minimind's FeedForward structure."""
+    """SwiGLU FFN matching ``chronos.model.kernel.FeedForward``."""
 
     def __init__(self, hidden_size: int, intermediate_size: int):
         super().__init__()
@@ -88,6 +90,13 @@ class ChronosMLXMOE(nn.Module):
     def iteration_router_probs(self):
         return self._iteration_router_probs
 
+    def accept_side_output(self, kind, value):
+        """Record one dispatch's router probabilities ``[B, S, E]``."""
+        if kind != "probs":
+            raise ValueError(f"unknown MoE side output {kind!r}")
+        object.__setattr__(self, "_last_router_probs", value)
+        self._iteration_router_probs.append(value)
+
     def reset_iteration_routing(self):
         object.__setattr__(self, "_iteration_router_probs", [])
         object.__setattr__(self, "_shared_topk_idx", None)
@@ -100,7 +109,9 @@ class ChronosMLXMOE(nn.Module):
 
     def _expert_stacks(self):
         scope = self._pack_scope
-        if scope is None:
+        if scope is None or recomputing():
+            # A recomputation stacks its own primals, so the expert-weight
+            # gradients reach the region's inputs.
             return stack_expert_weights(self.experts)
         # Keyed on the live weight arrays, so an expert swapped in mid-forward
         # (lazy promotion) can never be served from a stale stack.
@@ -188,21 +199,28 @@ class ChronosMLXMOE(nn.Module):
         x_flat = x.reshape(-1, H)                        # [N, H]
 
         scores = mx.softmax(self.gate(x_flat).astype(mx.float32), axis=-1)  # [N, E]
-        object.__setattr__(self, "_last_router_probs", scores.reshape(B, S, self.num_experts))
-        self._iteration_router_probs.append(self._last_router_probs)
+        probs = scores.reshape(B, S, self.num_experts)
+        # Inside a recomputed block (``chronos.mlx.checkpointing``) side
+        # outputs leave the region as region outputs; the loss then reads the
+        # forward-pass arrays and never a recomputed copy.
+        sink = side_output_sink()
 
-        # top-k routing
-        shared_idx = self._shared_topk_idx
-        if (self.router_scope == "shared" and shared_idx is not None
-                and shared_idx.shape[0] == scores.shape[0] and len(self._iteration_router_probs) > 1):
+        # top-k routing (router_scope="shared": later iterations reuse the
+        # first dispatch's ids).  Indices are discrete: gradients flow through
+        # topk_weight (gathered scores) only.  ``recorded`` makes a
+        # recomputation follow the forward pass's routing exactly.
+        shared_idx = recorded(lambda: self._shared_topk_idx if self.router_scope == "shared" else None)
+        if shared_idx is not None and shared_idx.shape[0] == scores.shape[0]:
             topk_idx = shared_idx
         else:
-            topk_idx = mx.argpartition(-scores, kth=self.num_experts_per_tok - 1, axis=-1)
-            # Routing indices are discrete: gradients flow through topk_weight
-            # (gathered scores) only, never through the integer indices.
-            topk_idx = mx.stop_gradient(topk_idx[:, :self.num_experts_per_tok])  # [N, K]
-            if self.router_scope == "shared":
+            k = self.num_experts_per_tok
+            topk_idx = recorded(lambda: mx.stop_gradient(mx.argpartition(-scores, kth=k - 1, axis=-1)[:, :k]))
+            if self.router_scope == "shared" and self._shared_topk_idx is None and not recomputing():
                 object.__setattr__(self, "_shared_topk_idx", topk_idx)
+        if sink is not None:
+            sink.append((self, "probs", probs))
+        else:
+            self.accept_side_output("probs", probs)
         topk_weight = mx.take_along_axis(scores, topk_idx, axis=-1)   # [N, K]
         if self.norm_topk_prob:
             topk_weight = topk_weight / (topk_weight.sum(axis=-1, keepdims=True) + 1e-20)
@@ -218,7 +236,7 @@ class ChronosMLXMOE(nn.Module):
             if self.training and self.fallback_mask_prob > 0.0 and shared is not None:
                 # Cache-miss simulation (PyTorch parity): an unavailable routed
                 # expert is served by the shared expert, as at offload inference.
-                fallback = (training_availability(self.num_experts, self.fallback_mask_prob), shared)
+                fallback = (draw(lambda: training_availability(self.num_experts, self.fallback_mask_prob)), shared)
             y = grouped_swiglu(x_flat, topk_idx, topk_weight, *self._expert_stacks(),
                                fallback=fallback)
             if shared is not None:

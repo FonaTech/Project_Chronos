@@ -9,7 +9,6 @@ _repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _repo_root not in sys.path:
     sys.path.insert(0, _repo_root)
 
-import chronos.deps  # auto-bootstrap minimind on sys.path
 
 import torch
 from torch.utils.data import DataLoader, TensorDataset
@@ -1742,6 +1741,55 @@ def test_mlx_training_save_interval(tmp_path):
     assert any(e.get("event") == "save" and e.get("reason") == "final" for e in events)
 
 
+def test_mlx_compiled_step_nan_rolls_back(tmp_path, monkeypatch):
+    """The default (compiled) step: a NaN that comes from the data, not from
+    a swapped Python function, still trips the rollback, and the run keeps
+    compiling afterwards."""
+    if not _mlx_available():
+        return
+    import mlx.core as mx
+    from chronos.model.config import ChronosConfig
+    import chronos.mlx.training.trainer as trainer_mod
+    from chronos.mlx.training import run_mlx_stage
+
+    monkeypatch.delenv("CHRONOS_MLX_COMPILE", raising=False)
+    cfg = ChronosConfig(hidden_size=32, num_hidden_layers=1, num_experts=2,
+                        num_experts_per_tok=1, num_shared_experts=1,
+                        num_attention_heads=2, num_key_value_heads=2,
+                        kv_latent_dim=8, rope_dim=4, max_seq_len=16,
+                        vocab_size=64, use_moe=True,
+                        lambda_balance=0.0, lambda_temporal=0.0,
+                        lambda_lookahead=0.0, lambda_lookahead_topk=0.0)
+    ids = torch.randint(1, cfg.vocab_size, (3, 8), dtype=torch.long)
+    ids[1, 0] = 0                                  # token 0 marks the poisoned batch
+    loader = DataLoader(TensorDataset(ids, ids.clone()), batch_size=1)
+    original_loss = trainer_mod._ce_stage_loss
+
+    def poisoned_loss(model, input_ids, labels):  # traced once; NaN decided by the data
+        loss = original_loss(model, input_ids, labels)
+        return mx.where(mx.any(input_ids == 0), mx.array(float("nan"), dtype=loss.dtype), loss)
+
+    class Args:
+        learning_rate = 1e-4
+        weight_decay = 0.0
+        steps = 3
+        epochs = 1
+        max_seq_len = 8
+        log_interval = 1
+        save_interval = 100
+        accumulation_steps = 1
+        grad_clip = 1.0
+        mlx_rollback_limit = 3
+        mlx_compile = "on"
+
+    monkeypatch.setattr(trainer_mod, "_ce_stage_loss", poisoned_loss)
+    events = []
+    result = run_mlx_stage(stage="pretrain", config=cfg, checkpoint_path=None, save_dir=str(tmp_path),
+                           loader=loader, args=Args(), progress_callback=lambda event: events.append(dict(event)))
+    assert result.rollbacks == 1 and result.checkpoint_saved is True
+    assert any(e.get("event") == "rollback" for e in events)
+
+
 def test_mlx_training_nan_rollback_saves_last_finite(tmp_path, monkeypatch):
     if not _mlx_available():
         return
@@ -1775,6 +1823,7 @@ def test_mlx_training_nan_rollback_saves_last_finite(tmp_path, monkeypatch):
         steps = 3
         epochs = 1
         max_seq_len = 8
+        mlx_compile = "off"   # the NaN is injected by swapping the Python loss, which a compiled graph calls only while tracing
         log_interval = 1
         save_interval = 100
         accumulation_steps = 1
@@ -2132,7 +2181,7 @@ def test_config_input_order_matches_autotune_mapping():
 def test_config_schema_includes_unlimited_max_steps_default():
     from ui.presets import CONFIG_INPUT_ORDER, get_preset, values_in_input_order
 
-    cfg = get_preset("MiniMind-MoE (default)")
+    cfg = get_preset("Chronos-v2 legacy (768H, 6400 vocab)")
     assert cfg["max_steps"] == 0
     idx = CONFIG_INPUT_ORDER.index("max_steps")
     assert values_in_input_order(cfg)[idx] == 0

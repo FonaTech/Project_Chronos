@@ -6,7 +6,6 @@ import time
 
 from ui.gradio_compat import gr
 
-import chronos.deps  # noqa: F401  (auto-bootstrap minimind on sys.path)
 from ui.i18n import t, register_translatable, get_current_lang
 from chronos.backend import training_available, resolve_training_device  # noqa: F401
 import chronos.workbench.training as _training

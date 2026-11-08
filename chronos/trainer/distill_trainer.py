@@ -6,8 +6,8 @@ Loss:
     L_label = cross_entropy(student_logits, labels, ignore_index=-100)
     L_total = α · L_KD + (1 − α) · L_label  +  chronos_loss_term (lookahead etc.)
 
-The teacher is any frozen model that returns ``.logits`` on forward (Chronos
-or MiniMind checkpoints both work). Router KL anchor still applies — Stage
+The teacher is any frozen model that returns ``.logits`` on forward (any Chronos
+checkpoint works). Router KL anchor still applies — Stage
 6 shouldn't corrupt the cache layout any more than SFT/DPO can.
 """
 from __future__ import annotations
@@ -20,8 +20,7 @@ import torch.nn.functional as F
 from torch import optim
 from torch.utils.data import DataLoader
 
-import chronos.deps  # noqa: F401
-from trainer.trainer_utils import Logger  # type: ignore
+from chronos.model.kernel import Logger
 from chronos.data.flexible_dataset import (
     StreamingSFTDataset as SFTDataset,
     MultimodalStreamingSFTDataset, multimodal_collate,

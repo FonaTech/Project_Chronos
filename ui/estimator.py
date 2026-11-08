@@ -15,8 +15,8 @@ DTYPE_BYTES = {
 }
 
 
-def _minimind_intermediate(hidden_size: int) -> int:
-    """Replicates MiniMindConfig's auto-derivation rule."""
+def _base_intermediate(hidden_size: int) -> int:
+    """ChronosBaseConfig auto-derivation: ceil(h·π/64)·64."""
     return int(math.ceil(hidden_size * math.pi / 64) * 64)
 
 
@@ -28,7 +28,7 @@ class ArchConfig:
     num_key_value_heads: int = 4
     vocab_size: int = 6400
     # intermediate_size / moe_intermediate_size: when None, auto-derive from
-    # hidden_size via the MiniMind rule so the estimate matches the trainer.
+    # hidden_size via the ChronosBaseConfig rule so the estimate matches the trainer.
     intermediate_size: Optional[int] = None
     moe_intermediate_size: Optional[int] = None
     head_dim: Optional[int] = None

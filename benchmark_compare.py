@@ -1,5 +1,5 @@
 """
-benchmark_compare.py — Background benchmark: minimind (pure RAM) vs Chronos (SSD+DRAM)
+benchmark_compare.py — Background benchmark: dense baseline (pure RAM) vs Chronos (SSD+DRAM)
 
 Runs in background, writes results to benchmark_results.json
 Usage: python benchmark_compare.py
@@ -11,7 +11,6 @@ _pkg_root = os.path.dirname(os.path.abspath(__file__))
 if _pkg_root not in sys.path:
     sys.path.insert(0, _pkg_root)
 
-import chronos.deps  # auto-bootstrap minimind on sys.path
 import torch
 import psutil
 
@@ -68,18 +67,25 @@ def measure_tokens_per_sec(model, vocab_size, device, n_tokens=50, seq_len=32):
     elapsed = time.monotonic() - t0
     return n_tokens / max(elapsed, 1e-6)
 
-# ── Benchmark 1: minimind pure RAM ────────────────────────────────
+# ── Benchmark 1: dense baseline (pure RAM) ─────────────────────────
+# A conventional transformer built from the same native kernel: full causal
+# GQA (no MLA/SWA), one pass per layer (no recurrence), all experts resident.
+# Before 0.3.2 this slot ran minimind; tools/compare_minimind_chronos*.py
+# still compare against an external minimind checkout on request.
 
-def bench_minimind():
-    log('=== Benchmark 1: MiniMind (pure RAM) ===')
-    from model.model_minimind import MiniMindConfig, MiniMindForCausalLM
+def bench_baseline():
+    log('=== Benchmark 1: dense baseline (pure RAM) ===')
+    from chronos.model.config import ChronosConfig
+    from chronos.model.model_chronos import ChronosForCausalLM
 
-    cfg = MiniMindConfig(
+    cfg = ChronosConfig(
         hidden_size=512, num_hidden_layers=8, use_moe=True,
-        num_experts=4, num_experts_per_tok=1,
+        num_experts=4, num_experts_per_tok=1, num_shared_experts=0,
+        use_hybrid_attention=False, recurrent_enabled=False,
+        lambda_lookahead=0.0, lambda_temporal=0.0,
     )
     ram_before = ram_used_gb()
-    model = MiniMindForCausalLM(cfg)
+    model = ChronosForCausalLM(cfg)
     model.eval()
     ram_after = ram_used_gb()
     ram_model_gb = ram_after - ram_before
@@ -93,7 +99,7 @@ def bench_minimind():
     train_losses = []
     for step in range(5):
         x = torch.randint(0, cfg.vocab_size, (2, 64))
-        out = model(x, labels=x)
+        out, _lookahead = model(x, labels=x)
         loss = out.loss + out.aux_loss
         loss.backward()
         optimizer.step()
@@ -111,13 +117,14 @@ def bench_minimind():
     log(f'  TPS={tps:.1f}  RAM_train={ram_train:.3f}GB  RAM_infer={ram_infer:.3f}GB')
 
     result = {
-        'name': 'MiniMind (pure RAM)',
+        'name': 'Dense baseline (GQA, pure RAM)',
         'params_m': round(params_m, 1),
         'ram_model_gb': round(ram_model_gb, 3),
         'ram_train_gb': round(ram_train, 3),
         'ram_infer_gb': round(ram_infer, 3),
         'tokens_per_sec': round(tps, 1),
         'train_losses': [round(l, 4) for l in train_losses],
+        'kv_cache_type': 'GQA (full K/V)',
     }
     del model
     gc.collect()
@@ -241,9 +248,9 @@ if __name__ == '__main__':
 
     results = {}
     try:
-        results['minimind'] = bench_minimind()
+        results['baseline'] = bench_baseline()
     except Exception as e:
-        log(f'minimind bench failed: {e}')
+        log(f'baseline bench failed: {e}')
         import traceback; log(traceback.format_exc())
 
     try:

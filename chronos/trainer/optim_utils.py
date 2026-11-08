@@ -12,7 +12,7 @@ Two reasons to centralize this:
    this in one place means every trainer benefits from the same correct
    recipe and we don't get drift.
 
-2. Warmup-then-cosine schedule. minimind's get_lr is pure cosine (effective
+2. Warmup-then-cosine schedule. The pre-0.2 schedule was pure cosine (effective
    LR at step 0 is already 0.55·base_lr), which destabilizes the first few
    hundred steps with small batches. Linear warmup over the first ~5% of
    steps then cosine decay to 10% of base is the boring-and-correct choice.
