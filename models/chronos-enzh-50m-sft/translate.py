@@ -18,8 +18,10 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import sys
 import time
+import urllib.error
 import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -79,6 +81,31 @@ def sha256_of(path: str) -> str:
     return h.hexdigest()
 
 
+def _ssl_context():
+    """CA bundle from certifi when installed; python.org macOS builds ship no system CAs."""
+    try:
+        import certifi
+    except ImportError:
+        return None
+    import ssl
+
+    return ssl.create_default_context(cafile=certifi.where())
+
+
+def _fetch(url: str, path: str) -> None:
+    try:
+        with urllib.request.urlopen(url, timeout=60, context=_ssl_context()) as resp, open(path, "wb") as out:
+            shutil.copyfileobj(resp, out, 1 << 20)
+    except (urllib.error.URLError, OSError) as exc:
+        if os.path.exists(path):
+            os.remove(path)
+        raise RuntimeError(
+            f"download failed ({exc}). If this is a certificate error, run 'pip install certifi' "
+            f"(or 'Install Certificates.command' of python.org Python), or download {url} "
+            f"by hand into {os.path.dirname(path)}"
+        ) from exc
+
+
 def download(dest_dir: str = HERE, url: str = WEIGHTS_URL) -> str:
     """Fetch the weights from the GitHub release and check their SHA-256."""
     dest = os.path.join(dest_dir, WEIGHTS_NAME)
@@ -86,7 +113,7 @@ def download(dest_dir: str = HERE, url: str = WEIGHTS_URL) -> str:
         return dest
     part = dest + ".part"
     print(f"downloading {url}", file=sys.stderr)
-    urllib.request.urlretrieve(url, part)
+    _fetch(url, part)
     got = sha256_of(part)
     if got != WEIGHTS_SHA256:
         os.remove(part)
@@ -258,6 +285,15 @@ def _kernel_warning() -> None:
         print(f"warning: tested with Project_Chronos=={KERNEL_VERSION}, found {got}", file=sys.stderr)
 
 
+def _language_refusal(text: str) -> str | None:
+    """The language-check message for text the model must not see, else None (no model needed)."""
+    try:
+        check_english(text)
+    except BoundaryError as exc:
+        return str(exc)
+    return None
+
+
 def _items(args) -> list[str]:
     if args.text:
         return list(args.text)
@@ -289,12 +325,18 @@ def main(argv=None) -> int:
         print("refused: only en_zh is supported. zh_en is disabled because the SFT data held "
             "English -> Chinese instructions only.", file=sys.stderr)
         return 2
-    _kernel_warning()
-    tr = Translator(weights=args.weights, backend=args.backend, device=args.device)
+    items = _items(args)
+    early = [_language_refusal(item) for item in items]
+    tr = None  # refuse out-of-boundary input before loading (or downloading) anything
+    if not all(early):
+        _kernel_warning()
+        tr = Translator(weights=args.weights, backend=args.backend, device=args.device)
     refused, lines = 0, []
-    for item in _items(args):
+    for item, item_refusal in zip(items, early):
         t0 = time.perf_counter()
         try:
+            if tr is None:
+                raise BoundaryError(item_refusal)
             hyp, err = tr.translate(item, split=not args.no_split), None
         except BoundaryError as exc:
             hyp, err, refused = "", str(exc), refused + 1
