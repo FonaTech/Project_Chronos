@@ -303,6 +303,48 @@ def _media_value(value):
     return value
 
 
+def record_media(record: dict, *, image_size: int = 224, audio_sample_rate: int = 16000,
+                 max_audio_seconds: float = 30.0, media_error_policy: str = "warn"):
+    """``(modality_inputs, modality_mask[2])`` for one record, or ``None``.
+
+    Pre-encoded ``*_embeds`` take precedence over a path/value of the same
+    modality.  Used by the preference (DPO/ORPO) and GRPO prompt loaders; the
+    pair or the rollout group shares the record's media."""
+    if not detect_modalities(record):
+        return None
+    normalized = normalize_multimodal_record(record)
+    media = {}
+    for name in ("image_embeds", "audio_embeds"):
+        value = normalized["modalities"].get(name)
+        if value is not None:
+            try:
+                media[name] = torch.as_tensor(value, dtype=torch.float32)
+            except Exception as exc:
+                if media_error_policy == "raise":
+                    raise ValueError(f"invalid {name}: {exc}") from exc
+                warnings.warn(f"invalid {name}: {exc}", RuntimeWarning, stacklevel=2)
+    for modality, loader in (
+        ("image", lambda v: _load_image(v, image_size)),
+        ("audio", lambda v: _load_audio(v, audio_sample_rate, max_audio_seconds)),
+    ):
+        if f"{modality}_embeds" in media:
+            continue
+        value = _media_value(normalized["modalities"].get(modality))
+        if value is None:
+            continue
+        try:
+            media[modality] = loader(value)
+        except Exception as exc:
+            if media_error_policy == "raise":
+                raise
+            warnings.warn(str(exc), RuntimeWarning, stacklevel=2)
+    if not media:
+        return None
+    mask = torch.tensor([float("image" in media or "image_embeds" in media),
+                         float("audio" in media or "audio_embeds" in media)])
+    return media, mask
+
+
 class MediaResolver:
     """Lazy media resolver shared by JSONL and API serving paths."""
 
@@ -764,3 +806,44 @@ class StreamingDPODataset(_StreamingJSONLBase):
             "y_rejected":   torch.tensor(r_ids[1:],  dtype=torch.long),
             "mask_rejected":torch.tensor(r_mask[1:], dtype=torch.long),
         }
+
+
+class MultimodalStreamingDPODataset(StreamingDPODataset):
+    """Preference pairs with the prompt's image/audio.
+
+    Media fields sit on the record (``image``/``audio``/``*_embeds`` or a
+    ``modalities`` dict, as for SFT); chosen and rejected answer the same
+    multimodal prompt, so both sides of the pair condition on the same media.
+    Text-only records keep the ``StreamingDPODataset`` dict."""
+
+    def __init__(self, data_path, tokenizer, max_length=4096, *, image_size=224,
+                 audio_sample_rate=16000, max_audio_seconds=30.0, media_error_policy="warn"):
+        super().__init__(data_path, tokenizer, max_length=max_length)
+        self.media_kwargs = dict(image_size=int(image_size), audio_sample_rate=int(audio_sample_rate),
+                                 max_audio_seconds=float(max_audio_seconds),
+                                 media_error_policy=str(media_error_policy))
+        self.modality_summary = dataset_modality_summary(data_path)
+
+    def __getitem__(self, index):
+        item = super().__getitem__(index)
+        found = record_media(self._read_record(index), **self.media_kwargs)
+        if found is not None:
+            item["modality_inputs"], item["modality_mask"] = found
+        return item
+
+
+PREFERENCE_KEYS = ("x_chosen", "y_chosen", "mask_chosen", "x_rejected", "y_rejected", "mask_rejected")
+
+
+def preference_collate(batch):
+    """Stack DPO/ORPO pairs; media (one set per pair) is batched with the
+    ``multimodal_collate`` rules, so mixed text/media pairs keep exact masks."""
+    out = {key: torch.stack([item[key] for item in batch]) for key in PREFERENCE_KEYS}
+    if any(item.get("modality_inputs") for item in batch):
+        stub = torch.zeros(1, dtype=torch.long)
+        media = multimodal_collate([
+            {"input_ids": stub, "labels": stub, "modality_inputs": item["modality_inputs"],
+             "modality_mask": item.get("modality_mask")} if item.get("modality_inputs") else (stub, stub)
+            for item in batch])
+        out["modality_inputs"], out["modality_mask"] = media.get("modality_inputs", {}), media["modality_mask"]
+    return out

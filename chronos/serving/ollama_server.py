@@ -30,6 +30,8 @@ try:  # module level: FastAPI resolves ``Request`` annotations by name
 except ImportError:  # pragma: no cover - serving extra not installed
     FastAPI = HTTPException = Request = JSONResponse = PlainTextResponse = StreamingResponse = None
 
+from chronos.serving.tool_calls import ToolCallStream, ollama_tool_calls, openai_tool_calls, split_tool_calls
+
 OLLAMA_COMPAT_VERSION = "0.40.14"
 
 
@@ -219,7 +221,9 @@ def create_app(runtime, *, api_key: str | None = None, monitor_runs_dir: str | N
                         final["error"] = item["error"]
                     yield shape(None, final)
                 else:
-                    yield shape(item["text"], None)
+                    chunk = shape(item["text"], None)
+                    if chunk is not None:      # text held back (possible start of a tag)
+                        yield chunk
         return events
 
     def _respond(body, events, collect):
@@ -269,16 +273,35 @@ def create_app(runtime, *, api_key: str | None = None, monitor_runs_dir: str | N
             return {"model": body.get("model"), "created_at": _now(),
                     "message": {"role": "assistant", "content": ""}, "done": True, "done_reason": "load"}
         ids = runtime.encode_chat(lm, messages, body.get("tools"))
+        # With ``tools`` the model may answer with <tool_call> blocks: parse them
+        # into message.tool_calls (Ollama shape) as they stream.
+        parser = ToolCallStream() if body.get("tools") else None
+
+        def message(text, calls=()):
+            msg = {"role": "assistant", "content": text}
+            if calls:
+                msg["tool_calls"] = ollama_tool_calls(list(calls))
+            return msg
 
         def shape(text, final):
             if final is not None:
-                return {**final, "message": {"role": "assistant", "content": ""}}
-            return {"model": body.get("model"), "created_at": _now(),
-                    "message": {"role": "assistant", "content": text}, "done": False}
+                tail = parser.finish()[0] if parser is not None else ""
+                return {**final, "message": message(tail)}
+            if parser is None:
+                return {"model": body.get("model"), "created_at": _now(), "message": message(text), "done": False}
+            content, calls = parser.feed(text)
+            if not content and not calls:
+                return None
+            return {"model": body.get("model"), "created_at": _now(), "message": message(content, calls),
+                    "done": False}
 
         def collect(items):
-            text = "".join(i["message"]["content"] for i in items[:-1])
-            return {**items[-1], "message": {"role": "assistant", "content": text}}
+            text = "".join(i["message"]["content"] for i in items)
+            calls = [c for i in items for c in i["message"].get("tool_calls", [])]
+            msg = {"role": "assistant", "content": text.strip() if calls else text}
+            if calls:
+                msg["tool_calls"] = calls
+            return {**items[-1], "message": msg}
         return _respond(body, _run(body, ids, lm, load_s, shape), collect)
 
     @app.get("/v1/models")
@@ -298,24 +321,49 @@ def create_app(runtime, *, api_key: str | None = None, monitor_runs_dir: str | N
                                              "seed": body.get("seed"), "stop": body.get("stop"),
                                              **(body.get("chronos") or {})}})
         cid, created = f"chatcmpl-{uuid.uuid4().hex}", int(time.time())
+        with_tools = bool(body.get("tools"))
+
+        def finish_reason(final, n_calls):
+            return "tool_calls" if n_calls else final.get("done_reason", "stop")
+
         if body.get("stream"):
             def sse():
+                parser = ToolCallStream() if with_tools else None
+                n_calls = 0
+
+                def chunk(delta, reason=None, extra=None):
+                    out = {"id": cid, "object": "chat.completion.chunk", "created": created, "model": name,
+                           "choices": [{"index": 0, "delta": delta, "finish_reason": reason}], **(extra or {})}
+                    return f"data: {json.dumps(out, ensure_ascii=False)}\n\n"
                 for item in runtime.generate_stream(name, ids, **opts):
                     if item.get("done"):
-                        chunk = {"id": cid, "object": "chat.completion.chunk", "created": created, "model": name,
-                                 "choices": [{"index": 0, "delta": {}, "finish_reason": item.get("done_reason", "stop")}],
-                                 "chronos": item}
-                        yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\ndata: [DONE]\n\n"
+                        tail = parser.finish()[0] if parser is not None else ""
+                        if tail:
+                            yield chunk({"content": tail})
+                        yield chunk({}, finish_reason(item, n_calls), {"chronos": item}) + "data: [DONE]\n\n"
+                    elif parser is None:
+                        yield chunk({"content": item["text"]})
                     else:
-                        chunk = {"id": cid, "object": "chat.completion.chunk", "created": created, "model": name,
-                                 "choices": [{"index": 0, "delta": {"content": item["text"]}, "finish_reason": None}]}
-                        yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+                        content, calls = parser.feed(item["text"])
+                        if content:
+                            yield chunk({"content": content})
+                        if calls:
+                            yield chunk({"tool_calls": openai_tool_calls(calls, start=n_calls)})
+                            n_calls += len(calls)
             return StreamingResponse(sse(), media_type="text/event-stream")
         items = list(runtime.generate_stream(name, ids, **opts))
         final = items[-1]
+        text = "".join(i["text"] for i in items[:-1])
+        msg = {"role": "assistant", "content": text}
+        calls = []
+        if with_tools:
+            content, calls = split_tool_calls(text)
+            if calls:
+                msg = {"role": "assistant", "content": content or None,
+                       "tool_calls": [{k: v for k, v in c.items() if k != "index"}   # index: stream deltas only
+                                      for c in openai_tool_calls(calls)]}
         return {"id": cid, "object": "chat.completion", "created": created, "model": name,
-                "choices": [{"index": 0, "message": {"role": "assistant", "content": "".join(i["text"] for i in items[:-1])},
-                             "finish_reason": final.get("done_reason", "stop")}],
+                "choices": [{"index": 0, "message": msg, "finish_reason": finish_reason(final, len(calls))}],
                 "usage": {"prompt_tokens": final.get("prompt_tokens", 0), "completion_tokens": final.get("completion_tokens", 0),
                           "total_tokens": final.get("prompt_tokens", 0) + final.get("completion_tokens", 0)},
                 "chronos": final}

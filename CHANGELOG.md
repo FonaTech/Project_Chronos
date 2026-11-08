@@ -4,7 +4,7 @@
 
 ## [0.3.1a3] — 2026-11-08 (beta)
 
-This release fixes the router masks and the lazy-expert decode. It also adds a document-level cluster objective, MLX multimodal training, tool-call SFT records, a kernel-level MLX cache limit and progress-based ETAs.
+This release fixes the router masks and the lazy-expert decode. It also adds a document-level cluster objective, MLX multimodal training in all six stages, tool-call SFT records and tool-call parsing in `chronos serve`, a kernel-level MLX cache limit and progress-based ETAs.
 
 ### Added
 - `cluster_locality_mode="segment"`: the cluster objective treats each document as one unit.
@@ -16,7 +16,16 @@ This release fixes the router masks and the lazy-expert decode. It also adds a d
   - Pre-encoded `*_embeds` inputs and the per-modality and per-token masks work as in Torch.
   - Logits match Torch within 2e-4 in FP32 tests.
   - MLX checkpoints save and load the fusion weights, and `freeze_modality_encoders` works on MLX.
-  - `run_mlx_stage` accepts `multimodal_collate` batches in pretrain and SFT. Preference and distillation stages with media still run on PyTorch.
+  - `run_mlx_stage` takes media in all six stages: pretrain, SFT, DPO, ORPO, GRPO and distill.
+  - DPO and ORPO: the chosen and rejected answers condition on the prompt's media.
+  - GRPO: every rollout conditions on the prompt's media. The rollout encodes the media once and reuses it at every decode step, with identical logits. The policy update re-encodes the media, so the encoders get gradients.
+  - Distill: the student gets the media. A text-only teacher is accepted, as on PyTorch.
+- Multimodal preference and GRPO data.
+  - `MultimodalStreamingDPODataset` and `preference_collate` read `chosen`/`rejected` records that carry `image`, `audio` or `*_embeds` fields, the same fields SFT uses.
+  - `load_grpo_prompt_records` keeps each prompt's record so the media can be resolved per step.
+  - `record_media` is the shared resolver.
+  - The Web UI selects these automatically when the dataset contains media.
+  - The PyTorch DPO, ORPO and GRPO trainers are text-only. With media, `auto` picks MLX, and an explicit PyTorch backend raises an error instead of dropping the media.
 - Tool calls in the chat template.
   - `tools` render as one `<tools>` system block.
   - The assistant's `tool_calls` render as `<tool_call>{json}</tool_call>` lines, and `tool` turns carry the results.
@@ -26,7 +35,12 @@ This release fixes the router masks and the lazy-expert decode. It also adds a d
   - Context tokens: system and user turns, tool definitions and tool results.
   - Records are written as `.bin/.idx/.plen/.lmask`.
 - `SFTRecords` reads `.lmask` (one uint8 per token). When present it replaces the `.plen` prompt rule. Older readers still use `.plen`.
-- `chronos serve` passes `tools` and the assistant's `tool_calls` from `/api/chat` and `/v1/chat/completions` into the template. It does not parse `<tool_call>` output back into structured `tool_calls` yet.
+- `chronos serve` supports tool calls end to end.
+  - It passes `tools` and the assistant's `tool_calls` from `/api/chat` and `/v1/chat/completions` into the template.
+  - When the request has `tools`, it parses `<tool_call>` blocks in the output into structured calls. `/api/chat` returns Ollama `message.tool_calls`. `/v1/chat/completions` returns OpenAI `tool_calls` with string arguments and `finish_reason: "tool_calls"`.
+  - Streaming parses the calls as they are generated, and no client sees part of a tag.
+  - An invalid block stays in the content. Requests without `tools` are unchanged.
+  - `chronos.serving.tool_calls` holds the parser.
 - `chronos.mlx.memory`: every MLX model sets the MLX buffer-cache limit before it allocates weights.
   - The limit is `min(RAM/8, 16 GiB)`.
   - A recipe (`extra.mlx_cache_limit_gb`) or `CHRONOS_MLX_CACHE_LIMIT_GB` can lower it. Larger values are clamped to the limit.
@@ -42,6 +56,7 @@ This release fixes the router masks and the lazy-expert decode. It also adds a d
 ### Fixed
 - Router auxiliary losses and routing telemetry counted right-padding in SFT batches. Balance, entropy, lookahead and cluster terms now use only real tokens. Packed pretraining is unchanged.
 - Training telemetry now sums every micro-batch of a step. Before, it sampled only the last one.
+- `SFTRecords` with `.lmask`: under NumPy 2, the -100 context labels of uint16 shards wrapped to 65436. Labels are now built in int32.
 - MLX lazy-expert decode used the per-expert loop, which sums in a different order from the full-memory grouped kernel. In BF16 on the GPU this flipped near-tied greedy tokens: agreement was 31.25 % at every budget. The lazy path now runs the same grouped kernel over the live experts. Lazy and full greedy now agree at every budget (measured: 0.278, 0.5, 0.778 and 1.0 of experts, planned and window residency).
 
 ## [0.3.1a2] — 2026-11-07 (beta)
