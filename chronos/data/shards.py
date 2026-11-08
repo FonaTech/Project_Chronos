@@ -123,7 +123,8 @@ class SFTRecords:
             lm = self.lmasks[si]
             if lm is not None:
                 keep = np.asarray(lm[off:off + n]).astype(bool)
-                labels[r, :n] = np.where(keep, seq, -100)
+                # int32 first: under NumPy 2 (NEP 50) np.where keeps uint16 and wraps -100 → 65436.
+                labels[r, :n] = np.where(keep, np.asarray(seq, dtype=np.int32), -100)
             else:
                 p = int(self.plens[si][ri])
                 labels[r, p:n] = seq[p:]
