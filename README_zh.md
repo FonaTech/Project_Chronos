@@ -296,6 +296,12 @@ checkpoint 保存事件、stop 事件、verify 结果都会同步到界面。Sto
 边界协作式生效；定期保存会写出可继续训练的 `.pth` 与同名 `.config.json`，
 因此 MLX 阶段可以继续接 PyTorch、Export、Diagnose 链路。
 
+MLX 上的内存、多模态与工具调用：
+
+- 每个 MLX 模型在分配权重前把 MLX 缓冲区缓存上限设为 `min(内存/8, 16 GiB)`（`chronos.mlx.memory`）。配方的 `extra.mlx_cache_limit_gb` 或 `CHRONOS_MLX_CACHE_LIMIT_GB` 只能调低，不能调高。上限只约束可回收缓存，不限制权重、激活和梯度。
+- 图像、音频编码器和门控交叉注意力融合在 MLX 上支持预训练和 SFT，权重与数值和 PyTorch 一致（`chronos.mlx.multimodal`）。带媒体的 DPO、ORPO、GRPO 和蒸馏仍走 PyTorch。
+- 工具调用 SFT：chat 模板支持 `tools`、assistant 的 `tool_calls` 和 `tool` 结果。`chronos.data.chat_records.encode_chat` 为每个 token 标出是否计 loss（assistant 文本和调用参与学习，其余为上下文），`write_sft_records` 写出 `SFTRecords` 可读的 `.lmask` 分片。
+
 完整 6 阶段端到端对比见 `tools/compare_minimind_chronos_v3.py`。
 
 ---
@@ -569,7 +575,7 @@ OLLAMA_HOST=127.0.0.1:11435 ollama run <模型名> "你好"
 
 ```bash
 chronos-translate bundle build --run-dir runs/enzh_50m_v1 --which best --pack \
-    --wheel dist/project_chronos-0.3.1a2-py3-none-any.whl --wheel dist/chronos_translate-0.3.1a2-py3-none-any.whl
+    --wheel dist/project_chronos-0.3.1a3-py3-none-any.whl --wheel dist/chronos_translate-0.3.1a3-py3-none-any.whl
 ```
 
 | 包内路径 | 内容 |

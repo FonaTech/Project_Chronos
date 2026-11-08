@@ -69,4 +69,8 @@ def mlx_state_to_torch(mlx_model, config) -> dict[str, torch.Tensor]:
     proj_layers = mlx_model.lookahead_router.proj.layers
     sd["model.lookahead_router.proj.0.weight"] = _torch_tensor(proj_layers[0].weight)
     sd["model.lookahead_router.proj.2.weight"] = _torch_tensor(proj_layers[2].weight)
+    fusion = getattr(mlx_model, "multimodal_fusion", None)
+    if fusion is not None:
+        from chronos.mlx.multimodal import torch_fusion_state
+        sd.update(torch_fusion_state(fusion, _torch_tensor))
     return sd

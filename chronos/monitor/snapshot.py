@@ -165,7 +165,62 @@ class RunMonitor:
 
     # ---- progress / ETA ------------------------------------------------------
     @staticmethod
-    def _progress(spec: dict | None, status: dict, latest: dict | None, rows: list[dict]) -> dict:
+    def _rate(prows: list[dict], key: str, horizon_s: float = 1800.0):
+        """Units of ``key`` per wall second over the latest rows (≤ ``horizon_s``).
+
+        Wall time between log rows includes validation, checkpoints and
+        telemetry, so the rate already prices them in."""
+        pts = []
+        for r in prows:
+            v, ts = r.get(key), r.get("time")
+            if v is None or ts is None:
+                continue
+            try:
+                pts.append((datetime.fromisoformat(str(ts)).timestamp(), float(v)))
+            except ValueError:
+                continue
+        if len(pts) < 2:
+            return None
+        t_end, v_end = pts[-1]
+        first = next((p for p in pts if t_end - p[0] <= horizon_s), pts[0])
+        if first is pts[-1]:
+            first = pts[-2]
+        dt, dv = t_end - first[0], v_end - first[1]
+        return dv / dt if dt > 0 and dv > 0 else None
+
+    @classmethod
+    def _phase_eta(cls, phase: dict, prows: list[dict], hb: dict, active: bool, spec: dict | None) -> dict:
+        """Remaining wall seconds of one phase, from measured progress.
+
+        A phase ends at the first of: its step total (step schedule), its data
+        target (``extra.target_passes``), or its wall-clock deadline.  Each
+        measured candidate is projected at the recent rate; the smallest wins
+        and is reported with its basis.  The deadline always bounds it."""
+        last = prows[-1] if prows else {}
+        cands = {}
+        if active and hb.get("phase_wall_s") is not None and hb.get("phase_budget_s"):
+            cands["deadline"] = max(0.0, float(hb["phase_budget_s"]) - float(hb["phase_wall_s"]))
+        if (spec or {}).get("schedule", "time") != "time" and last.get("total"):
+            rate = cls._rate(prows, "step")
+            if rate:
+                cands["steps"] = max(0, int(last["total"]) - int(last.get("step") or 0)) / rate
+        target = (((spec or {}).get("extra") or {}).get("target_passes") or {}).get(phase.get("name"))
+        if target and last.get("passes") is not None:
+            rate = cls._rate(prows, "passes")
+            if rate:
+                cands["target_passes"] = max(0.0, float(target) - float(last["passes"])) / rate
+        if not cands and last.get("total") and last.get("step_s"):
+            cands["steps"] = max(0, int(last["total"]) - int(last.get("step") or 0)) * float(last["step_s"])
+        if not cands:
+            return {}
+        basis = min(cands, key=cands.get)
+        out = {"remaining_s": cands[basis], "basis": basis}
+        if "deadline" in cands and basis != "deadline":
+            out["deadline_remaining_s"] = cands["deadline"]
+        return out
+
+    @classmethod
+    def _progress(cls, spec: dict | None, status: dict, latest: dict | None, rows: list[dict]) -> dict:
         phases = (spec or {}).get("phases") or []
         hb = status.get("heartbeat") or {}
         budget_h = float((spec or {}).get("budget_hours") or 0.0)
@@ -174,6 +229,11 @@ class RunMonitor:
         current = hb.get("phase") or (latest or {}).get("phase")
         names = [p.get("name") for p in phases]
         index = names.index(current) if current in names else 0
+        finished = status.get("state") == "finished"
+        # A clock ETA needs a live process; a stopped or failed run keeps its
+        # remaining time (work left at the measured rate) but no end time.
+        moving = status.get("state") in ("running", "starting", "evaluating", "checkpointing")
+        now = time.time()
         out = []
         for i, phase in enumerate(phases):
             prows = [r for r in rows if r.get("phase") == phase.get("name") and "event" not in r]
@@ -181,20 +241,48 @@ class RunMonitor:
             entry = {"name": phase.get("name"), "budget_h": round(train_s * float(phase.get("budget_fraction", 0)) / 3600, 2),
                      "step": last.get("step", 0), "total": last.get("total"),
                      "state": "complete" if i < index else ("active" if i == index else "pending")}
-            if i == index and status.get("state") == "finished":
+            if i == index and finished:
                 entry["state"] = "complete"
+            if last.get("passes") is not None:
+                entry["passes"] = last["passes"]
             out.append(entry)
         result = {"phases": out, "current": current, "budget_hours": budget_h, "train_budget_hours": round(train_s / 3600, 2)}
         if hb.get("phase_wall_s") is not None and hb.get("phase_budget_s"):
             result["phase_fraction"] = min(1.0, float(hb["phase_wall_s"]) / float(hb["phase_budget_s"]))
-            result["phase_remaining_s"] = max(0.0, float(hb["phase_budget_s"]) - float(hb["phase_wall_s"]))
         elif latest and latest.get("total"):
             result["phase_fraction"] = min(1.0, latest["step"] / max(1, latest["total"]))
-            result["phase_remaining_s"] = max(0, latest["total"] - latest["step"]) * float(latest.get("step_s") or 0)
-        if result.get("phase_remaining_s") is not None:
-            later = sum(e["budget_h"] for e in out[index + 1:]) * 3600
-            result["run_remaining_s"] = result["phase_remaining_s"] + later + budget_h * 3600 * reserve
-            result["eta"] = datetime.fromtimestamp(time.time() + result["run_remaining_s"]).isoformat(timespec="minutes")
+        if not finished and out:
+            cur_rows = [r for r in rows if r.get("phase") == current and "event" not in r]
+            eta = cls._phase_eta(phases[index], cur_rows, hb, True, spec)
+            if eta:
+                result["phase_remaining_s"] = eta["remaining_s"]
+                result["eta_basis"] = eta["basis"]
+                if "deadline_remaining_s" in eta:
+                    result["phase_deadline_remaining_s"] = eta["deadline_remaining_s"]
+                out[index]["remaining_s"] = round(eta["remaining_s"], 1)
+                if moving:
+                    out[index]["eta"] = datetime.fromtimestamp(now + eta["remaining_s"]).isoformat(timespec="minutes")
+                out[index]["eta_basis"] = eta["basis"]
+                # A phase that ends before its deadline hands the rest of its
+                # time to the next one (deadlines are fixed from the run start),
+                # so later phases are bounded by their deadlines; the run ends
+                # at the last one plus the final-eval reserve.
+                cursor = eta["remaining_s"]
+                slack = max(0.0, eta.get("deadline_remaining_s", eta["remaining_s"]) - eta["remaining_s"])
+                for j in range(index + 1, len(out)):
+                    span = out[j]["budget_h"] * 3600 + slack
+                    target = (((spec or {}).get("extra") or {}).get("target_passes") or {}).get(out[j]["name"])
+                    out[j]["remaining_s"] = round(cursor + span, 1)
+                    if moving:
+                        out[j]["eta"] = datetime.fromtimestamp(now + cursor + span).isoformat(timespec="minutes")
+                    out[j]["eta_basis"] = "deadline" if not target else "deadline (target_passes may end it earlier)"
+                    cursor += span
+                    slack = 0.0
+                result["run_remaining_s"] = cursor + budget_h * 3600 * reserve
+                if moving:
+                    result["eta"] = datetime.fromtimestamp(now + result["run_remaining_s"]).isoformat(timespec="minutes")
+                else:
+                    result["eta_paused"] = status.get("state")
         if hb.get("run_wall_s") is not None:
             result["run_wall_s"] = hb["run_wall_s"]
         return result

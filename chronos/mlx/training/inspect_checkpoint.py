@@ -55,11 +55,13 @@ def _phase(spec: dict, state: dict) -> dict:
 
 
 def held_out(spec, config, model, phase, n_batches: int = 8) -> dict:
-    from chronos.mlx.training.longrun import PretrainSource, SFTSource, recurrent_metrics, routing_metrics
+    from chronos.mlx.training.longrun import (PretrainSource, RoutingCounts, SFTSource, recurrent_metrics,
+                                              token_mask_for)
     from chronos.mlx.training.trainer import _collect_router_probs
     source = (PretrainSource(spec["shards_dir"], phase["seq_len"], spec["seed"]) if phase["name"] == "pretrain"
               else SFTSource(spec["shards_dir"], spec["seed"]))
     total, count, extra = 0.0, 0, {}
+    routes, top_k = RoutingCounts(), int(config.num_experts_per_tok)
     for i, (ids, labels) in enumerate(source.valid_batches(n_batches, phase["micro_tokens"])):
         logits, _, _ = model(mx.array(ids, dtype=mx.int32), logits_dtype=mx.float32)
         lb = mx.array(labels, dtype=mx.int32).reshape(-1)
@@ -69,11 +71,12 @@ def held_out(spec, config, model, phase, n_batches: int = 8) -> dict:
         s, n = (ce * mask).sum(), mask.sum()
         mx.eval(s, n)
         total, count = total + float(s.item()), count + int(n.item())
+        routes.add(_collect_router_probs(model), top_k, token_mask_for(labels))   # real tokens, every batch
         if i == 0:
-            extra = {**routing_metrics(_collect_router_probs(model), int(config.num_experts_per_tok)),
-                     **recurrent_metrics(getattr(model, "last_recurrent_state", None))}
+            extra = recurrent_metrics(getattr(model, "last_recurrent_state", None))
     ce = total / max(count, 1)
-    return {"valid_ce": round(ce, 4), "valid_ppl": round(math.exp(min(ce, 30)), 2), "valid_tokens": count, **extra}
+    return {"valid_ce": round(ce, 4), "valid_ppl": round(math.exp(min(ce, 30)), 2), "valid_tokens": count,
+            **routes.summary(top_k), **extra}
 
 
 def greedy(model, tok, prompt_ids: list[int], stop_ids: set[int], limit: int) -> list[int]:

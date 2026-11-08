@@ -180,3 +180,57 @@ def cluster_locality_config(model_config: dict, shards_dir: str | None, *, enabl
         wsrc = "default (no SFT record lengths in the data)"
     return {"values": values, "source": {"lambda_cluster_locality": why, "cluster_locality_window": wsrc,
                                          "cluster_locality_clusters": "user value" if clusters else "ceil(E / 2k)"}}
+
+
+# ---- cluster objective: unit of "one stream" --------------------------------
+# "window": fixed ``cluster_locality_window``-token windows (the original form).
+# "segment": the documents of the batch, found from the token stream itself
+# (``SEGMENT_BOUNDARY_ID`` separators of packed pretraining, one record per SFT
+# row); documents longer than ``cluster_locality_window`` are cut into parts.
+CLUSTER_MODES = ("window", "segment")
+SEGMENT_BOUNDARY_ID = 0   # ``<|endoftext|>`` in Chronos tokenizers: document separator / padding
+
+
+def cluster_locality_mode(config) -> str:
+    mode = str(getattr(config, "cluster_locality_mode", "window") or "window")
+    if mode not in CLUSTER_MODES:
+        raise ValueError(f"cluster_locality_mode must be one of {CLUSTER_MODES}, got {mode!r}")
+    return mode
+
+
+def segment_ids(input_ids, chunk: int = 0, boundary_id: int = SEGMENT_BOUNDARY_ID):
+    """``[B, S]`` int64 document index of every position, from the tokens alone.
+
+    A separator ``boundary_id`` closes the document it ends (so does each pad
+    of a right-padded row; ``token_mask`` removes those from the loss).
+    ``chunk`` > 0 cuts a document into ``chunk``-token parts.  Ids increase
+    along each row; rows are told apart by ``segment_index``.  No label,
+    prompt template or task token is consulted: what a document contains is
+    left for the router to discover."""
+    import numpy as np
+    ids = np.asarray(input_ids)
+    B, S = ids.shape
+    is_bnd = ids == int(boundary_id)
+    doc = np.zeros((B, S), np.int64)
+    if S > 1:
+        doc[:, 1:] = np.cumsum(is_bnd[:, :-1], axis=1)
+    if int(chunk or 0) <= 0:
+        return doc
+    pos = np.arange(S)[None, :]
+    first = np.ones((B, S), bool)
+    first[:, 1:] = doc[:, 1:] != doc[:, :-1]
+    start = np.maximum.accumulate(np.where(first, pos, 0), axis=1)
+    key = doc * S + (pos - start) // int(chunk)
+    new = np.zeros((B, S), np.int64)
+    new[:, 1:] = key[:, 1:] != key[:, :-1]
+    return np.cumsum(new, axis=1)
+
+
+def segment_index(segments):
+    """``(inverse [B*S] int32, n)``: dense batch-wide segment number of each position."""
+    import numpy as np
+    seg = np.asarray(segments, np.int64)
+    B, S = seg.shape
+    flat = (seg + np.arange(B, dtype=np.int64)[:, None] * (S + 1)).reshape(-1)
+    uniq, inv = np.unique(flat, return_inverse=True)
+    return inv.astype(np.int32).reshape(-1), int(uniq.size)

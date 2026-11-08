@@ -1281,13 +1281,15 @@ class TrainSession:
 
             requested_backend = (cfg.get("train_backend") or "auto").strip().lower() or "auto"
             resolved_backend, device = resolve_training_device(requested_backend)
-            if resolved_backend == "mlx" and model_cfg.modalities:
+            if resolved_backend == "mlx" and model_cfg.modalities and mode not in {"pretrain", "sft"}:
+                # MLX trains the image/audio encoders and fusion in pretrain/SFT;
+                # the preference and distillation stages stay on PyTorch.
                 if requested_backend != "auto":
-                    raise ValueError("MLX 尚未实现多模态编码器训练，请选择 auto 或 PyTorch MPS/CUDA 后端。")
+                    raise ValueError(f"MLX 多模态训练目前支持 pretrain/sft；{mode} 请选择 auto 或 PyTorch MPS/CUDA 后端。")
                 supported = set(training_available())
                 target = next(name for name in ("cuda", "xpu", "mps", "cpu") if name in supported)
                 resolved_backend, device = resolve_training_device(target)
-                self._put(f"[data] Modalities {model_cfg.modalities}: using {resolved_backend} for encoder training.")
+                self._put(f"[data] Modalities {model_cfg.modalities}: using {resolved_backend} for {mode}.")
             cfg["train_backend"] = requested_backend
             cfg["device"] = device
             cfg["dtype"] = _normalize_dtype_for_trainer(cfg.get("dtype"))
@@ -1871,6 +1873,7 @@ class TrainSession:
                         )
                         loss = chronos_loss_term(
                             model, out.loss, lp, model_cfg, aux_loss=out.aux_loss,
+                            input_ids=input_ids, labels=labels,
                         )
                         # Logging-only: detached probs are fine here.
                         router_4d_det = collect_router_probs(model, with_grad=False)

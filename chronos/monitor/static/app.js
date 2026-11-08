@@ -18,7 +18,7 @@ const STR = {
     n_stale: "最近 {age} 没有新的日志行（正常间隔约 {int}）。训练进程可能卡住或被挂起。",
     n_derived: "此运行由旧版代码启动，没有 status.json / parameters.jsonl。状态由指标流和进程表推断；张量统计、路由热图和评测探针会在下次以新代码恢复（resume）后出现。",
     n_error: "运行报告错误：", n_paused: "训练进程处于 SIGSTOP 挂起状态，恢复后会继续。", n_none: "没有找到运行目录。用 chronos longrun 启动训练后，这里会自动出现。",
-    phase: "阶段", step: "步", of: "/", budget: "预算", remaining: "剩余", eta: "预计完成", wall: "已用", elapsed: "已运行",
+    phase: "阶段", step: "步", of: "/", budget: "预算", remaining: "剩余", eta: "预计完成", basis_deadline: "按时间预算", basis_steps: "按步数进度", basis_target_passes: "按数据轮次进度", phase_eta: "本阶段预计 {t}", wall: "已用", elapsed: "已运行",
     ph_complete: "完成", ph_active: "进行中", ph_pending: "未开始", pretrain: "预训练", sft: "SFT",
     k_loss: "训练损失", k_ce: "主损失 (CE)", k_valid: "最佳验证 CE", k_tps: "吞吐", k_eta: "预计完成", k_mem: "内存",
     k_grad: "梯度范数", k_depth: "平均循环深度", k_lr: "学习率", k_route: "路由熵",
@@ -60,7 +60,7 @@ const STR = {
     n_stale: "No new log line for {age} (usual interval about {int}). The trainer may be stuck or suspended.",
     n_derived: "This run was started by older code and writes no status.json / parameters.jsonl. Status is derived from the metric stream and the process table; tensor stats, routing heatmaps and evaluation probes appear after the next resume with the new code.",
     n_error: "The run reported an error: ", n_paused: "The trainer is suspended (SIGSTOP) and will continue when resumed.", n_none: "No run directories found. Runs started with chronos longrun show up here.",
-    phase: "Phase", step: "step", of: "/", budget: "budget", remaining: "remaining", eta: "ETA", wall: "used", elapsed: "Elapsed",
+    phase: "Phase", step: "step", of: "/", budget: "budget", remaining: "remaining", eta: "ETA", basis_deadline: "by time budget", basis_steps: "by step progress", basis_target_passes: "by data-pass progress", phase_eta: "phase ends ~{t}", wall: "used", elapsed: "Elapsed",
     ph_complete: "complete", ph_active: "active", ph_pending: "pending", pretrain: "Pretrain", sft: "SFT",
     k_loss: "Training loss", k_ce: "Primary loss (CE)", k_valid: "Best valid CE", k_tps: "Throughput", k_eta: "ETA", k_mem: "Memory",
     k_grad: "Grad norm", k_depth: "Mean recurrent depth", k_lr: "Learning rate", k_route: "Routing entropy",
@@ -310,7 +310,8 @@ function renderProgress() {
   const p = snap.progress || {};
   const latest = snap.latest || {};
   const pct = isNum(p.phase_fraction) ? ` · ${(p.phase_fraction * 100).toFixed(1)}%` : "";
-  const right = [p.eta ? `${tr("eta")} ${fmtTime(p.eta)}` : null,
+  const basis = (b) => (b ? tr("basis_" + String(b).split(" ")[0]) : "");
+  const right = [p.eta ? `${tr("eta")} ${fmtTime(p.eta)}${p.eta_basis ? ` (${basis(p.eta_basis)})` : ""}` : null,
     isNum(p.run_remaining_s) ? `${tr("remaining")} ${fmtDur(p.run_remaining_s)}` : null,
     isNum(p.run_wall_s) ? `${tr("wall")} ${fmtDur(p.run_wall_s)}` : null,
     isNum(p.budget_hours) && p.budget_hours ? `${tr("budget")} ${p.budget_hours} h` : null].filter(Boolean).join(" · ");
@@ -330,7 +331,8 @@ function renderProgress() {
       h("div", { class: "track", role: "progressbar", "aria-label": phaseName(ph.name), "aria-valuemin": "0",
         "aria-valuemax": "100", "aria-valuenow": String(Math.round(frac * 100)) }, fill),
       h("b", { text: phaseName(ph.name) }), ` ${tr("ph_" + ph.state)} · ${ph.budget_h} h`,
-      ph.total ? ` · ${fmtInt(ph.step)}/${fmtInt(ph.total)}` : ""));
+      ph.total ? ` · ${fmtInt(ph.step)}/${fmtInt(ph.total)}` : "",
+      ph.eta && ph.state !== "complete" ? ` · ${tr("phase_eta", { t: fmtTime(ph.eta) })}` : ""));
   }
   box.append(phases);
 }
@@ -369,7 +371,8 @@ function renderTiles() {
   tile(tr("k_valid"), best ? fmt(best.valid_ce) : "—", best ? `${tr("sub_at", { s: fmtInt(best.step) })} · ${tr("sub_ppl", { v: fmt(Math.exp(best.valid_ce), 3) })}` : null);
   tile(tr("k_tps"), isNum(L.tokens_per_s) ? `${fmtCount(L.tokens_per_s)} tok/s` : "—",
     isNum(L.processed_tokens_per_s) ? tr("sub_proc", { v: fmtCount(L.processed_tokens_per_s) }) : null, "tokens_per_s");
-  tile(tr("k_eta"), p.eta ? fmtTime(p.eta) : "—", isNum(p.run_remaining_s) ? tr("sub_left", { v: fmtDur(p.run_remaining_s) }) : null);
+  tile(tr("k_eta"), p.eta ? fmtTime(p.eta) : (p.eta_paused ? tr(`st_${p.eta_paused}`) : "—"),
+    isNum(p.run_remaining_s) ? tr("sub_left", { v: fmtDur(p.run_remaining_s) }) : null);
   const osMem = isNum(mem.footprint_gb);            // live process footprint has no history; MLX peak does
   tile(tr("k_mem"), osMem ? fmtGB(mem.footprint_gb) : fmtGB(L.peak_mem_gb),
     `${osMem ? tr("sub_footprint") + " · " : ""}${tr("sub_peak", { v: fmtGB(L.peak_mem_gb), a: fmtGB(L.active_mem_gb) })}`, osMem ? null : "peak_mem_gb");

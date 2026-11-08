@@ -116,6 +116,42 @@ def cluster_locality_loss(
     return 1.0 - mutual / log_c
 
 
+def segment_cluster_loss(router_4d: torch.Tensor, membership: torch.Tensor, segments,
+                         token_mask: torch.Tensor | None = None) -> torch.Tensor:
+    """``1 − I(segment; cluster)/log C`` with the batch's documents as streams.
+
+    ``segments`` ``[B, S]`` is ``chronos.expert_clusters.segment_ids(input_ids,
+    window)``: documents found from the tokens' own separators, long ones cut
+    into window-sized parts.  Each segment's cluster mass is averaged over its
+    real tokens (``token_mask``, default all) and every dispatch; segments
+    weigh by real-token count.  A fixed window that straddles two packed
+    documents rewards routing both into one cluster, so the split it learns
+    can follow position instead of content; with documents as the unit, the
+    way to keep each one inside a cluster while the batch spreads over all
+    clusters is to send similar documents to the same cluster.
+    """
+    from chronos.expert_clusters import segment_index
+    if router_4d is None or router_4d.dim() != 4:
+        return torch.tensor(0.0)
+    B, S, V, E = router_4d.shape
+    C = int(membership.shape[1])
+    inv, n = segment_index(segments)
+    if C <= 1 or n <= 1:
+        return router_4d.new_zeros(())
+    mass = torch.einsum("bsve,ec->bsc", router_4d.float(),
+                        membership.to(router_4d.device, torch.float32)).reshape(B * S, C) / V
+    m = (torch.ones(B * S, device=router_4d.device) if token_mask is None
+         else token_mask.reshape(B * S).to(router_4d.device, torch.float32))
+    idx = torch.as_tensor(inv, device=router_4d.device, dtype=torch.long)
+    total = mass.new_zeros(n, C).index_add(0, idx, mass * m[:, None])
+    count = mass.new_zeros(n).index_add(0, idx, m)
+    ps = total / count.clamp_min(1.0)[:, None]
+    weight = count / count.sum().clamp_min(1.0)
+    marginal = (ps * weight[:, None]).sum(dim=0)
+    mutual = _entropy(marginal) - (_entropy(ps) * weight).sum()
+    return 1.0 - mutual / math.log(C)
+
+
 def cluster_routing_metrics(router_4d: torch.Tensor, membership: torch.Tensor, top_k: int,
                             window: int = 0) -> dict[str, float]:
     """Detached diagnostics of the cluster constraint (normalised entropies, clusters touched)."""

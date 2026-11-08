@@ -118,6 +118,62 @@ class ChronosMLXMOE(nn.Module):
     def _shared_out(self, x: mx.array) -> mx.array:
         return sum(e(x) for e in self.shared_experts) / len(self.shared_experts)
 
+    def _resolve_live(self, i: int, python_avail: set) -> bool:
+        """Materialize selected expert ``i`` under the miss policy; True = real weights.
+
+        Same decisions as the per-expert loop: a miss under ``sync_on_demand``
+        loads synchronously (or raises); other policies fall back to the shared expert."""
+        policy = getattr(self, "runtime_miss_policy", "")
+        loader = getattr(self, "runtime_on_demand_loader", None)
+        sync = loader is not None and policy == "sync_on_demand"
+        live = i in python_avail or (sync and bool(loader(int(i))))
+        if live and isinstance(self.experts[i], LazyFeedForwardMLX):
+            if sync:
+                loader(int(i))
+            if isinstance(self.experts[i], LazyFeedForwardMLX):
+                if policy == "sync_on_demand":
+                    raise RuntimeError(f"MLX lazy expert {i} was selected but not materialized")
+                return False
+        if not live:
+            if policy == "sync_on_demand":
+                raise RuntimeError(f"MLX lazy expert {i} could not be loaded on demand")
+            return False
+        touch = getattr(self, "runtime_touch_expert", None)
+        if touch is not None:
+            touch(int(i))
+        return True
+
+    def _lazy_grouped(self, x_flat, topk_idx, topk_weight, selected_host, python_avail, shared_out):
+        """Lazy/offload MoE through ``grouped_swiglu`` over the live experts only.
+
+        The full-memory path runs the same kernel, so a lazy decode reproduces
+        the full decode instead of re-rounding through the per-expert loop
+        (bf16 on the GPU: a different summation order flips near-tied greedy
+        tokens).  Routed ids are remapped into a compact stack of the live
+        experts; a miss maps to a spare slot whose output the shared expert
+        replaces (the loop path's fallback)."""
+        selected = [i for i, s in enumerate(selected_host) if s]
+        live, experts = [], []
+        for i in selected:
+            if self._resolve_live(i, python_avail):
+                # Take the module now: loading the next selected expert may
+                # evict this one from the hot set (its weights stay valid).
+                live.append(i)
+                experts.append(self.experts[i])
+        if not live:
+            # Every routed slot missed: each is served by the shared output.
+            return shared_out + shared_out * topk_weight.sum(axis=-1, keepdims=True).astype(shared_out.dtype)
+        remap = [len(live)] * self.num_experts
+        for j, i in enumerate(live):
+            remap[i] = j
+        fallback = None
+        if len(live) < len(selected):
+            experts.append(experts[0])                     # spare slot; its output is replaced
+            fallback = (mx.arange(len(experts)) < len(live), shared_out)
+        local = mx.array(remap, dtype=mx.int32)[topk_idx]
+        routed = grouped_swiglu(x_flat, local, topk_weight, *stack_expert_weights(experts), fallback=fallback)
+        return routed + shared_out
+
     def __call__(
         self,
         x: mx.array,
@@ -195,6 +251,9 @@ class ChronosMLXMOE(nn.Module):
                 selected_host = hit.tolist()
                 # Read by residency planners from the runtime hooks below.
                 object.__setattr__(self, "_selected_host", selected_host)
+                if self.sparse_dispatch and len(self.shared_experts) > 0 and _sparse_ok(x_flat.dtype):
+                    y = self._lazy_grouped(x_flat, topk_idx, topk_weight, selected_host, python_avail, shared_out)
+                    return y.reshape(B, S, H)
 
             for i, expert in enumerate(self.experts):
                 sel = (topk_idx == i)

@@ -208,6 +208,11 @@ class ChronosConfig(MiniMindConfig):
         self.lambda_cluster_locality: float = kwargs.pop("lambda_cluster_locality", 0.0)
         self.cluster_locality_clusters: int = kwargs.pop("cluster_locality_clusters", 0)
         self.cluster_locality_window: int = kwargs.pop("cluster_locality_window", 32)
+        # Unit of the constraint: "window" (fixed windows above) or "segment"
+        # (the batch's documents, read from the tokens' own separators; a
+        # document longer than the window is cut into window-sized parts).
+        # Neither consults labels or task tokens.
+        self.cluster_locality_mode: str = str(kwargs.pop("cluster_locality_mode", "window") or "window")
         # M4: weight on the router KL anchor (alignment stages only).
         # Prevents SFT/DPO/ORPO/GRPO gradients from drifting routing away
         # from the pretrained distribution that the cluster layout was

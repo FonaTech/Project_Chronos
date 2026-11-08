@@ -25,18 +25,18 @@ while 0.3.1 is in beta) or from the same checkout.
 
 ```sh
 git clone https://github.com/FonaTech/Project_Chronos.git && cd Project_Chronos
-pip install -e '.[mlx,serve]'               # the kernel (or: pip install --pre 'Project_Chronos[mlx,serve]==0.3.1a2')
+pip install -e '.[mlx,serve]'               # the kernel (or: pip install --pre 'Project_Chronos[mlx,serve]==0.3.1a3')
 pip install -e demos/translation            # this extension (sacrebleu, sacremoses, pyarrow pinned)
 chronos-translate --version
 ```
 
-The extension pins `Project_Chronos==0.3.1a2`. Use the checkout's tag
-(`git checkout v0.3.1a2`) so both sides match. A model bundle needs the two
+The extension pins `Project_Chronos==0.3.1a3`. Use the checkout's tag
+(`git checkout v0.3.1a3`) so both sides match. A model bundle needs the two
 as wheels; build them from the checkout:
 
 ```sh
-python -m build --outdir dist .                     # dist/project_chronos-0.3.1a2-py3-none-any.whl
-python -m build --outdir dist demos/translation     # dist/chronos_translate-0.3.1a2-py3-none-any.whl
+python -m build --outdir dist .                     # dist/project_chronos-0.3.1a3-py3-none-any.whl
+python -m build --outdir dist demos/translation     # dist/chronos_translate-0.3.1a3-py3-none-any.whl
 ```
 
 The extension's tests run from the repo root: `pytest demos/translation/tests`.

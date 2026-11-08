@@ -286,6 +286,12 @@ verify results. Stop is cooperative at batch boundaries and save intervals
 write a valid `.pth` plus sibling `.config.json`, so MLX stages can resume or
 feed the PyTorch/export pipeline.
 
+Memory, media and tools on MLX:
+
+- Every MLX model caps the MLX buffer cache at `min(RAM/8, 16 GiB)` before it allocates weights (`chronos.mlx.memory`). A recipe's `extra.mlx_cache_limit_gb` or `CHRONOS_MLX_CACHE_LIMIT_GB` may lower the cap, never raise it. The cap bounds reclaimable cache only; weights, activations and gradients are not limited.
+- Image and audio encoders and the gated cross-attention fusion run on MLX in pretrain and SFT, with the same weights and numerics as PyTorch (`chronos.mlx.multimodal`). DPO, ORPO, GRPO and distillation with media still use PyTorch.
+- Tool-call SFT: the chat template renders `tools`, assistant `tool_calls` and `tool` results. `chronos.data.chat_records.encode_chat` gives each token a loss flag (assistant text and calls are learned, everything else is context), and `write_sft_records` writes `.lmask` shards that `SFTRecords` reads.
+
 The full six-stage comparison harness lives in `tools/compare_minimind_chronos_v3.py`.
 
 ---
@@ -565,7 +571,7 @@ Bundles belong to the translation extension (`demos/translation`). Build the two
 
 ```bash
 chronos-translate bundle build --run-dir runs/enzh_50m_v1 --which best --pack \
-    --wheel dist/project_chronos-0.3.1a2-py3-none-any.whl --wheel dist/chronos_translate-0.3.1a2-py3-none-any.whl
+    --wheel dist/project_chronos-0.3.1a3-py3-none-any.whl --wheel dist/chronos_translate-0.3.1a3-py3-none-any.whl
 ```
 
 | Bundle path | Content |
