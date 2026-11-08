@@ -55,3 +55,16 @@ def test_shipped_settings_agree():
     assert generation["do_sample"] is False and generation["max_source_tokens"] == 128
     config = json.load(open(os.path.join(ROOT, "config.json"), encoding="utf-8"))
     assert config["vocab_size"] == 16384 and not any("/Users/" in str(v) for v in config.values())
+
+
+def test_chinese_input_is_refused_before_loading_weights(capsys, tmp_path):
+    missing = str(tmp_path / "absent.safetensors")
+    assert T.main(["--weights", missing, "今天天气很好。"]) == 2
+    assert "refused" in capsys.readouterr().err
+
+
+def test_failed_download_leaves_no_partial_file(tmp_path):
+    part = tmp_path / "w.part"
+    with pytest.raises(RuntimeError, match="download failed"):
+        T._fetch("http://127.0.0.1:9/absent", str(part))
+    assert not part.exists()
