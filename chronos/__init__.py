@@ -1,5 +1,5 @@
 # Project Chronos: On-device low-latency lookahead dual-layer MoE inference
-__version__ = "0.3.2a1"
+__version__ = "0.3.2a2"
 
 # Register with HuggingFace AutoXXX factories so
 # AutoModelForCausalLM.from_pretrained("path/to/chronos") works out of the box.

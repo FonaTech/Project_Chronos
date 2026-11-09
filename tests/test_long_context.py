@@ -363,3 +363,107 @@ def test_torch_recompute_policy_selects_expected_layers():
     for policy, want in expect.items():
         model.config.recompute_policy = policy
         assert [model._recompute_block(layer) for layer in model.layers] == want
+
+
+# ---- 0.3.2a2: narrow recompute scope and MLA up-projection recompute ----
+
+@pytest.mark.parametrize("miss", [0.0, 0.4])
+def test_mlp_scope_recompute_keeps_loss_and_gradients(miss):
+    from chronos.mlx.training.trainer import _ce_stage_loss
+    ref_cfg = _config(fallback_mask_prob=miss)
+    sub_cfg = _config(fallback_mask_prob=miss, activation_checkpointing=True, recompute_scope="mlp")
+    ids, labels = _batch(ref_cfg)
+    mx.random.seed(5)
+    a = _grads(_model(ref_cfg), _ce_stage_loss, ids, labels)
+    mx.random.seed(5)
+    b = _grads(_model(sub_cfg), _ce_stage_loss, ids, labels)
+    _grad_equal(a, b, tol=5e-4)
+
+
+def test_recompute_scope_is_validated_and_registered():
+    from chronos.config_schema import MODEL_FIELDS
+    assert _config().recompute_scope == "block"
+    with pytest.raises(ValueError):
+        _config(recompute_scope="attention")
+    assert {"recompute_scope", "mla_upproj_recompute"} <= set(MODEL_FIELDS)
+
+
+@pytest.mark.parametrize("segments", [False, True])
+def test_mla_upproj_recompute_equals_expanded_kv(segments):
+    from chronos.mlx.training.trainer import _ce_stage_loss
+    kw = dict(attention_block_size=8, rope_layout="per_head", document_masking=segments)
+    ref_cfg, up_cfg = _config(**kw), _config(mla_upproj_recompute=True, **kw)
+    ids, labels = _batch(ref_cfg)
+    if segments:
+        ids = mx.where(mx.arange(ids.shape[1])[None, :] % 13 == 12, 0, ids)
+    _grad_equal(_grads(_model(ref_cfg), _ce_stage_loss, ids, labels),
+         _grads(_model(up_cfg), _ce_stage_loss, ids, labels))
+
+
+def _flat_grads(cfg):
+    from chronos.mlx.training.trainer import _ce_stage_loss
+    ids, labels = _batch(cfg)
+    return _grads(_model(cfg), _ce_stage_loss, ids, labels)[1]
+
+
+def test_lookahead_input_detach_keeps_loss_and_cuts_trunk_gradient():
+    kw = dict(lambda_lookahead=5.0, lambda_lookahead_topk=0.0, lambda_lookahead_union=0.0,
+            lambda_temporal=0.0, lambda_router_locality=0.0, lambda_balance=0.0, ponder_loss_coef=0.0)
+    off = _flat_grads(_config(lookahead_input_detach=False, **kw))
+    on = _flat_grads(_config(lookahead_input_detach=True, **kw))
+    router = [n for n in off if 'lookahead_router' in n]
+    assert router
+    for n in router:     # the router keeps its full gradient
+        assert _rel(off[n], on[n]) < 1e-5, n
+    # the trunk loses the router's gradient path: some trunk tensor changes beyond rounding
+    trunk = [n for n in off if 'lookahead_router' not in n]
+    assert max(_rel(off[n], on[n]) for n in trunk) > 1e-4
+
+
+def test_temporal_grad_span_changes_only_gradients():
+    import numpy as np
+    from chronos.mlx.training import trainer as T
+    mx.random.seed(3)
+    probs = mx.softmax(mx.random.normal((2, 40, 6)), axis=-1)
+    loss = lambda p: T._temporal_locality_loss(p)       # noqa: E731
+    T._TEMPORAL_SPAN[0] = 0
+    full_v, full_g = mx.value_and_grad(loss)(probs)
+    T._TEMPORAL_SPAN[0] = 8
+    try:
+        span_v, span_g = mx.value_and_grad(loss)(probs)
+    finally:
+        T._TEMPORAL_SPAN[0] = 0
+    mx.eval(full_v, full_g, span_v, span_g)
+    assert float(full_v.item()) == pytest.approx(float(span_v.item()), rel=1e-6)   # the value is identical
+    diff = np.abs(np.array(full_g) - np.array(span_g))
+    assert diff.max() > 1e-6     # the gradient is cut
+    assert np.allclose(np.array(span_g)[:, 1:7], np.array(full_g)[:, 1:7], atol=1e-6)   # inside a block it is intact
+
+
+def test_new_lookahead_fields_are_registered():
+    from chronos.config_schema import MODEL_FIELDS
+    assert {"lookahead_input_detach", "temporal_grad_span"} <= set(MODEL_FIELDS)
+    assert _config().lookahead_input_detach is False and _config().temporal_grad_span == 0
+
+
+def test_segment_ids_mx_matches_numpy_and_traces_under_compile():
+    import numpy as np
+    from chronos.expert_clusters import segment_ids, segment_ids_mx
+    ids = np.random.default_rng(0).integers(0, 5, size=(3, 41))
+    assert np.array_equal(np.array(segment_ids_mx(mx.array(ids))), segment_ids(ids))
+    compiled = mx.compile(segment_ids_mx)
+    assert np.array_equal(np.array(compiled(mx.array(ids))), segment_ids(ids))
+
+
+def test_document_resets_work_in_the_compiled_step():
+    from chronos.mlx.training.compiled import make_grad_fn
+    from chronos.mlx.training.trainer import _ce_stage_loss
+    cfg = _config(reset_router_at_documents=True, document_masking=True, attention_block_size=8)
+    ids, labels = _batch(cfg)
+    ids = mx.where(mx.arange(ids.shape[1])[None, :] % 11 == 10, 0, ids)
+    eager = _grads(_model(cfg), _ce_stage_loss, ids, labels)
+    model = _model(cfg)
+    step = make_grad_fn(model, _ce_stage_loss, mode="on", log=lambda m: None)
+    loss, grads = step(model, ids, labels)
+    mx.eval(loss, grads)
+    assert abs(loss.item() - eager[0].item()) < 1e-4

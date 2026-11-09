@@ -21,7 +21,7 @@ import mlx.nn as nn
 from chronos.mlx.checkpointing import Dropout as TapeDropout   # replayed under recomputation
 
 from chronos.mlx.kv_quant import kv_read, kv_store
-from chronos.mlx.blockwise_attention import blockwise_attention, use_blockwise
+from chronos.mlx.blockwise_attention import blockwise_attention, blockwise_mla_attention, use_blockwise
 
 
 def _rope_freqs(
@@ -308,16 +308,22 @@ class MLAAttentionMLX(_RopeCacheMixin, nn.Module):
         if self._use_absorbed(S, T_full):
             out = self._absorbed(q_nope, q_rope, c_kv_full, k_rope, scale, allowed)
         else:
-            k_nope = self.k_nope_proj(c_kv_full).reshape(B, T_full, self.n_kv_heads, self.nope_dim)
-            v = self.v_proj(c_kv_full).reshape(B, T_full, self.n_kv_heads, self.head_dim)
-            q = mx.concatenate([q_nope, q_rope], axis=-1).transpose(0, 2, 1, 3)   # [B, nH, S, d]
-            k = mx.concatenate([k_nope, k_rope], axis=-1).transpose(0, 2, 1, 3)   # [B, nKV, T, d]
             blk = use_blockwise(self._block_cfg, S, T_full, self.training) if mask is None else 0
-            if blk:
-                out = blockwise_attention(q, k, v.transpose(0, 2, 1, 3), scale=scale, window=None, block=blk,
-                                     segments=getattr(self, "_segments", None), past=T_full - S)
+            seg = getattr(self, "_segments", None)
+            q = mx.concatenate([q_nope, q_rope], axis=-1).transpose(0, 2, 1, 3)   # [B, nH, S, d]
+            if blk and self.training and getattr(self._block_cfg, "mla_upproj_recompute", False):
+                # Keep c_kv only: K and V are rebuilt per block (forward and backward).
+                out = blockwise_mla_attention(q, c_kv_full, k_rope, self.k_nope_proj.weight, self.v_proj.weight,
+                  scale=scale, block=blk, segments=seg, past=T_full - S)
             else:
-                out = self._attend(q, k, v.transpose(0, 2, 1, 3), scale, allowed)
+                k_nope = self.k_nope_proj(c_kv_full).reshape(B, T_full, self.n_kv_heads, self.nope_dim)
+                v = self.v_proj(c_kv_full).reshape(B, T_full, self.n_kv_heads, self.head_dim)
+                k = mx.concatenate([k_nope, k_rope], axis=-1).transpose(0, 2, 1, 3)   # [B, nKV, T, d]
+                if blk:
+                    out = blockwise_attention(q, k, v.transpose(0, 2, 1, 3), scale=scale, window=None, block=blk,
+                         segments=seg, past=T_full - S)
+                else:
+                    out = self._attend(q, k, v.transpose(0, 2, 1, 3), scale, allowed)
             out = out.transpose(0, 2, 1, 3)
         out = self.resid_dropout(self.o_proj(out.reshape(B, S, -1)))
         if return_shared_kv:

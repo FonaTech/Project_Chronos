@@ -46,7 +46,7 @@ MODEL_FIELDS = (
     "recommended_resident_experts", "offload_working_set_experts", "storage_format",
     "cluster_manifest_path", "training_paging", "optimizer_paging",
     "optimizer_page_dir", "page_size_mb", "activation_checkpointing", "ce_chunk_size", "attention_block_size",
-    "reset_router_at_documents", "document_masking", "recompute_policy", "moe_chunk_tokens",
+    "reset_router_at_documents", "document_masking", "recompute_policy", "recompute_scope", "lookahead_input_detach", "temporal_grad_span", "moe_chunk_tokens", "mla_upproj_recompute",
     "reset_lookahead_at_documents", "rope_train_scaling",
     "modalities", "auto_detect_modalities", "image_size", "image_patch_size",
     "max_image_tokens", "audio_sample_rate", "max_audio_seconds", "max_audio_tokens",

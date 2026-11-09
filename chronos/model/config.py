@@ -111,6 +111,15 @@ class ChronosConfig(ChronosBaseConfig):
         self.recompute_policy: str = str(kwargs.pop("recompute_policy", "all") or "all").lower()
         if self.recompute_policy not in ("all", "mla", "swa", "alternate"):
             raise ValueError(f"unknown recompute_policy {self.recompute_policy!r}")
+        # What activation_checkpointing recomputes: "block" (a whole block) or "mlp" (only the
+        # MoE/FFN of each block: most saved activations, none of the quadratic attention).
+        # MLX only; recompute_policy applies to scope=block.
+        self.recompute_scope: str = str(kwargs.pop("recompute_scope", "block") or "block").lower()
+        if self.recompute_scope not in ("block", "mlp"):
+            raise ValueError(f"unknown recompute_scope {self.recompute_scope!r}")
+        # MLA training with attention_block_size: keep only the latent c_kv and rebuild K and V
+        # per attention block, in both passes (no [B, T, nKV, d] K/V tensors).  Exact.
+        self.mla_upproj_recompute: bool = bool(kwargs.pop("mla_upproj_recompute", False))
         # MoE sparse dispatch in chunks of this many tokens, each recomputed in the
         # backward pass, so [N*K, I] expert activations never exist for a whole row
         # (0 = one dispatch, the historical path).
@@ -119,7 +128,17 @@ class ChronosConfig(ChronosBaseConfig):
         # reset_router_at_documents; True/False decouples it from the temporal and
         # router-locality terms.
         _lrd = kwargs.pop("reset_lookahead_at_documents", None)
+        if isinstance(_lrd, str):      # web UI tri-state: "" follows the router switch
+            _lrd = None if _lrd.strip() == "" else _lrd.strip().lower() in ("1", "true", "yes", "on")
         self.reset_lookahead_at_documents = None if _lrd is None else bool(_lrd)
+        # Two-stage lookahead decoupling.  True: the LookaheadRouter reads a stop-gradient copy of
+        # the hidden state, so its losses train only the router and add no gradient path
+        # through the backbone (fine-tune the router on a frozen trunk).
+        self.lookahead_input_detach: bool = bool(kwargs.pop("lookahead_input_detach", False))
+        # > 0: the temporal / locality terms keep gradient only for the newer token of a pair
+        # every this-many positions (blocks of that length, the older side is detached), so
+        # no gradient chain crosses a whole row.  0 = full chain (historical).
+        self.temporal_grad_span: int = int(kwargs.pop("temporal_grad_span", 0) or 0)
         # Long-context RoPE for training: {"type": "yarn"|"linear"|"ntk", "factor": f,
         # "original_max_position_embeddings": n, ...}; applied after the base init.
         _rts = kwargs.pop("rope_train_scaling", None)
