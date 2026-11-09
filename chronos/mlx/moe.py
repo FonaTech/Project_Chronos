@@ -79,6 +79,7 @@ class ChronosMLXMOE(nn.Module):
         self.fallback_mask_prob = float(getattr(config, "fallback_mask_prob", 0.0) or 0.0)
         # Sorted gather_mm dispatch (requires mlx >= 0.32.4 on M5-class GPUs).
         self.sparse_dispatch = bool(getattr(config, "moe_sparse_dispatch", True)) and gather_mm_supported()
+        self.chunk_tokens = int(getattr(config, "moe_chunk_tokens", 0) or 0)
         self.runtime_on_demand_loader = None
         self.runtime_touch_expert = None
 
@@ -125,6 +126,39 @@ class ChronosMLXMOE(nn.Module):
     @last_router_probs.setter
     def last_router_probs(self, value):
         object.__setattr__(self, "_last_router_probs", value)
+
+    def _grouped_chunked(self, x_flat, topk_idx, topk_weight, fallback):
+        """Sparse dispatch over the routed experts, in token chunks when
+        ``config.moe_chunk_tokens`` is set and the call is a training forward.
+
+        Each chunk runs under ``mx.checkpoint``: its ``[chunk*K, I]`` gate/up
+        activations are recomputed in the backward pass instead of kept for the
+        whole row.  Routing, weights and the fallback mask are inputs, so every
+        token sees the same experts and the result equals one dispatch (up to
+        summation order inside gather_mm)."""
+        stacks = self._expert_stacks()
+        n = x_flat.shape[0]
+        chunk = self.chunk_tokens
+        if not self.training or chunk <= 0 or n <= chunk:
+            return grouped_swiglu(x_flat, topk_idx, topk_weight, *stacks, fallback=fallback)
+        avail, shared = (None, None) if fallback is None else fallback
+        outs = []
+        prev = None
+        for start in range(0, n, chunk):
+            end = min(n, start + chunk)
+            xs = x_flat[start:end]
+            if prev is not None:
+                xs = mx.depends(xs, prev)   # one chunk's activations live at a time
+            if fallback is None:
+                def part(xc, ic, wc, g, u, d):
+                    return grouped_swiglu(xc, ic, wc, g, u, d)
+                prev = mx.checkpoint(part)(xs, topk_idx[start:end], topk_weight[start:end], *stacks)
+            else:
+                def part(xc, ic, wc, sc, g, u, d):
+                    return grouped_swiglu(xc, ic, wc, g, u, d, fallback=(avail, sc))
+                prev = mx.checkpoint(part)(xs, topk_idx[start:end], topk_weight[start:end], shared[start:end], *stacks)
+            outs.append(prev)
+        return mx.concatenate(outs, axis=0)
 
     def _shared_out(self, x: mx.array) -> mx.array:
         return sum(e(x) for e in self.shared_experts) / len(self.shared_experts)
@@ -237,8 +271,7 @@ class ChronosMLXMOE(nn.Module):
                 # Cache-miss simulation (PyTorch parity): an unavailable routed
                 # expert is served by the shared expert, as at offload inference.
                 fallback = (draw(lambda: training_availability(self.num_experts, self.fallback_mask_prob)), shared)
-            y = grouped_swiglu(x_flat, topk_idx, topk_weight, *self._expert_stacks(),
-                               fallback=fallback)
+            y = self._grouped_chunked(x_flat, topk_idx, topk_weight, fallback)
             if shared is not None:
                 y = y + shared
         elif available_expert_mask is None:

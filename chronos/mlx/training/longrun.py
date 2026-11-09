@@ -47,6 +47,12 @@ class PhaseSpec:
     min_lr_ratio: float = 0.1
     weight_decay: float = 0.1
     grad_clip: float = 1.0
+    # Length curriculum: ``[[progress, seq_len], ...]`` (progress = elapsed fraction
+    # of the phase, ascending).  The window length steps up as the phase advances;
+    # micro_tokens stays fixed, so rows shrink as rows get longer.  None = seq_len.
+    seq_len_curriculum: list | None = None
+    # SFT: join short records into full rows (``seq_len`` tokens) with separators.
+    pack_sft: bool = False
 
 
 @dataclass
@@ -231,7 +237,23 @@ def recurrent_metrics(state: dict | None) -> dict:
     return out
 
 
+def curriculum_seq_len(phase, progress: float) -> int:
+    """Window length for ``progress`` in [0, 1] under ``phase.seq_len_curriculum``."""
+    stages = getattr(phase, "seq_len_curriculum", None)
+    if not stages:
+        return int(phase.seq_len)
+    length = int(stages[0][1])
+    for start, n in stages:
+        if progress >= float(start):
+            length = int(n)
+    return length
+
+
 class PretrainSource:
+    def set_seq_len(self, n: int) -> None:
+        self.stream.seq_len = int(n)
+        self.valid.seq_len = int(n)
+
     def __init__(self, shards_dir, seq_len, seed):
         from chronos.data.shards import PackedTokenStream
         self.stream = PackedTokenStream(os.path.join(shards_dir, "pretrain", "train"), seq_len, seed=seed)
@@ -258,7 +280,8 @@ class PretrainSource:
 
 
 class SFTSource:
-    def __init__(self, shards_dir, seed):
+    def __init__(self, shards_dir, seed, pack_len: int = 0):
+        self.pack_len = int(pack_len or 0)
         from chronos.data.shards import SFTRecords
         self.records = SFTRecords(os.path.join(shards_dir, "sft", "train"), seed=seed)
         self.valid = SFTRecords(os.path.join(shards_dir, "sft", "valid"), seed=seed + 1)
@@ -268,12 +291,16 @@ class SFTSource:
         return ids[:, :-1], labels[:, 1:]                      # labels already -100 outside replies
 
     def batch(self, micro_tokens: int):
+        if self.pack_len:
+            return self._shift(*self.records.packed_batch(micro_tokens, self.pack_len))
         return self._shift(*self.records.batch(micro_tokens))
 
     def valid_batches(self, n: int, micro_tokens: int):
         state = self.valid.rng.bit_generator.state
         self.valid.rng = np.random.default_rng(0)
-        out = [self._shift(*self.valid.batch(micro_tokens)) for _ in range(n)]
+        draw = (lambda: self.valid.packed_batch(micro_tokens, self.pack_len)) if self.pack_len else \
+            (lambda: self.valid.batch(micro_tokens))
+        out = [self._shift(*draw()) for _ in range(n)]
         self.valid.rng.bit_generator.state = state
         return out
 
@@ -441,14 +468,9 @@ class LongRun:
     def _loss_fn(self, model, ids, labels, token_mask=None):
         """CE on supervised labels + Chronos regularizers; ``token_mask`` ``[B, S]``
         (1 = real token) keeps right-padding out of the router regularizers."""
-        from chronos.mlx.training.trainer import _chronos_regularized_loss, draft_exit_kl, draft_exit_logits
+        from chronos.mlx.training.trainer import _chronos_regularized_loss, draft_exit_kl, draft_exit_logits, lm_ce
         draft = draft_exit_logits(model, ids, model.config)       # None unless draft_exit_kl_coef > 0
-        logits, lookahead, _ = model(ids, logits_dtype=mx.float32)
-        lg = logits.reshape(-1, logits.shape[-1])
-        lb = labels.reshape(-1)
-        mask = lb != -100
-        ce = nn.losses.cross_entropy(lg, mx.where(mask, lb, 0), reduction="none")
-        ce = (ce * mask).sum() / mx.maximum(mask.sum(), 1)
+        ce, lookahead, logits = lm_ce(model, ids, labels, aligned=True, need_logits=draft is not None)
         # Labels here are pre-aligned with the logits (no shift).
         draft_kl = None if draft is None else draft_exit_kl(draft, logits, labels != -100)
         return _chronos_regularized_loss(model, ce, lookahead, model.config, metrics={"ce": ce, "primary": ce},
@@ -456,8 +478,8 @@ class LongRun:
 
     def _source(self, phase: PhaseSpec):
         if phase.name == "pretrain":
-            return PretrainSource(self.spec.shards_dir, phase.seq_len, self.spec.seed)
-        return SFTSource(self.spec.shards_dir, self.spec.seed)
+            return PretrainSource(self.spec.shards_dir, max([int(phase.seq_len)] + [int(n) for _, n in (phase.seq_len_curriculum or [])]), self.spec.seed)
+        return SFTSource(self.spec.shards_dir, self.spec.seed, pack_len=phase.seq_len if phase.pack_sft else 0)
 
     def _micro_step(self, grad_fn, ids, labels):
         mask = token_mask_for(labels)
@@ -535,6 +557,8 @@ class LongRun:
             progress = (self.state["phase_wall_s"] / self.state["phase_budget_s"]) if time_based else \
                 step / max(total or 1_000_000, 1)
             controller.set_training_progress(int(progress * 1_000_000), 1_000_000)
+            if phase.name == "pretrain" and phase.seq_len_curriculum:
+                source.set_seq_len(curriculum_seq_len(phase, progress))
             # MLX's global RNG (cache-miss simulation, dropout) cannot be
             # snapshotted, so make each step's randomness a pure function of
             # (seed, phase, step, rollbacks): resume is then bit-exact.

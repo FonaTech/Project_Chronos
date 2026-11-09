@@ -84,9 +84,16 @@ class ChronosBaseConfig(PretrainedConfig):
 
 def _inv_freq(dim: int, base: float, scaling: dict | None, end: int) -> tuple[torch.Tensor, float]:
     cpu = torch.device("cpu")     # explicit: callers may run under ``with torch.device('meta')``
+    kind = str((scaling or {}).get("type", "yarn")).lower()
+    if scaling is not None and kind == "ntk":
+        # NTK-aware: stretch the base so the lowest frequency spans the longer window.
+        base = base * float(scaling.get("factor", 1.0)) ** (dim / max(dim - 2, 1))
     freqs = 1.0 / (base ** (torch.arange(0, dim, 2, device=cpu)[: dim // 2].float() / dim))
     attn_factor = 1.0
-    if scaling is not None:
+    if scaling is not None and kind == "linear":
+        freqs = freqs / float(scaling.get("factor", 1.0))
+        attn_factor = float(scaling.get("attention_factor", 1.0))
+    elif scaling is not None and kind == "yarn":
         # YaRN: f'(i) = f(i) * ((1 - g) + g / s), g a linear ramp over the band.
         orig_max = scaling.get("original_max_position_embeddings", 2048)
         factor = scaling.get("factor", 16)

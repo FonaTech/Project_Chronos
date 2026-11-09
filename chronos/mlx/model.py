@@ -68,6 +68,18 @@ class LookaheadRouterMLX(nn.Module):
 
 
 
+def _recompute_block(cfg, index: int, block) -> bool:
+    """Whether physical block ``index`` is an ``mx.checkpoint`` region under
+    ``config.recompute_policy`` ("all" | "mla" | "swa" | "alternate")."""
+    policy = getattr(cfg, "recompute_policy", "all")
+    if policy == "all":
+        return True
+    if policy == "alternate":
+        return index % 2 == 0
+    is_mla = isinstance(block.self_attn, MLAAttentionMLX)
+    return is_mla if policy == "mla" else not is_mla
+
+
 class ChronosMLXBlock(nn.Module):
     def __init__(self, layer_id: int, config):
         super().__init__()
@@ -160,24 +172,38 @@ class ChronosMLXModel(nn.Module):
         recurrent_depth=None,               # draft depth override (shared_first/first_only)
         modality_inputs=None,               # {"image"|"audio"|"*_embeds"|"*_mask": array}
         modality_mask=None,                 # [B] or [B, 2] (image, audio) presence
+        return_hidden: bool = False,       # skip the LM head (chunked losses)
+        segments=None,        # [B, S] document ids: attention stays in a document
     ):
-        """``logits_dtype=mx.float32`` makes the logits FP32 at birth: the
+        """``segments`` ``[B, S]`` (non-decreasing document ids of a packed row,
+        as ``chronos.expert_clusters.segment_ids`` gives) keeps every attention
+        layer inside the query's own document (document masking for varlen
+        packing).  Rows longer than one block take the blockwise path
+        (``attention_block_size``); shorter ones get an explicit mask.
+
+        ``return_hidden=True`` returns ``(hidden [B,S,H], lookahead, cache)``
+        without the LM head, so a loss never materializes [B,S,V] logits
+        (``chronos.mlx.chunked_ce``).
+
+        ``logits_dtype=mx.float32`` makes the logits FP32 at birth: the
         final hidden [B,S,H] and the head [V,H] are upcast (H/V the size of
         the logits) instead of rounding logits to the compute dtype and
         casting the large [B,S,V] tensor afterwards."""
+        self._set_segments(segments)
         moes = [layer.mlp for layer in self.layers if isinstance(layer.mlp, ChronosMLXMOE)]
         for moe in moes:
             moe.reset_iteration_routing()
             moe.open_pack_scope()
         try:
             return self._forward(input_ids, cache, available_expert_masks, logits_dtype, recurrent_depth,
-                                 modality_inputs, modality_mask)
+                                 modality_inputs, modality_mask, return_hidden)
         finally:
             for moe in moes:
                 moe.close_pack_scope()
+            self._set_segments(None)
 
     def _forward(self, input_ids, cache, available_expert_masks, logits_dtype, depth_override=None,
-                 modality_inputs=None, modality_mask=None):
+                 modality_inputs=None, modality_mask=None, return_hidden=False):
         B, S = input_ids.shape
         x = self.dropout(self.embed_tokens(input_ids))   # [B, S, H]
         object.__setattr__(self, "last_modality_states", {})
@@ -206,7 +232,7 @@ class ChronosMLXModel(nn.Module):
         def run(i, hidden, slot=None, **kw):
             avail = available_expert_masks[i] if available_expert_masks is not None else None
             c = cache[i if slot is None else slot] if "kv_override" not in kw else None
-            if recompute and c is None:
+            if recompute and c is None and _recompute_block(cfg, i, self.layers[i]):
                 return call_block(self.layers[i], hidden, mask=mask, cache=None, available_expert_mask=avail, **kw)
             return self.layers[i](hidden, mask=mask, cache=c, available_expert_mask=avail, **kw)
 
@@ -298,12 +324,24 @@ class ChronosMLXModel(nn.Module):
                     lookahead_probs = self.lookahead_router(x)
 
         x = self.norm(x)
-        head = self.embed_tokens.weight if self.lm_head is None else self.lm_head.weight
+        if return_hidden:
+            return x, lookahead_probs, new_caches
+        head = self.head_weight()
         if logits_dtype is not None and logits_dtype != head.dtype:
             logits = x.astype(logits_dtype) @ head.astype(logits_dtype).T
         else:
             logits = self.embed_tokens.as_linear(x) if self.lm_head is None else self.lm_head(x)
         return logits, lookahead_probs, new_caches
+
+    def _set_segments(self, segments) -> None:
+        """Give every attention layer this forward's document ids (or clear them)."""
+        seg = None if segments is None else mx.stop_gradient(mx.array(segments).astype(mx.int32))
+        for layer in self.layers:
+            object.__setattr__(layer.self_attn, "_segments", seg)
+
+    def head_weight(self) -> mx.array:
+        """The LM head matrix ``[V, H]`` (the embedding when tied)."""
+        return self.embed_tokens.weight if self.lm_head is None else self.lm_head.weight
 
     @staticmethod
     def from_chronos_pytorch(pt_model, config, include_experts: bool = True, dtype: str | None = None):

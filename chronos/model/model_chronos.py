@@ -9,7 +9,7 @@ from .config import ChronosConfig
 from .precision_ops import RMSNorm, lm_head_logits
 from .lookahead_router import LookaheadRouter
 from .moe_chronos import ChronosMOEFeedForward
-from .hybrid_attention import make_attention
+from .hybrid_attention import MLAAttention, make_attention
 from .recurrent import RecurrentController, recurrent_auxiliary_state
 from .outputs import ChronosCausalLMOutput
 from .multimodal import MultimodalFusion
@@ -153,6 +153,17 @@ class ChronosModel(nn.Module):
             config.head_dim, config.max_position_embeddings, config.rope_theta, config.rope_scaling, "cpu")
         self.last_recurrent_state = None
 
+    def _recompute_block(self, layer) -> bool:
+        """Whether ``layer`` is recomputed under ``config.recompute_policy``
+        ("all" | "mla" | "swa" | "alternate"); MLX parity."""
+        policy = getattr(self.config, "recompute_policy", "all")
+        if policy == "all":
+            return True
+        if policy == "alternate":
+            return next(i for i, other in enumerate(self.layers) if other is layer) % 2 == 0
+        is_mla = isinstance(layer.self_attn, MLAAttention)
+        return is_mla if policy == "mla" else not is_mla
+
     def _run_block(
         self, layer, hidden_states, position_embeddings, *, past_key_value=None,
         use_cache=False, attention_mask=None, available_expert_mask=None,
@@ -164,6 +175,7 @@ class ChronosModel(nn.Module):
         if (
             bool(getattr(self.config, "activation_checkpointing", False))
             and self.training and not use_cache and not return_shared_kv
+            and self._recompute_block(layer)
         ):
             from torch.utils.checkpoint import checkpoint
 
