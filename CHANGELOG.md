@@ -2,6 +2,32 @@
 
 ## [Unreleased]
 
+## [0.3.2a2] — 2026-11-09 (beta)
+
+Adds narrower recomputation, two lookahead options and web UI fields for every long-context switch, and fixes a crash found by training on the real corpus. Every new switch is off by default. `reports/long_context_20261109/real_corpus_ab.json` holds the measurements below.
+
+### Added
+- `recompute_scope="mlp"`: with `activation_checkpointing`, recompute only the MoE/FFN of each block (`"block"` recomputes the whole block, as before). At 32k on the real corpus it saves 1.4 GB (5%) and loses 11% speed, against 6.9 GB (25%) and 19% for whole blocks, so it suits runs that need only a little more memory.
+- `mla_upproj_recompute`: keep only the MLA latent and rebuild K and V per attention block. Exact, but it saved no memory (24.47 -> 24.29 GiB at 64k) and costs 6.7% speed, so it stays off.
+- `lookahead_input_detach` (the lookahead router reads a gradient-free hidden state) and `temporal_grad_span` (cut the temporal-locality gradient chain every n positions). Both are exact in the forward pass. On the en-zh data they were neutral (validation CE within 1e-3), so they stay off.
+- Web UI: every long-context field (`attention_block_size`, `ce_chunk_size`, `moe_chunk_tokens`, `recompute_scope`, `recompute_policy`, `mla_upproj_recompute`, `document_masking`, `reset_router_at_documents`, `reset_lookahead_at_documents`, `lookahead_input_detach`, `temporal_grad_span`) with labels and help in all four languages.
+
+### Fixed
+- `reset_router_at_documents` and `document_masking` raised "Attempting to eval an array without a primitive" inside the compiled LongRun step, because the document ids were built with NumPy from a traced array. `chronos.expert_clusters.segment_ids_mx` builds them in MLX, and a regression test runs the option through `mx.compile`.
+- `reset_lookahead_at_documents="false"` (the string the web UI sends) was read as true. Strings are now parsed; the empty string follows the router switch.
+
+### Measured on the real en-zh corpus (production 50M config, random init, M5 Max, bf16)
+`long` = `attention_block_size=1024`, `ce_chunk_size=1024`, `moe_chunk_tokens=8192`. Validation CE differs by at most 3e-3 between arms.
+
+| Context | Default: tokens/s, peak | long: tokens/s, peak |
+|---|---|---|
+| 8k | 8.9k, 40.6 GiB | 19.5k, 7.5 GiB |
+| 16k | 1.9k, 141.5 GiB (over this machine's 128 GB) | 15.2k, 13.8 GiB |
+| 32k | not run | 8.8k, 27.0 GiB |
+| 64k | not run | 3.7k, 54.6 GiB |
+
+Larger attention blocks speed up one MLA layer (0.62 s -> 0.53 s at 64k with blocks of 8192) but slow the whole model, because the sliding-window layers get slower (9.9 s -> 16.6 s per step); 1024 stays the recommendation.
+
 ## [0.3.2a1] — 2026-11-09 (beta)
 
 This release lets the MLX trainer run long contexts on one Mac. Every new switch is off by default, so existing configs, checkpoints and recipes behave as before.

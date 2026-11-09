@@ -96,6 +96,7 @@ class ChronosMLXBlock(nn.Module):
             self.self_attn = SlidingWindowAttentionMLX(config)
             self.self_attn.window_size = None     # dense causal GQA (a 2**63 window overflowed int32)
 
+        object.__setattr__(self, "_cfg", config)
         if getattr(config, 'use_moe', True):
             self.mlp = ChronosMLXMOE(config)
         else:
@@ -121,10 +122,16 @@ class ChronosMLXBlock(nn.Module):
                 h, new_cache = out
             x = x + h
         mlp_in = self.post_norm(x)
+        # recompute_scope="mlp": only the FFN/MoE is a recomputed region.
+        sub = (self.training and cache is None and getattr(self._cfg, "recompute_scope", "block") == "mlp"
+            and bool(getattr(self._cfg, "activation_checkpointing", False)))
         if isinstance(self.mlp, ChronosMLXMOE):
-            x = x + self.mlp(mlp_in, available_expert_mask=available_expert_mask)
+            if sub:
+                x = x + call_block(self.mlp, mlp_in, available_expert_mask=available_expert_mask)
+            else:
+                x = x + self.mlp(mlp_in, available_expert_mask=available_expert_mask)
         else:
-            x = x + self.mlp(mlp_in)
+            x = x + call_block(self.mlp, mlp_in) if sub else x + self.mlp(mlp_in)
         if return_shared_kv:
             return x, new_cache, shared
         return x, new_cache
@@ -232,7 +239,8 @@ class ChronosMLXModel(nn.Module):
         def run(i, hidden, slot=None, **kw):
             avail = available_expert_masks[i] if available_expert_masks is not None else None
             c = cache[i if slot is None else slot] if "kv_override" not in kw else None
-            if recompute and c is None and _recompute_block(cfg, i, self.layers[i]):
+            if (recompute and c is None and getattr(cfg, "recompute_scope", "block") == "block"
+                and _recompute_block(cfg, i, self.layers[i])):
                 return call_block(self.layers[i], hidden, mask=mask, cache=None, available_expert_mask=avail, **kw)
             return self.layers[i](hidden, mask=mask, cache=c, available_expert_mask=avail, **kw)
 
@@ -257,7 +265,8 @@ class ChronosMLXModel(nn.Module):
             for i in range(cfg.prelude_layers):
                 x, new_caches[i] = run(i, x)
             # Lookahead observes the post-prelude state (Torch parity).
-            lookahead_probs = self.lookahead_router(x)
+            lookahead_probs = self.lookahead_router(
+                mx.stop_gradient(x) if getattr(cfg, "lookahead_input_detach", False) else x)
             # MLX always returns a cache, so per_iteration (one slot per
             # iteration) never exits early; shared_first/first_only may.
             allow_exit = mode != "per_iteration"
@@ -321,7 +330,8 @@ class ChronosMLXModel(nn.Module):
                 x, candidate = run(i, x)
                 new_caches.append(candidate)
                 if i == 0:
-                    lookahead_probs = self.lookahead_router(x)
+                    lookahead_probs = self.lookahead_router(
+                        mx.stop_gradient(x) if getattr(cfg, "lookahead_input_detach", False) else x)
 
         x = self.norm(x)
         if return_hidden:

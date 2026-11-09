@@ -162,10 +162,26 @@ def _group_mask(token_mask: mx.array | None, groups: int) -> mx.array | None:
     return mx.repeat(token_mask, groups, axis=0)
 
 
+_TEMPORAL_SPAN: list = [0]   # temporal_grad_span of the loss being built (0 = full chain)
+
+
+def _span_detach(prev: mx.array) -> mx.array:
+    """The older side of every adjacent pair, stop-gradient at span boundaries.
+
+    With ``temporal_grad_span`` = n the sequence is cut in blocks of n positions: inside a
+    block the older token keeps its gradient; the pair that straddles a block edge detaches
+    it, so no gradient chain runs across more than n steps."""
+    n = int(_TEMPORAL_SPAN[0] or 0)
+    if n <= 0 or prev.shape[1] <= 1:
+        return prev
+    edge = (mx.arange(prev.shape[1]) % n) == (n - 1)
+    return mx.where(edge[None, :, None], mx.stop_gradient(prev), prev)
+
+
 def _temporal_locality_loss(router_mean: mx.array, token_mask: mx.array | None = None) -> mx.array:
     if router_mean.shape[1] <= 1:
         return mx.zeros(())
-    diff = router_mean[:, 1:, :] - router_mean[:, :-1, :]
+    diff = router_mean[:, 1:, :] - _span_detach(router_mean[:, :-1, :])
     return _masked_mean((diff * diff).sum(axis=-1), _pair_mask(token_mask))
 
 
@@ -571,18 +587,20 @@ def _chronos_regularized_loss(model, base_loss, lookahead_probs, config, router_
     reset_look = getattr(config, "reset_lookahead_at_documents", None)
     reset_look = reset_router if reset_look is None else bool(reset_look)
     if input_ids is not None and (reset_router or reset_look):
-        from chronos.expert_clusters import segment_ids
-        docs = mx.array(segment_ids(input_ids))
+        from chronos.expert_clusters import segment_ids_mx
+        docs = segment_ids_mx(input_ids)
         segments = docs if reset_router else None
         look_segments = docs if reset_look else None
     _PAIR_SEGMENTS[0] = segments
     _LOOKAHEAD_SEGMENTS[0] = look_segments
+    _TEMPORAL_SPAN[0] = int(getattr(config, "temporal_grad_span", 0) or 0)
     try:
         return _regularized_terms(model, base_loss, lookahead_probs, config, router_ref, metrics,
                                   draft_kl, token_mask, input_ids)
     finally:
         _PAIR_SEGMENTS[0] = None
         _LOOKAHEAD_SEGMENTS[0] = None
+        _TEMPORAL_SPAN[0] = 0
 
 
 def _regularized_terms(model, base_loss, lookahead_probs, config, router_ref, metrics, draft_kl,
@@ -648,10 +666,10 @@ def lm_ce(model, input_ids, labels, *, aligned: bool = False, need_logits: bool 
     from chronos.mlx.chunked_ce import ce_chunk_for, chunked_lm_loss, chunked_shifted_lm_loss
     chunk = 0 if need_logits else ce_chunk_for(model.config, int(input_ids.shape[0]) * int(input_ids.shape[1]))
     if getattr(model.config, "document_masking", False) and "segments" not in forward_kw:
-        from chronos.expert_clusters import segment_ids
+        from chronos.expert_clusters import segment_ids_mx
         # Varlen packing: queries attend only inside their own document; the
         # separator token closes the document it ends (segment_ids rule).
-        forward_kw["segments"] = mx.array(segment_ids(input_ids))
+        forward_kw["segments"] = segment_ids_mx(input_ids)
     if chunk:
         hidden, lookahead, _cache = model(input_ids, return_hidden=True, **forward_kw)
         loss_fn = chunked_lm_loss if aligned else chunked_shifted_lm_loss

@@ -226,6 +226,17 @@ def segment_ids(input_ids, chunk: int = 0, boundary_id: int = SEGMENT_BOUNDARY_I
     return np.cumsum(new, axis=1)
 
 
+def segment_ids_mx(input_ids, boundary_id: int = SEGMENT_BOUNDARY_ID):
+    """``segment_ids`` (chunk = 0) for an MLX array, traceable under ``mx.compile``.
+
+    Same rule: a separator token closes the document it ends, so the id of position t is the
+    number of separators strictly before t.  Returns an int32 ``[B, S]`` array."""
+    import mlx.core as mx
+    is_bnd = (input_ids == int(boundary_id)).astype(mx.int32)
+    before = mx.cumsum(is_bnd, axis=1) - is_bnd
+    return mx.stop_gradient(before)
+
+
 def segment_index(segments):
     """``(inverse [B*S] int32, n)``: dense batch-wide segment number of each position."""
     import numpy as np
