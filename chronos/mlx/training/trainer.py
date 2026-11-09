@@ -63,6 +63,15 @@ def _masked_lm_loss(logits: mx.array, labels: mx.array) -> mx.array:
     return (losses * mask.astype(losses.dtype)).sum() / mx.maximum(mask.astype(mx.float32).sum(), 1.0)
 
 
+def _masked_lm_loss_aligned(logits: mx.array, labels: mx.array) -> mx.array:
+    """Mean CE of labels already aligned with the logits (no shift); -100 = ignored."""
+    flat_logits = _f32(logits.reshape(-1, logits.shape[-1]))
+    flat_labels = labels.reshape(-1)
+    mask = flat_labels != -100
+    losses = nn.losses.cross_entropy(flat_logits, mx.where(mask, flat_labels, 0), reduction="none")
+    return (losses * mask).sum() / mx.maximum(mask.sum(), 1)
+
+
 def _gather_token_logprobs(logits: mx.array, labels: mx.array) -> mx.array:
     labels = labels.astype(mx.int32)
     logits = _f32(logits)
@@ -119,12 +128,31 @@ def _masked_mean(values: mx.array, mask: mx.array | None) -> mx.array:
     return (values * m).sum() / mx.maximum(m.sum(), 1.0)
 
 
-def _pair_mask(token_mask: mx.array | None, k: int = 1) -> mx.array | None:
-    """``[B, S-k]``: position t and t+k are both real tokens."""
-    if token_mask is None:
+_PAIR_SEGMENTS: list = [None]   # [B, S] document ids of the batch being regularized
+_LOOKAHEAD_SEGMENTS: list = [None]   # document ids for the lookahead terms (own switch)
+
+
+def _pair_mask(token_mask: mx.array | None, k: int = 1, groups: int = 1) -> mx.array | None:
+    """``[B, S-k]``: positions t and t+k are both real tokens of one document.
+
+    Documents come from ``_PAIR_SEGMENTS`` (set by ``_chronos_regularized_loss``
+    when ``config.reset_router_at_documents``): temporal, locality and
+    lookahead terms then never pair tokens across a packed-row boundary.
+    ``groups`` > 1: the caller flattened that many routing groups into the
+    batch axis (``B*G`` rows), so the document ids are repeated to match."""
+    seg = _PAIR_SEGMENTS[0]
+    if seg is not None and groups > 1:
+        seg = mx.repeat(seg, groups, axis=0)
+    if token_mask is None and seg is None:
         return None
-    m = token_mask.astype(mx.float32)
-    return m[:, :-k] * m[:, k:]
+    m = None
+    if token_mask is not None:
+        t = token_mask.astype(mx.float32)
+        m = t[:, :-k] * t[:, k:]
+    if seg is not None and seg.shape[1] > k:
+        same = (seg[:, :-k] == seg[:, k:]).astype(mx.float32)
+        m = same if m is None else m * same
+    return m
 
 
 def _group_mask(token_mask: mx.array | None, groups: int) -> mx.array | None:
@@ -325,7 +353,7 @@ def _lookahead_supervision_loss(
         teacher_k = teacher[:, k:, :]
         pred_k = lookahead_probs[:, :-k, k, :].astype(mx.float32)
         total = total + _masked_mean(-(teacher_k * mx.log(mx.maximum(pred_k, 1e-9))).sum(axis=-1),
-                                     _pair_mask(token_mask, k))
+                                     _pair_mask(token_mask, k, groups))
         terms += 1
     return total / max(terms, 1)
 
@@ -360,7 +388,8 @@ def _lookahead_topk_hit_loss(
         target_ids = mx.argpartition(-teacher_k, kth=top_k - 1, axis=-1)[:, :, :top_k]
         target_mask = (target_ids[..., None] == mx.arange(E)).astype(pred_k.dtype).sum(axis=-2)
         hit_mass = (pred_k * target_mask).sum(axis=-1)
-        total = total + _masked_mean(-mx.log(mx.maximum(hit_mass / float(top_k), 1e-9)), _pair_mask(token_mask, k))
+        total = total + _masked_mean(-mx.log(mx.maximum(hit_mass / float(top_k), 1e-9)),
+         _pair_mask(token_mask, k, groups))
         terms += 1
     return total / max(terms, 1)
 
@@ -394,7 +423,7 @@ def _lookahead_union_loss(
     mass = (pred_union * union_target).sum(axis=-1)
     target_count = mx.maximum(union_target.sum(axis=-1), 1.0)
     # Union over t+1..t+K: position t counts when it and t+K are real (right padding).
-    return _masked_mean(-mx.log(mx.maximum(mass / target_count, 1e-9)), _pair_mask(token_mask, K))
+    return _masked_mean(-mx.log(mx.maximum(mass / target_count, 1e-9)), _pair_mask(token_mask, K, groups))
 
 
 def _offload_training_metrics(
@@ -537,6 +566,27 @@ def _chronos_regularized_loss(model, base_loss, lookahead_probs, config, router_
     out of every router regularizer; ``None`` = all positions are real.
     ``input_ids`` ``[B, S]`` lets ``cluster_locality_mode="segment"`` find the
     documents of the batch (without it the window form is used)."""
+    segments = look_segments = None
+    reset_router = bool(getattr(config, "reset_router_at_documents", False))
+    reset_look = getattr(config, "reset_lookahead_at_documents", None)
+    reset_look = reset_router if reset_look is None else bool(reset_look)
+    if input_ids is not None and (reset_router or reset_look):
+        from chronos.expert_clusters import segment_ids
+        docs = mx.array(segment_ids(input_ids))
+        segments = docs if reset_router else None
+        look_segments = docs if reset_look else None
+    _PAIR_SEGMENTS[0] = segments
+    _LOOKAHEAD_SEGMENTS[0] = look_segments
+    try:
+        return _regularized_terms(model, base_loss, lookahead_probs, config, router_ref, metrics,
+                                  draft_kl, token_mask, input_ids)
+    finally:
+        _PAIR_SEGMENTS[0] = None
+        _LOOKAHEAD_SEGMENTS[0] = None
+
+
+def _regularized_terms(model, base_loss, lookahead_probs, config, router_ref, metrics, draft_kl,
+                       token_mask, input_ids):
     object.__setattr__(model, "_last_lookahead_probs", lookahead_probs)
     terms = {"primary_loss": base_loss.astype(mx.float32)}
     def add(name, coefficient, value):
@@ -563,15 +613,20 @@ def _chronos_regularized_loss(model, base_loss, lookahead_probs, config, router_
             mean = router.mean(axis=2)
             add("temporal_loss", config.lambda_temporal, _temporal_locality_loss(mean, token_mask))
             add("locality_loss", config.lambda_router_locality, _router_locality_loss(mean, top_k, token_mask))
-            if lookahead_probs is not None and config.lambda_lookahead > 0 and config.lookahead_steps > 0:
-                teacher = _lookahead_teacher(_first_iteration_router_probs(model).astype(mx.float32),
-                                             lookahead_probs, config)
-                add("lookahead_loss", config.lambda_lookahead,
-                    _lookahead_supervision_loss(lookahead_probs, teacher, config.lookahead_steps, token_mask))
-                add("lookahead_topk_loss", config.lambda_lookahead_topk,
-                    _lookahead_topk_hit_loss(lookahead_probs, teacher, config.lookahead_steps, top_k, token_mask))
-                add("lookahead_union_loss", config.lambda_lookahead_union,
-                    _lookahead_union_loss(lookahead_probs, teacher, config.lookahead_steps, top_k, token_mask))
+            saved_pairs = _PAIR_SEGMENTS[0]
+            _PAIR_SEGMENTS[0] = _LOOKAHEAD_SEGMENTS[0]     # lookahead keeps its own document rule
+            try:
+                if lookahead_probs is not None and config.lambda_lookahead > 0 and config.lookahead_steps > 0:
+                    teacher = _lookahead_teacher(_first_iteration_router_probs(model).astype(mx.float32),
+                                                 lookahead_probs, config)
+                    add("lookahead_loss", config.lambda_lookahead,
+                        _lookahead_supervision_loss(lookahead_probs, teacher, config.lookahead_steps, token_mask))
+                    add("lookahead_topk_loss", config.lambda_lookahead_topk,
+                        _lookahead_topk_hit_loss(lookahead_probs, teacher, config.lookahead_steps, top_k, token_mask))
+                    add("lookahead_union_loss", config.lambda_lookahead_union,
+                        _lookahead_union_loss(lookahead_probs, teacher, config.lookahead_steps, top_k, token_mask))
+            finally:
+                _PAIR_SEGMENTS[0] = saved_pairs
             add("anchor_loss", 1, _router_kl_anchor(mean, router_ref, config.lambda_router_anchor))
     if draft_kl is not None:
         add("draft_exit_kl", getattr(config, "draft_exit_kl_coef", 0.0), draft_kl)
@@ -581,11 +636,37 @@ def _chronos_regularized_loss(model, base_loss, lookahead_probs, config, router_
     return loss
 
 
+def lm_ce(model, input_ids, labels, *, aligned: bool = False, need_logits: bool = False, **forward_kw):
+    """Forward + LM cross-entropy: ``(ce, lookahead, logits_or_None)``.
+
+    ``config.ce_chunk_size`` > 0 (and no caller needing the full logits)
+    computes the loss in row chunks from the final hidden state
+    (``chronos.mlx.chunked_ce``): no ``[B, S, V]`` tensor exists.  The value
+    equals the full FP32 path.  ``aligned``: labels already sit on the
+    logits (no causal shift).  ``config.document_masking`` keeps attention inside
+    each packed document (``segments`` from the separator tokens)."""
+    from chronos.mlx.chunked_ce import ce_chunk_for, chunked_lm_loss, chunked_shifted_lm_loss
+    chunk = 0 if need_logits else ce_chunk_for(model.config, int(input_ids.shape[0]) * int(input_ids.shape[1]))
+    if getattr(model.config, "document_masking", False) and "segments" not in forward_kw:
+        from chronos.expert_clusters import segment_ids
+        # Varlen packing: queries attend only inside their own document; the
+        # separator token closes the document it ends (segment_ids rule).
+        forward_kw["segments"] = mx.array(segment_ids(input_ids))
+    if chunk:
+        hidden, lookahead, _cache = model(input_ids, return_hidden=True, **forward_kw)
+        loss_fn = chunked_lm_loss if aligned else chunked_shifted_lm_loss
+        return loss_fn(hidden, model.head_weight(), labels, chunk=chunk), lookahead, None
+    logits, lookahead, _cache = model(input_ids, logits_dtype=mx.float32, **forward_kw)
+    if aligned:
+        return _masked_lm_loss_aligned(logits, labels), lookahead, logits
+    return _masked_lm_loss(logits, labels), lookahead, logits
+
+
 def _ce_stage_loss(model, input_ids, labels, modality_inputs=None, modality_mask=None):
     media = {"modality_inputs": modality_inputs, "modality_mask": modality_mask} if modality_inputs else None
     draft = draft_exit_logits(model, input_ids, model.config, media)
-    logits, lookahead, _cache = model(input_ids, logits_dtype=mx.float32, **(media or {}))
-    base = _masked_lm_loss(logits, labels)
+    base, lookahead, logits = lm_ce(model, input_ids, labels,
+        need_logits=draft is not None, **(media or {}))
     draft_kl = None if draft is None else draft_exit_kl(draft, logits, _shifted_keep(labels))
     return _chronos_regularized_loss(model, base, lookahead, model.config, metrics={"ce": base, "primary": base},
                                      draft_kl=draft_kl, token_mask=real_token_mask(labels), input_ids=input_ids)

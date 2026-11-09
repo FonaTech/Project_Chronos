@@ -130,6 +130,39 @@ class SFTRecords:
                 labels[r, p:n] = seq[p:]
         return ids, labels
 
+    def packed_batch(self, token_budget: int, seq_len: int, sep_id: int = 0):
+        """Rows of exactly ``seq_len + 1`` tokens, each filled with whole records.
+
+        Records are taken in random order and joined by one ``sep_id`` token
+        (the document separator that ``segment_ids`` cuts on); a record that
+        does not fit is cut at the row end, a record longer than a row is
+        truncated.  Labels keep the loss mask of each record; separators and
+        the row's unused tail carry no loss.  Compared with ``batch`` there is no
+        length bucketing and almost no padding, so short SFT data wastes no compute."""
+        rows = max(1, int(token_budget) // int(seq_len))
+        width = int(seq_len) + 1
+        ids = np.full((rows, width), self.pad_id, dtype=np.int32)
+        labels = np.full((rows, width), -100, dtype=np.int32)
+        for r in range(rows):
+            pos = 0
+            while pos < width:
+                si, ri, n = self.index[int(self.rng.integers(0, len(self.index)))]
+                off = self.offsets[si][ri]
+                take = min(int(n), width - pos)
+                seq = np.asarray(self.tokens[si][off:off + take], dtype=np.int32)
+                ids[r, pos:pos + take] = seq
+                lm = self.lmasks[si]
+                if lm is not None:
+                    keep = np.asarray(lm[off:off + take]).astype(bool)
+                else:
+                    keep = np.arange(take) >= int(self.plens[si][ri])
+                labels[r, pos:pos + take] = np.where(keep, seq, -100)
+                pos += take
+                if pos < width:
+                    ids[r, pos] = sep_id   # closes the document; carries no loss
+                    pos += 1
+        return ids, labels
+
     def supervised_tokens(self) -> int:
         """Tokens that carry loss over every record (``.lmask`` or ``.plen`` rule)."""
         total = 0

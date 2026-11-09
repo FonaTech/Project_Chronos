@@ -2,6 +2,35 @@
 
 ## [Unreleased]
 
+## [0.3.2a1] — 2026-11-09 (beta)
+
+This release lets the MLX trainer run long contexts on one Mac. Every new switch is off by default, so existing configs, checkpoints and recipes behave as before.
+
+### Added
+- `attention_block_size`: blockwise causal attention (`chronos/mlx/blockwise_attention.py`). Each block of queries reads only the keys it can see, under `mx.checkpoint`, and a block that ends at its last visible key uses the kernel's `"causal"` mode with no mask array. Value difference 0, gradient difference ≤ 8.5e-7 against the full-mask path.
+- `ce_chunk_size`: chunked cross-entropy from the final hidden state, so no `[B, S, V]` logits exist (`chronos/mlx/chunked_ce.py`). Loss difference 0, gradient relative difference ≤ 5e-6.
+- `moe_chunk_tokens`: MoE sparse dispatch in token chunks, each recomputed in the backward pass, including the cache-miss simulation.
+- `recompute_policy` (`all`, `mla`, `swa`, `alternate`) chooses which blocks `activation_checkpointing` recomputes, on both the MLX and the Torch side.
+- `rope_train_scaling` (`yarn`, `linear`, `ntk`): training-time RoPE scaling; MLX and Torch tables agree to 2e-5.
+- `document_masking` and `reset_router_at_documents`: attention and the temporal and locality losses stay inside each packed document. `reset_lookahead_at_documents` gives the lookahead terms their own switch (default: follow the router switch).
+- `PhaseSpec.seq_len_curriculum` (`[[progress, seq_len], ...]`) steps the pretrain window length up during a phase, and `PhaseSpec.pack_sft` joins short SFT records into full rows separated by the document separator (`SFTRecords.packed_batch`).
+
+### Fixed
+- The lookahead terms with several routing groups paired document ids of the wrong batch size when `reset_router_at_documents` was on.
+
+### Measured
+Full MLX training step (hidden 512, 8 layers, 16 experts top-2, bf16, batch 1, M5 Max). "long" = `attention_block_size=1024`, `ce_chunk_size=1024`, `moe_chunk_tokens=8192`; "+recompute" adds `activation_checkpointing`.
+
+| Context | Default: tokens/s, extra peak | long: tokens/s, extra peak | long + recompute: tokens/s, extra peak |
+|---|---|---|---|
+| 2k | 20.5k, 2.96 GiB | 23.0k, 2.16 GiB | 19.4k, 1.50 GiB |
+| 8k | 9.9k, 21.5 GiB | 23.3k, 5.55 GiB | 19.3k, 2.87 GiB |
+| 16k | 4.3k, 76.2 GiB | 18.1k, 6.76 GiB | 15.6k, 4.76 GiB |
+| 32k | not run (exceeds RAM) | 11.7k, 12.7 GiB | 9.7k, 8.3 GiB |
+| 64k | not run (exceeds RAM) | 6.6k, 24.5 GiB | 5.9k, 15.4 GiB |
+
+A single MLA layer at 64k needs 148.6 GiB extra without blocks and 2.5 GiB with them.
+
 ## [0.3.2a0] — 2026-11-08 (beta)
 
 This release replaces the minimind kernel with a native one, compiles the MLX training step, adds MLX activation recomputation, and keeps tool-call tags that a custom tokenizer registers as special tokens. README "Native kernel (0.3.2)" has the migration reasons and the measured comparison.

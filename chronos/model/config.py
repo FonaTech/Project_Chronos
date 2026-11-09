@@ -91,6 +91,39 @@ class ChronosConfig(ChronosBaseConfig):
         self.optimizer_page_dir: str = kwargs.pop("optimizer_page_dir", "./optimizer_pages")
         self.page_size_mb: int = kwargs.pop("page_size_mb", 64)
         self.activation_checkpointing: bool = kwargs.pop("activation_checkpointing", False)
+        # Long-context training (0.3.2a1).  ce_chunk_size > 0 computes the LM
+        # loss in row chunks from the final hidden state, never building the
+        # [B, S, V] logits (0 = full logits, the historical path).
+        self.ce_chunk_size: int = int(kwargs.pop("ce_chunk_size", 0) or 0)
+        # attention_block_size > 0 runs MLX attention over long multi-row
+        # queries in blocks that read only their visible keys (no [S, T] mask;
+        # SWA costs O(S * window)).  Exact; 0 = one fused call (historical).
+        self.attention_block_size: int = int(kwargs.pop("attention_block_size", 0) or 0)
+        # Packed rows: when True, the temporal / router-locality / lookahead
+        # regularizers drop token pairs that straddle a document separator,
+        # so no routing penalty links two unrelated documents.
+        self.reset_router_at_documents: bool = bool(kwargs.pop("reset_router_at_documents", False))
+        # Packed rows: attention stays inside each document (separator-delimited).
+        self.document_masking: bool = bool(kwargs.pop("document_masking", False))
+        # Which blocks are recomputed when activation_checkpointing is on:
+        # "all", "mla" (global-attention blocks), "swa", "alternate" (every second
+        # block).  Selective policies trade some memory for less recompute time.
+        self.recompute_policy: str = str(kwargs.pop("recompute_policy", "all") or "all").lower()
+        if self.recompute_policy not in ("all", "mla", "swa", "alternate"):
+            raise ValueError(f"unknown recompute_policy {self.recompute_policy!r}")
+        # MoE sparse dispatch in chunks of this many tokens, each recomputed in the
+        # backward pass, so [N*K, I] expert activations never exist for a whole row
+        # (0 = one dispatch, the historical path).
+        self.moe_chunk_tokens: int = int(kwargs.pop("moe_chunk_tokens", 0) or 0)
+        # Lookahead supervision's own document rule: None follows
+        # reset_router_at_documents; True/False decouples it from the temporal and
+        # router-locality terms.
+        _lrd = kwargs.pop("reset_lookahead_at_documents", None)
+        self.reset_lookahead_at_documents = None if _lrd is None else bool(_lrd)
+        # Long-context RoPE for training: {"type": "yarn"|"linear"|"ntk", "factor": f,
+        # "original_max_position_embeddings": n, ...}; applied after the base init.
+        _rts = kwargs.pop("rope_train_scaling", None)
+        self.rope_train_scaling = dict(_rts) if _rts else None
 
         # Multimodal encoders are native kernel inputs, but are instantiated
         # only for modalities discovered/enabled by the data pipeline.
@@ -235,6 +268,8 @@ class ChronosConfig(ChronosBaseConfig):
         # Force MoE on
         kwargs.setdefault("use_moe", True)
         super().__init__(**kwargs)
+        if self.rope_train_scaling is not None:
+            self.rope_scaling = dict(self.rope_train_scaling)
 
         from chronos.config_schema import normalize_model_dimensions
         resolved = normalize_model_dimensions(vars(self))
