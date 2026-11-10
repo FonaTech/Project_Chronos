@@ -77,6 +77,33 @@ def _side_set(model, side: dict) -> None:
         object.__setattr__(m, "_shared_topk_idx", topk)
 
 
+def _state_slots(node, out: list) -> list:
+    """``(container, key, array)`` for every array leaf of a module's state tree."""
+    for key, value in list(node.items() if isinstance(node, dict) else enumerate(node)):
+        if isinstance(value, mx.array):
+            out.append((node, key, value))
+        elif isinstance(value, (dict, list)):
+            _state_slots(value, out)
+    return out
+
+
+def _capture(model) -> dict:
+    """Weights, RNG key and side outputs as they are before a first trace."""
+    return {"slots": _state_slots(model.state, []),
+        "rng": [int(w) for w in mx.random.state[0].tolist()],
+        "side": _side_get(model)}
+
+
+def _restore(model, snap: dict) -> None:
+    """Undo what a failed trace left behind: the saved arrays go back into the module tree, the
+    RNG is re-seeded from the saved key words (the stream continues exactly), side outputs are reset."""
+    for node, key, value in snap["slots"]:
+        node[key] = value
+    hi, lo = snap["rng"]
+    mx.random.seed((hi << 32) | lo)
+    _side_set(model, snap["side"])
+
+
 def _static(value):
     """Hashable stand-in for a non-array argument, or ``None`` when unsupported."""
     if value is None or isinstance(value, (bool, int, float, str)):
@@ -206,7 +233,8 @@ class CompiledStep:
             with self._pin(depth):
                 return self.eager(*args)
         hit = self._graphs.get(key)
-        if hit is None:
+        fresh = hit is None
+        if fresh:
             self._prewarm(args)
             hit = self._build(key, args)
             self._graphs[key] = hit
@@ -217,11 +245,16 @@ class CompiledStep:
             self._graphs.move_to_end(key)
         fn, meta = hit
         arrays = [a for a in args if isinstance(a, mx.array)]
+        # A trace that fails half way leaves tracers in the weights, the RNG key and the side outputs
+        # (mx.compile swaps them back only on success), so snapshot before tracing and restore on failure.
+        snapshot = _capture(self.model) if fresh else None
         try:
             with self._pin(depth):
                 loss, grads, flat = fn(*arrays)
-        except Exception as exc:                      # trace-time failure: never lose the step
+        except Exception as exc:        # trace-time failure: never lose the step
             self._graphs.pop(key, None)
+            if snapshot is not None:
+                _restore(self.model, snapshot)
             if self.mode == "on":
                 raise
             self._failed.add(key)

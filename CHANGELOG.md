@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+## [0.3.2a3] — 2026-11-10 (beta)
+
+Fixes two kernel bugs found while benchmarking the 50M and 30M multilingual configs on the real corpus. Nothing new is switched on by default.
+
+### Fixed
+- `cluster_locality_mode="segment"` could not be compiled. The loss found document ids with NumPy (`segment_ids`, `np.unique`) on a traced array, so `CHRONOS_MLX_COMPILE=on` raised "Attempting to eval an array during function transformations", and the default `auto` mode crashed on the next `mx.eval`. The loss now uses `segment_ids_mx(input_ids, chunk=window)`, which has a static shape (`row * S + id` addresses `B * S` segment slots and unused slots weigh 0), and runs inside the compiled step. It matches the NumPy ids on 300 random batches and the Torch loss within 1.7e-5 on 60.
+- A compile trace that failed part way left tracers in the model weights, the RNG key and the router outputs, because `mx.compile` swaps them back only on success. The eager fallback then trained on them and the next `mx.eval` raised "Attempting to eval an array without a primitive". `CompiledStep` now snapshots those on a first trace and restores them on failure; the RNG is re-seeded from the saved key words, so the random stream continues exactly (checked on 2,000 random keys).
+
+### Measured
+- Segment mode, compiled, real corpus, 10 steps, document masking on, steady tokens/s: 50M 24,856 at ctx 2048 and 20,416 at 4096; 30M 22,454 and 16,416. The eager fallback cost 15-17%.
+
+### Tests
+- `tests/test_segment_compile.py` (5 cases) fails on 0.3.2a2 (4 of 5) and passes here: ids equal the NumPy rule with chunking, loss equals the Torch reference eagerly and compiled, a one-segment batch gives 0, a compiled segment-mode step matches the eager gradients, and a failed trace leaves weights, RNG and side outputs usable.
+
 ## [0.3.2a2] — 2026-11-09 (beta)
 
 Adds narrower recomputation, two lookahead options and web UI fields for every long-context switch, and fixes a crash found by training on the real corpus. Every new switch is off by default. `reports/long_context_20261109/real_corpus_ab.json` holds the measurements below.

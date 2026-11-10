@@ -251,26 +251,29 @@ def _cluster_locality_loss(router_4d: mx.array, membership: mx.array, window: in
 
 
 def _segment_cluster_loss(router_4d: mx.array, membership: mx.array, segments,
-                          token_mask: mx.array | None = None) -> mx.array:
+     token_mask: mx.array | None = None) -> mx.array:
     """``1 − I(segment; cluster)/log C`` with documents as the unit (MLX twin of
-    ``chronos.model.temporal_loss.segment_cluster_loss``).
+    ``chronos.model.temporal_loss.segment_cluster_loss``), written with static shapes so it traces
+    under ``mx.compile``.
 
-    ``segments`` ``[B, S]`` comes from ``chronos.expert_clusters.segment_ids``:
-    the token stream's own document separators, no label or task token.  Each
-    segment's cluster mass is pooled over its real tokens and every dispatch;
-    segments weigh by real-token count."""
-    from chronos.expert_clusters import segment_index
+    ``segments`` ``[B, S]`` comes from ``chronos.expert_clusters.segment_ids`` (NumPy) or
+    ``segment_ids_mx``: the token stream's own document separators, no label or task token.  Ids stay
+    below ``S``, so ``row * S + id`` indexes ``B * S`` segment slots; unused slots have weight 0.  Each
+    segment's cluster mass is pooled over its real tokens and every dispatch; segments weigh by
+    real-token count.  A batch with a single segment gives 0, as in the Torch twin."""
     B, S, V, E = router_4d.shape
     C = int(membership.shape[1])
-    inv, n = segment_index(segments)
-    if C <= 1 or n <= 1:
+    if C <= 1:
         return mx.zeros(())
+    seg = (segments if isinstance(segments, mx.array) else mx.array(segments)).astype(mx.int32)
+    slots = B * S
+    idx = (seg + (mx.arange(B, dtype=mx.int32) * S)[:, None]).reshape(-1)
     mass = (router_4d.astype(mx.float32).reshape(-1, E) @ membership).reshape(B * S, V, C).mean(axis=1)
     m = (mx.ones((B * S,), mx.float32) if token_mask is None
-         else token_mask.reshape(B * S).astype(mx.float32))
-    idx = mx.array(inv)
-    total = mx.zeros((n, C), mx.float32).at[idx].add(mass * m[:, None])
-    count = mx.zeros((n,), mx.float32).at[idx].add(m)
+        else token_mask.reshape(B * S).astype(mx.float32))
+    total = mx.zeros((slots, C), mx.float32).at[idx].add(mass * m[:, None])
+    count = mx.zeros((slots,), mx.float32).at[idx].add(m)
+    present = mx.zeros((slots,), mx.float32).at[idx].add(mx.ones((B * S,), mx.float32))   # padding counts
     ps = total / mx.maximum(count, 1.0)[:, None]
     weight = count / mx.maximum(count.sum(), 1.0)
 
@@ -280,17 +283,18 @@ def _segment_cluster_loss(router_4d: mx.array, membership: mx.array, segments,
 
     marginal = (ps * weight[:, None]).sum(axis=0)
     mutual = entropy(marginal) - (entropy(ps) * weight).sum()
-    return 1.0 - mutual / math.log(C)
+    loss = 1.0 - mutual / math.log(C)
+    return mx.where((present > 0).sum() > 1, loss, mx.zeros(()))
 
 
 def _cluster_objective(router_4d: mx.array, config, token_mask=None, input_ids=None) -> mx.array:
     """The configured cluster-locality term: ``window`` (fixed token windows)
     or ``segment`` (documents found from ``input_ids``; window form without them)."""
-    from chronos.expert_clusters import cluster_locality_mode, segment_ids
+    from chronos.expert_clusters import cluster_locality_mode, segment_ids_mx
     window = int(getattr(config, "cluster_locality_window", 0) or 0)
     membership = _cluster_membership(config)
     if cluster_locality_mode(config) == "segment" and input_ids is not None:
-        return _segment_cluster_loss(router_4d, membership, segment_ids(input_ids, window), token_mask)
+        return _segment_cluster_loss(router_4d, membership, segment_ids_mx(input_ids, chunk=window), token_mask)
     return _cluster_locality_loss(router_4d, membership, window, token_mask)
 
 
