@@ -2233,7 +2233,7 @@ def test_mlx_training_six_stage_loss_paths(tmp_path):
                         num_experts_per_tok=1, num_shared_experts=1,
                         num_attention_heads=2, num_key_value_heads=2,
                         kv_latent_dim=8, rope_dim=4, max_seq_len=16,
-                        vocab_size=64, use_moe=True,
+                        vocab_size=6400, use_moe=True,
                         lambda_balance=5e-4, lambda_temporal=1e-3,
                         lambda_lookahead=0.1, lambda_lookahead_topk=0.05)
 

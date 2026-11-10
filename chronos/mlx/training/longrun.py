@@ -514,7 +514,7 @@ class LongRun:
     def run_phase(self, pi: int, deadline_s: float, max_steps: int | None = None):
         """Train phase ``pi`` until its step total, its deadline, or ``max_steps``
         more optimizer updates (used by tests and staged runs)."""
-        from chronos.mlx.training.trainer import _add_grads, _collect_router_probs, _tree_all_finite
+        from chronos.mlx.training.trainer import _add_grads, _check_ids_in_vocab, _collect_router_probs, _tree_all_finite
         phase = self.spec.phases[pi]
         source = self._source(phase)
         if self.state["rng"].get(phase.name):
@@ -578,6 +578,7 @@ class LongRun:
             routes = RoutingCounts() if will_log or want_tensors else None
             for _ in range(accum):
                 ids, labels = source.batch(phase.micro_tokens)
+                _check_ids_in_vocab(ids, int(self.model.config.vocab_size), "longrun batch")
                 loss, grads = self._micro_step(grad_fn, ids, labels)
                 if routes is not None:
                     routes.add(_collect_router_probs(self.model), top_k, token_mask_for(labels))
