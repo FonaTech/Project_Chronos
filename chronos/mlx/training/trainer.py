@@ -47,6 +47,32 @@ def _ids_to_mx(x) -> mx.array:
     return mx.array(x).astype(mx.int32)
 
 
+def _check_ids_in_vocab(ids, vocab_size: int, where: str) -> None:
+    """Raise instead of reading outside the embedding table.
+
+    MLX does not bounds-check gathers, so an id >= vocab_size reads whatever memory follows the table
+    and crashes the process some of the time.  Float arrays are not token ids and pass."""
+    import numpy as np
+    arr = ids.detach().cpu().numpy() if isinstance(ids, torch.Tensor) else np.asarray(ids)
+    if arr.dtype.kind not in "iu" or arr.size == 0:
+        return
+    low, high = int(arr.min()), int(arr.max())
+    if low < 0 or high >= int(vocab_size):
+        raise ValueError(f"{where}: token ids span [{low}, {high}] but the model's vocab_size is {int(vocab_size)}; "
+            "use the tokenizer the model was trained with")
+
+
+def _check_batch_ids(batch, vocab_size: int, stage: str) -> None:
+    """Range-check the input ids of one stage batch (a tuple, a multimodal dict or a DPO pair)."""
+    if isinstance(batch, dict):
+        for key in ("input_ids", "x_chosen", "x_rejected"):
+            if key in batch:
+                _check_ids_in_vocab(batch[key], vocab_size, f"{stage} batch[{key!r}]")
+    elif isinstance(batch, (tuple, list)) and batch:
+        _check_ids_in_vocab(batch[0], vocab_size, f"{stage} batch ids")
+
+
+
 def _f32(x: mx.array) -> mx.array:
     """FP32 view for loss math; a no-op when logits were born FP32."""
     return x if x.dtype == mx.float32 else x.astype(mx.float32)
@@ -926,6 +952,7 @@ def _build_grpo_batch(model, prompt, tokenizer, reward_fn, args) -> dict:
     temperature = float(getattr(args, "temperature", 1.0) if args is not None else 1.0)
     enc = tokenizer(rendered, return_tensors="pt", truncation=True, max_length=max_seq_len)
     prompt_ids = _ids_to_mx(enc.input_ids)
+    _check_ids_in_vocab(prompt_ids, int(model.config.vocab_size), "grpo prompt (tokenized with the tokenizer bundled in chronos.deps)")
     prompt_len = int(prompt_ids.shape[1])
     trajectories = []
     rewards = []
@@ -1386,6 +1413,7 @@ def run_mlx_stage(
         for batch in data_iter:
             if _should_stop():
                 break
+            _check_batch_ids(batch, int(model.config.vocab_size), stage)
             if router_ref is None and stage in {"sft", "dpo", "orpo", "distill"}:
                 router_ref = _capture_router_ref(model, batch, stage)
             train_batch = batch
