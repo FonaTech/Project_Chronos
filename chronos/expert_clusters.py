@@ -226,15 +226,28 @@ def segment_ids(input_ids, chunk: int = 0, boundary_id: int = SEGMENT_BOUNDARY_I
     return np.cumsum(new, axis=1)
 
 
-def segment_ids_mx(input_ids, boundary_id: int = SEGMENT_BOUNDARY_ID):
-    """``segment_ids`` (chunk = 0) for an MLX array, traceable under ``mx.compile``.
+def segment_ids_mx(input_ids, boundary_id: int = SEGMENT_BOUNDARY_ID, chunk: int = 0):
+    """``segment_ids`` for an MLX array, traceable under ``mx.compile`` (no NumPy, no data-dependent shape).
 
     Same rule: a separator token closes the document it ends, so the id of position t is the
-    number of separators strictly before t.  Returns an int32 ``[B, S]`` array."""
+    number of separators strictly before t.  ``chunk`` > 0 cuts a document into ``chunk``-token parts,
+    as ``segment_ids`` does.  Returns int32 ``[B, S]`` ids that increase along each row and stay below
+    ``S``, so ``row * S + id`` is a dense batch-wide segment number with the static bound ``B * S``."""
     import mlx.core as mx
-    is_bnd = (input_ids == int(boundary_id)).astype(mx.int32)
-    before = mx.cumsum(is_bnd, axis=1) - is_bnd
-    return mx.stop_gradient(before)
+    ids = input_ids if isinstance(input_ids, mx.array) else mx.array(input_ids)
+    is_bnd = (ids == int(boundary_id)).astype(mx.int32)
+    doc = mx.cumsum(is_bnd, axis=1) - is_bnd
+    if int(chunk or 0) <= 0:
+        return mx.stop_gradient(doc)
+    B, S = ids.shape
+    pos = mx.broadcast_to(mx.arange(S, dtype=mx.int32)[None, :], (B, S))
+    doc_changed = doc[:, 1:] != doc[:, :-1]
+    first = mx.concatenate([mx.ones((B, 1), dtype=mx.bool_), doc_changed], axis=1)
+    start = mx.cummax(mx.where(first, pos, 0), axis=1)
+    part = (pos - start) // int(chunk)
+    new = doc_changed | (part[:, 1:] != part[:, :-1])
+    seg = mx.concatenate([mx.zeros((B, 1), dtype=mx.int32), mx.cumsum(new.astype(mx.int32), axis=1)], axis=1)
+    return mx.stop_gradient(seg)
 
 
 def segment_index(segments):
