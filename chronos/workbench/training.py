@@ -106,7 +106,7 @@ CHECKPOINT_TOPOLOGY_KEYS = (
     "modalities", "image_patch_size", "modality_fusion_heads",
     # v3 semantics that do not change tensor shapes but do change what the
     # weights compute; a stage must inherit them from its init checkpoint.
-    "recurrent_attention_mode", "rope_layout", "rope_theta", "sliding_window_size",
+    "recurrent_attention_mode", "recurrent_order", "rope_layout", "rope_theta", "sliding_window_size",
     "intermediate_size", "router_scope",
 )
 STAGE_HELP_TEXT = {

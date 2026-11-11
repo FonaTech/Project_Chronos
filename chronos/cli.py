@@ -17,7 +17,7 @@ Commands:
     chronos webui     — Web UI (alias: ui)
 
 Task-specific tooling (corpora, evaluation, model bundles) lives in extensions
-outside the kernel, e.g. ``demos/translation`` (``chronos-translate``).
+that import the kernel; the kernel itself carries no task.
 """
 import sys
 import os

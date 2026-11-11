@@ -61,6 +61,8 @@ def main(argv=None) -> int:
     ap.add_argument("--device", default="cpu", choices=("cpu", "gpu"))
     ap.add_argument("--dtype", default="auto")
     ap.add_argument("--ratio", type=float, default=1.0, help="lazy expert budget (Inference-tab RAM load ratio)")
+    ap.add_argument("--paging", default="expert", choices=("expert", "cluster", "auto"),
+        help="page layout of the SSD cache: expert (one page per expert, historical), cluster/auto (training clusters)")
     ap.add_argument("--draft-depth", type=int, default=1)
     ap.add_argument("--gamma", type=int, default=4)
     ap.add_argument("--decay", type=float, default=0.7)
@@ -87,7 +89,7 @@ def main(argv=None) -> int:
     rows = []
     try:
         _decode, info, close = mlx_runner(cfg, args.checkpoint, lazy=True, ratio=args.ratio, device=args.device,
-                                          workdir=workdir, dtype=args.dtype)
+                                          workdir=workdir, dtype=args.dtype, paging=args.paging)
         engine = close.__self__                       # mlx_runner returns the engine's bound stop()
         warm = int(info["budget"]["effective_vram_expert_budget"])
         try:
@@ -101,13 +103,25 @@ def main(argv=None) -> int:
                     if mode.startswith("spec"):
                         kw.update(speculative=True, draft_depth=args.draft_depth, gamma=args.gamma, gamma_max=8)
                     t0 = time.perf_counter()
-                    toks = list(engine.generate(ids, max_new_tokens=limit, temperature=0.0, top_p=1.0,
-                                                eos_token_id=eos, **kw))
+                    # Page reads of the reset's warm-up are not generation I/O: count from here.
+                    base_reads = int(engine.store._stats["cluster_loads"])
+                    toks, prefill_reads = [], None
+                    for tok_id in engine.generate(ids, max_new_tokens=limit, temperature=0.0, top_p=1.0,
+                                                  eos_token_id=eos, **kw):
+                        toks.append(tok_id)
+                        if prefill_reads is None:
+                            # Page reads up to the first generated token = prefill and warm-up; the rest is decode.
+                            prefill_reads = int(engine.store._stats["cluster_loads"]) - base_reads
                     dt = time.perf_counter() - t0
                     st = engine.last_stats
                     row[mode] = {"tokens": toks, "s": dt, "ssd": int(st.get("sync_ssd_loads", 0)),
                                  "hits": int(st.get("cache_hits", 0)), "misses": int(st.get("cache_misses", 0)),
-                                 "cluster_loads": int(st.get("cluster_loads", 0)),
+                                 "cluster_loads": int(st.get("cluster_loads", 0)) - base_reads,
+                                 "warmup_cluster_loads": base_reads,
+                                 "cluster_experts_loaded": int(st.get("cluster_experts_loaded", 0)),
+                                 "cluster_aware": bool(st.get("cluster_aware", False)),
+                                 "num_clusters": int(st.get("num_clusters", 0)),
+                                 "prefill_cluster_loads": int(prefill_reads or 0),
                                  "prefetch_loads": int(st.get("prefetch_loads", 0)),
                                  "planned_evictions": int(st.get("planned_evictions", 0)),
                                  "eviction_policy": st.get("eviction_policy"),
@@ -131,6 +145,9 @@ def main(argv=None) -> int:
             "ssd_loads_per_token": round(sum(r[mode]["ssd"] for r in rows) / max(toks, 1), 4),
             "selection_miss_rate": round(misses / max(hits + misses, 1), 4),
             "prefetch_loads": sum(r[mode]["prefetch_loads"] for r in rows),
+            "cluster_loads": sum(r[mode]["cluster_loads"] for r in rows),
+            "prefill_cluster_loads": sum(r[mode]["prefill_cluster_loads"] for r in rows),
+            "decode_cluster_loads": sum(r[mode]["cluster_loads"] - r[mode]["prefill_cluster_loads"] for r in rows),
             "identical_to_plain": sum(r[mode]["tokens"] == r["plain"]["tokens"] for r in rows) if "plain" in modes
             else None,
         }

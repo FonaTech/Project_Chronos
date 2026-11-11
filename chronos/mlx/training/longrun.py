@@ -16,8 +16,7 @@ Designed for multi-day benchmark runs on Apple silicon:
 The runner is task-agnostic.  A task adds its own quality metrics by
 subclassing ``LongRun`` and overriding ``task_eval`` (called at every
 validation and once at the end); whatever keys it returns are logged next to
-``valid_ce`` and discovered by the monitor.  ``demos/translation`` is one
-such extension.
+``valid_ce`` and discovered by the monitor.
 """
 from __future__ import annotations
 
@@ -325,7 +324,7 @@ def check_init_checkpoint(path: str, config) -> None:
     if not saved:
         return                                   # no sidecar: load_state_dict_controlled still checks shapes
     keys = SNIFFABLE_TOPOLOGY_FIELDS + UNSNIFFABLE_REQUIRED_FIELDS + (
-        "recurrent_depth", "prelude_layers", "coda_layers", "recurrent_attention_mode", "rope_layout")
+        "recurrent_depth", "prelude_layers", "coda_layers", "recurrent_attention_mode", "recurrent_order", "rope_layout")
     diff = {k: (saved[k], getattr(config, k, None)) for k in keys
             if k in saved and saved[k] is not None and saved[k] != getattr(config, k, None)}
     if diff:
@@ -576,6 +575,9 @@ class LongRun:
             will_log = (step + 1) % self.spec.log_every_steps == 0 or step < 3
             want_tensors = tensor_every > 0 and time.monotonic() - last_tensors >= tensor_every
             routes = RoutingCounts() if will_log or want_tensors else None
+            # One recurrent depth per optimizer step: jitter samples per step, not per micro-batch, so a step's
+            # gradient accumulation and router telemetry share one architecture (virtual-layer count).
+            controller._step_depth = controller.execution_depth(self.config, True)
             for _ in range(accum):
                 ids, labels = source.batch(phase.micro_tokens)
                 _check_ids_in_vocab(ids, int(self.model.config.vocab_size), "longrun batch")
@@ -587,6 +589,7 @@ class LongRun:
                 tokens += int((labels != -100).sum())      # supervised tokens
                 processed += int(ids.size)                  # forward/backward tokens
                 mx.eval(acc, loss_sum)          # bound the lazy graph to one micro-batch
+            controller._step_depth = None   # end of step: stop pinning the sampled depth
             # Tensor telemetry keeps references to the pre-update weights (MLX
             # arrays are immutable: no copy) and the FP32 accumulated grads.
             before = self.model.parameters() if want_tensors else None
@@ -829,7 +832,7 @@ def load_spec(path: str, budget_hours: float | None = None, *, spec_cls=None, ex
     unknown = sorted(set(raw) - set(spec_cls.__dataclass_fields__))
     if unknown:
         raise ValueError(f"{path}: unknown RunSpec keys {unknown}; task-specific keys need the task's "
-                         f"runner (e.g. `chronos-translate run` for demos/translation recipes)")
+                         f"runner that supplies its own RunSpec class")
     raw["phases"] = [PhaseSpec(**p) for p in raw["phases"]]
     spec = spec_cls(**raw)
     if budget_hours is not None:

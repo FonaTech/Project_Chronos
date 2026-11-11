@@ -123,6 +123,7 @@ class ChronosMOEFeedForward(nn.Module):
         self,
         x: torch.Tensor,
         available_expert_mask: torch.Tensor = None,
+        top_k: int | None = None,
     ) -> torch.Tensor:
         """
         Args:
@@ -151,14 +152,19 @@ class ChronosMOEFeedForward(nn.Module):
         self.iteration_router_probs.append(self.last_router_probs)
         self.iteration_router_probs_grad.append(scores_bse)
 
+        # Graded top-k: a later loop iteration may route to fewer experts (top_k < num_experts_per_tok).
+        k = self.num_experts_per_tok if not top_k else max(1, min(int(top_k), self.num_experts_per_tok))
         shared_idx = self._shared_topk_idx
         if (self.router_scope == "shared" and shared_idx is not None
                 and shared_idx.shape[0] == scores.shape[0] and len(self.iteration_router_probs) > 1):
             topk_idx = shared_idx
+            if k < topk_idx.shape[1]:
+                keep = scores.gather(-1, topk_idx).topk(k, dim=-1, sorted=False).indices
+                topk_idx = topk_idx.gather(-1, keep)
             topk_weight = scores.gather(-1, topk_idx)
         else:
             topk_weight, topk_idx = torch.topk(
-                scores, k=self.num_experts_per_tok, dim=-1, sorted=False
+                scores, k=k, dim=-1, sorted=False
             )
             if self.router_scope == "shared":
                 self._shared_topk_idx = topk_idx
@@ -191,7 +197,7 @@ class ChronosMOEFeedForward(nn.Module):
             flat_idx = topk_idx.reshape(-1)
             order = torch.argsort(flat_idx, stable=True)
             counts = torch.bincount(flat_idx, minlength=self.num_experts).tolist()
-            rows = order // self.num_experts_per_tok
+            rows = order // topk_idx.shape[1]
             row_weight = topk_weight.reshape(-1)[order].unsqueeze(-1)
             offset = 0
             for i, expert in enumerate(self.experts):
@@ -258,7 +264,7 @@ class ChronosMOEFeedForward(nn.Module):
             # values and the index_add_ order are unchanged.
             flat_idx = topk_idx.reshape(-1)
             order = torch.argsort(flat_idx, stable=True)
-            sorted_rows = order // self.num_experts_per_tok
+            sorted_rows = order // topk_idx.shape[1]
             sorted_weight = topk_weight.reshape(-1)[order].unsqueeze(-1)
             mass = torch.zeros(self.num_experts, dtype=torch.float32, device=x_flat.device).index_add_(
                 0, flat_idx, topk_weight.detach().reshape(-1).float())

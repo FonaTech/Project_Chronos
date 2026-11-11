@@ -12,6 +12,18 @@ import os
 from pathlib import Path
 
 LEGACY_TOKENIZER_DIR = Path(__file__).resolve().parent / "assets" / "tokenizers" / "legacy_6400"
+#: Task-neutral 32768-token BPE (en + zh + code-friendly), the default for NEW models (planner, Train page).
+GENERAL_TOKENIZER_DIR = Path(__file__).resolve().parent / "assets" / "tokenizers" / "general_32k"
+GENERAL_TOKENIZER_VOCAB = 32768
+
+
+def get_general_tokenizer_path() -> str:
+    """Bundled general 32k tokenizer for new models (see its NOTICE).
+
+    Not used as the fallback for old checkpoints: a checkpoint that never recorded its tokenizer was
+    trained with the legacy 6400-token vocabulary, and :func:`get_tokenizer_path` keeps returning that.
+    """
+    return str(GENERAL_TOKENIZER_DIR)
 
 
 def get_tokenizer_path() -> str:

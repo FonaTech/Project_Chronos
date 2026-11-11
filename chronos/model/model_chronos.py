@@ -71,6 +71,7 @@ class ChronosBlock(nn.Module):
         latent_only: bool = False,
         kv_override=None,
         return_shared_kv: bool = False,
+        top_k: int | None = None,
     ):
         """One physical block.
 
@@ -104,7 +105,7 @@ class ChronosBlock(nn.Module):
             hidden_states = hidden_states + residual
         mlp_in = self.post_attention_layernorm(hidden_states)
         if isinstance(self.mlp, ChronosMOEFeedForward):
-            hidden_states = hidden_states + self.mlp(mlp_in, available_expert_mask)
+            hidden_states = hidden_states + self.mlp(mlp_in, available_expert_mask, top_k=top_k)
         else:
             hidden_states = hidden_states + self.mlp(mlp_in)
         if return_shared_kv:
@@ -170,6 +171,7 @@ class ChronosModel(nn.Module):
         latent_only: bool = False,
         kv_override=None,
         return_shared_kv: bool = False,
+        top_k: int | None = None,
     ):
         """Run one physical block with optional selective recomputation."""
         if (
@@ -184,7 +186,7 @@ class ChronosModel(nn.Module):
                     states, position_embeddings, past_key_value=None,
                     use_cache=False, attention_mask=attention_mask,
                     available_expert_mask=available_expert_mask,
-                    latent_only=latent_only, kv_override=kv_override,
+                    latent_only=latent_only, kv_override=kv_override, top_k=top_k,
                 )[0]
 
             return checkpoint(transition, hidden_states, use_reentrant=False), None
@@ -196,6 +198,7 @@ class ChronosModel(nn.Module):
             latent_only=latent_only,
             kv_override=kv_override,
             return_shared_kv=return_shared_kv,
+            top_k=top_k,
         )
 
     def _forward_recurrent(
@@ -269,80 +272,120 @@ class ChronosModel(nn.Module):
         adaptive_active = self.recurrent_controller.adaptive_active(cfg, self.training)
         threshold = float(cfg.halting_threshold)
         min_depth = int(cfg.min_recurrent_depth)
-        for group in range(g):
+        controller = self.recurrent_controller
+        order = str(getattr(cfg, "recurrent_order", "layer") or "layer")
+        # Graded top-k: loop iterations after the first route to fewer experts (0 = same as the first).
+        later_k = int(getattr(cfg, "recurrent_later_topk", 0) or 0)
+        # Prefix blocks (block order): iterations after the first run only the first later_g layers of the block.
+        later_g = int(getattr(cfg, "recurrent_later_groups", 0) or 0)
+        
+        def run_layer(group, step, hidden, shared_kv):
+            """One loop iteration of one physical layer: condition, attend/route, contract."""
             li = p + group
             layer = self.layers[li]
-            group_states, group_halts = [], []
-            exited_early = False
-            shared_kv = None
-            halted = cumulative = None
-            target = min(1.0, max(1e-6, threshold))
-            for step in range(depth):
-                conditioned = self.recurrent_controller.condition(hidden_states, step, group)
-                slot = layout.slot(li, step)
-                block_kwargs = dict(
-                    use_cache=use_cache, attention_mask=attention_mask,
-                    available_expert_mask=mask_for(li),
-                )
-                if mode == "per_iteration":
-                    refined, presents[slot] = self._run_block(
-                        layer, conditioned, position_embeddings,
-                        past_key_value=past_key_values[slot], **block_kwargs)
-                elif mode == "first_only":
-                    refined, present = self._run_block(
-                        layer, conditioned, position_embeddings,
-                        past_key_value=past_key_values[slot], latent_only=step > 0, **block_kwargs)
-                    if step == 0:
-                        presents[slot] = present
-                elif step == 0:  # shared_first, writer iteration
-                    refined, presents[slot], shared_kv = self._run_block(
-                        layer, conditioned, position_embeddings,
-                        past_key_value=past_key_values[slot], return_shared_kv=True, **block_kwargs)
-                else:  # shared_first, reader iteration
-                    refined, _ = self._run_block(
-                        layer, conditioned, position_embeddings,
-                        past_key_value=None, kv_override=shared_kv,
-                        use_cache=False, attention_mask=attention_mask,
-                        available_expert_mask=mask_for(li))
-                hidden_states = self.recurrent_controller.contract(hidden_states, refined, group)
-                group_states.append(hidden_states)
-                halt_probability = self.recurrent_controller.halt_probability(hidden_states)
-                group_halts.append(halt_probability)
-                # Exact ACT bookkeeping (same rule as recurrent_auxiliary_state):
-                # a token halts once its accumulated mass reaches the threshold
-                # after min_depth.  Later iterations get zero mixture weight, so
-                # once *every* token has halted the remaining iterations cannot
-                # change the output; exiting is then exact, and each token's
-                # result is independent of what else is in the batch (required
-                # for speculative verification to equal token-by-token decode).
-                if step + 1 >= min_depth:
-                    clipped = halt_probability.float().clamp(0.0, 1.0)
-                    if halted is None:
-                        cumulative = torch.zeros_like(clipped)
-                        halted = torch.zeros_like(clipped, dtype=torch.bool)
-                    newly = (~halted) & ((cumulative + clipped) >= target)
-                    cumulative = torch.where(halted | newly, cumulative, (cumulative + clipped).clamp(max=1.0))
-                    halted = halted | newly
-                if (
-                    not self.training and adaptive_active and allow_adaptive_exit
-                    and halted is not None and step + 1 < depth
-                ):
-                    if bool(halted.all()):  # one fused device→host read per step
-                        exited_early = True
-                        break
-            # ACT is state interpolation rather than a ragged Python loop.
-            mixed, state = recurrent_auxiliary_state(
-                group_states, group_halts, min_depth=min_depth, threshold=threshold,
+            tk = {"top_k": later_k} if later_k and step > 0 else {}
+            conditioned = controller.condition(hidden, step, group)
+            slot = layout.slot(li, step)
+            block_kwargs = dict(
+                use_cache=use_cache, attention_mask=attention_mask,
+                available_expert_mask=mask_for(li), **tk,
             )
+            if mode == "per_iteration":
+                refined, presents[slot] = self._run_block(
+                    layer, conditioned, position_embeddings,
+                    past_key_value=past_key_values[slot], **block_kwargs)
+            elif mode == "first_only":
+                refined, present = self._run_block(
+                    layer, conditioned, position_embeddings,
+                    past_key_value=past_key_values[slot], latent_only=step > 0, **block_kwargs)
+                if step == 0:
+                    presents[slot] = present
+            elif step == 0:  # shared_first, writer iteration
+                refined, presents[slot], shared_kv = self._run_block(
+                    layer, conditioned, position_embeddings,
+                    past_key_value=past_key_values[slot], return_shared_kv=True, **block_kwargs)
+            else:  # shared_first, reader iteration
+                refined, _ = self._run_block(
+                    layer, conditioned, position_embeddings,
+                    past_key_value=None, kv_override=shared_kv,
+                    use_cache=False, attention_mask=attention_mask,
+                    available_expert_mask=mask_for(li), **tk)
+            return controller.contract(hidden, refined, group), shared_kv
+        
+        def track(hidden, step, halted, cumulative):
+            """Halting probability plus exact ACT bookkeeping (same rule as recurrent_auxiliary_state)."""
+            # A token halts once its accumulated mass reaches the threshold after
+            # min_depth.  Later iterations get zero mixture weight, so once *every*
+            # token has halted the remaining iterations cannot change the output;
+            # exiting is then exact, and each token's result is independent of what
+            # else is in the batch (required for speculative verification to equal
+            # token-by-token decode).
+            halt_probability = controller.halt_probability(hidden)
+            if step + 1 >= min_depth:
+                clipped = halt_probability.float().clamp(0.0, 1.0)
+                if halted is None:
+                    cumulative = torch.zeros_like(clipped)
+                    halted = torch.zeros_like(clipped, dtype=torch.bool)
+                newly = (~halted) & ((cumulative + clipped) >= target)
+                cumulative = torch.where(halted | newly, cumulative, (cumulative + clipped).clamp(max=1.0))
+                halted = halted | newly
+            return halt_probability, halted, cumulative
+        
+        def can_exit(halted, step):
+            if not self.training and adaptive_active and allow_adaptive_exit and halted is not None and step + 1 < depth:
+                return bool(halted.all())  # one fused device→host read per step
+            return False
+        
+        def finish(states, halts, exited_early, hidden):
+            # ACT is state interpolation rather than a ragged Python loop.
+            mixed, state = recurrent_auxiliary_state(states, halts, min_depth=min_depth, threshold=threshold)
             if adaptive_active:
-                hidden_states = mixed
+                hidden = mixed
             else:
-                hidden_states = group_states[-1]
-                state.ponder_cost = hidden_states.new_zeros(())
-                state.depth_used = torch.full_like(state.depth_used, float(len(group_states)))
+                hidden = states[-1]
+                state.ponder_cost = hidden.new_zeros(())
+                state.depth_used = torch.full_like(state.depth_used, float(len(states)))
             state.exited_early = exited_early
             recurrent_states.append(state)
-
+            return hidden
+        
+        target = min(1.0, max(1e-6, threshold))
+        if order == "block":
+            # Block-interleaved recurrence: (layer0 layer1 ... layerG-1) x depth.
+            # One state trajectory and one halting head per block iteration; each
+            # physical layer still keeps its own dt, loop/group embeddings and KV.
+            shared = [None] * g
+            states, halts = [], []
+            halted = cumulative = None
+            exited_early = False
+            for step in range(depth):
+                for group in range(g if step == 0 or not later_g else min(g, later_g)):
+                    hidden_states, shared[group] = run_layer(group, step, hidden_states, shared[group])
+                states.append(hidden_states)
+                prob, halted, cumulative = track(hidden_states, step, halted, cumulative)
+                halts.append(prob)
+                if can_exit(halted, step):
+                    exited_early = True
+                    break
+            if states:
+                hidden_states = finish(states, halts, exited_early, hidden_states)
+        else:
+            # Layer-consecutive recurrence (default): layer0 x depth, layer1 x depth, ...
+            for group in range(g):
+                group_states, group_halts = [], []
+                exited_early = False
+                shared_kv = None
+                halted = cumulative = None
+                for step in range(depth):
+                    hidden_states, shared_kv = run_layer(group, step, hidden_states, shared_kv)
+                    group_states.append(hidden_states)
+                    prob, halted, cumulative = track(hidden_states, step, halted, cumulative)
+                    group_halts.append(prob)
+                    if can_exit(halted, step):
+                        exited_early = True
+                        break
+                hidden_states = finish(group_states, group_halts, exited_early, hidden_states)
+        
         # Coda uses the remaining physical layers.
         for ci in range(c):
             li = p + g + ci

@@ -25,6 +25,9 @@ CASES = {
     "first_only": dict(recurrent_attention_mode="first_only"),
     "router_shared": dict(router_scope="shared"),
     "no_recurrence": dict(recurrent_depth=1),
+    "block_order": dict(recurrent_order="block"),
+    "later_topk": dict(recurrent_later_topk=1),
+    "later_topk_shared": dict(recurrent_later_topk=1, router_scope="shared"),
     "dense_attention": dict(use_hybrid_attention=False),
     # SWA window >= sequence: the cache slice k[:, -keep:] is the same graph
     # node as the shared KV view (short SFT buckets hit this).
@@ -159,7 +162,8 @@ def test_recomputation_skips_cached_calls_and_inference():
 
 
 @pytest.mark.parametrize("checkpointing", [False, True])
-@pytest.mark.parametrize("case", ["shared_first", "per_iteration", "router_shared", "dense_attention"])
+@pytest.mark.parametrize("case", ["shared_first", "per_iteration", "router_shared", "dense_attention", "block_order",
+      "later_topk", "later_topk_shared"])
 def test_compiled_step_matches_eager(case, checkpointing):
     from chronos.mlx.training.compiled import CompiledStep
     cfg = _config(**CASES[case], activation_checkpointing=checkpointing)

@@ -97,3 +97,55 @@ Relative paths in a recipe now resolve against the recipe's own folder.
 
 WMT19 and OPUS-100 list their licences as unknown, so weights trained on them
 are for research use only. FLORES+ (CC BY-SA 4.0) is used for evaluation only.
+
+**Status of the 50M en→zh demo (in progress; `demos/translation`).**
+- Model: 49.69M total / 12.09M active parameters, 36 experts, MLA latent 128, SWA window 128, 16k self-built vocabulary.
+- Run: a 72-hour MLX bf16 run (pretrain, then SFT) started on 2026-11-05.
+- Interim measurement: valid CE 2.477 at pretrain step 13,996 of about 24.7k planned (it was 3.012 at step 1,656). That checkpoint is packaged as `chronos-enzh-50m-pretrain-s13996` (see Model bundle).
+- BLEU/chrF on FLORES+ and WMT22, and the ablations (attention mode, depth, lazy-expert budget, speculative γ), will be published after the run finishes. No quality numbers are claimed before then.
+
+## Released model: chronos-enzh-50m-sft
+
+[`models/chronos-enzh-50m-sft/`](../../models/chronos-enzh-50m-sft/) packages a 49.7M-parameter Chronos v3 model (12.1M active per token) trained for 69 hours on one Apple M5 Max: configuration, tokenizer, trained prompt, decoding settings, a driver (`translate.py`) and the evaluation behind every number. The weights (99.5 MB, bfloat16 safetensors) are attached to the release [`enzh-50m-sft-v1`](https://github.com/FonaTech/Project_Chronos/releases/tag/enzh-50m-sft-v1).
+
+- **Boundary:** English → Chinese only, one sentence (≤ 128 tokens) at a time. Chinese → English is disabled: English-only fine-tuning erased it (FLORES+ BLEU 0.00 after SFT). The driver refuses input outside the boundary.
+- **Measured** (MLX bf16, greedy): FLORES+ devtest BLEU 33.48 / chrF 29.52; WMT22 BLEU 32.60 / chrF 28.83; WMT24++ BLEU 26.89 / chrF 24.43 (split into sentences).
+- **Research use only.** The training corpora's licences are unknown; see the folder's `NOTICE`.
+
+```bash
+cd models/chronos-enzh-50m-sft
+pip install --pre "Project_Chronos[mlx]==0.3.2a0"   # or "Project_Chronos==0.3.2a0" without MLX
+python translate.py --download && python translate.py "The meeting was moved to Friday."
+```
+
+## Model bundle (translation demo extension)
+
+Bundles belong to the translation extension (`demos/translation`). Build the two wheels first (`python -m build --outdir dist .` and `python -m build --outdir dist demos/translation`). `chronos-translate bundle build` packages one exported checkpoint of a run into a folder that works right after unpacking. Building only reads the run directory.
+
+```bash
+chronos-translate bundle build --run-dir runs/enzh_50m_v1 --which best --pack \
+    --wheel dist/project_chronos-0.3.2a0-py3-none-any.whl --wheel dist/chronos_translate-0.3.2a0-py3-none-any.whl
+```
+
+| Bundle path | Content |
+|---|---|
+| `model/` | weights + `.config.json` sidecar, tokenizer (`model/tokenizer/`) |
+| `eval/` | FLORES+ dev/devtest (CC BY-SA 4.0) for `bundle eval` / `probe` |
+| `data/sft_valid/` | the run's SFT validation shards |
+| `wheels/`, `bin/setup.sh`, `bin/chronos` | offline install of the kernel and extension wheels into `.venv`; launcher that sets `CHRONOS_BUNDLE` and sends `bundle …` to `chronos-translate` |
+| `recipes/source_run_spec.json`, `recommended.json` | the recipe that produced the weights; fine-tune tiers `smoke` / `quick` / `standard` / `full` |
+| `bundle.json` | provenance (step, tokens, valid CE), measured quality probe, SHA-256 of every file |
+
+On the recipient side:
+
+```bash
+bin/setup.sh                                              # venv + wheels + `bundle check`
+bin/chronos bundle translate "The weather is very nice today."
+bin/chronos bundle translate --backend mlx --speculative --file examples/translate_en.txt
+bin/chronos bundle eval --split devtest -n 200
+bin/chronos bundle prepare-data my_pairs.jsonl --out work/data      # FLORES+ is removed from your data
+bin/chronos bundle finetune --data work/data --run-dir work/ft --tier quick --mode sft
+bin/chronos bundle serve -- --port 11435
+```
+
+`--speculative` needs `--repetition-penalty 1.0` (its default), because the penalty changes the target distribution at every position. `finetune` writes a `chronos-translate run` spec with `init_checkpoint` set to the bundle weights and refuses a run directory that already holds a run. Bundles built from data with unknown licences (WMT19, OPUS-100) say in `NOTICE.md` that the weights are for research only.

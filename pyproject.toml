@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "Project_Chronos"
-version = "0.3.2a3"
+version = "0.3.3a0"
 description = "Storage-aware recurrent-depth MoE: lookahead expert prefetch, SSD-lazy experts, hybrid MLA/SWA attention, self-speculative decoding"
 readme = "README.md"
 license = "Apache-2.0"

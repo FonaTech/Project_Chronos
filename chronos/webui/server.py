@@ -928,9 +928,12 @@ def create_app(workdir: str = ".", *, runs_dir: str = "runs", api_key: str | Non
         data_path = data[0]
         if ui.tuner is not None and ui.tuner.is_running():
             raise HTTPException(status_code=409, detail="busy")
-        space = ChronosSearchSpaceConfig(**{f"tune_{name}": name in values["search"]
-                                            for name in schema.FIELDS["tune.search"].choices})
         cfg = {**base_config(), **cfg}
+        # The loop knobs are probed at the depth the user plans to train at: at least 2, at most 8 (the probe is short).
+        probe_depth = max(2, min(8, int(cfg.get("recurrent_depth") or 1)))
+        space = ChronosSearchSpaceConfig(
+            probe_recurrent_depth=probe_depth,
+            **{f"tune_{name}": name in values["search"] for name in schema.FIELDS["tune.search"].choices})
         out_dir = os.path.join(ui.workdir, "auto_tune_cache")
         os.makedirs(out_dir, exist_ok=True)
         ui.tuner, ui.tune_log = ChronosAutoTuner(), []
@@ -938,7 +941,8 @@ def create_app(workdir: str = ".", *, runs_dir: str = "runs", api_key: str | Non
                                              f"chronos_{cfg.get('hidden_size', 256)}_moe.pth"),
                        dataset_path=data_path, train_ratio=0.95, prompt_template="alpaca", think_mode="keep",
                        search_space=space, n_trials=values["n_trials"], probe_steps=values["probe_steps"],
-                       output_dir=out_dir, seed=42)
+                       output_dir=out_dir, seed=42,
+                       tokenizer_dir=ui.path(cfg["tokenizer_path"]) if cfg.get("tokenizer_path") else None)
         return autotune_state()
 
     @app.post("/api/autotune/stop")

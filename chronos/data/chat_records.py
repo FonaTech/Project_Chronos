@@ -9,9 +9,8 @@ token's loss flag is known without guessing from offsets:
 * context: system/tool definitions, user turns, ``tool`` results and every
   ``<|im_start|>role\\n`` header (the generation prompt the model is given).
 
-``encode_chat`` tokenizes the pieces one by one and concatenates the ids, the
-same way the translation shards join prompt and reply encodings, so every
-piece boundary is a token boundary.  ``write_sft_records`` writes the
+``encode_chat`` tokenizes the pieces one by one and concatenates the ids, so
+every piece boundary is a token boundary.  ``write_sft_records`` writes the
 ``.bin/.idx/.plen/.lmask`` layout read by ``chronos.data.shards.SFTRecords``.
 
 A record whose last turn is not an assistant turn ends with context tokens;

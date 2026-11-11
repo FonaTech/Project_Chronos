@@ -445,3 +445,22 @@ def total_loss(
             lookahead_probs, teacher_probs, lookahead_steps, num_experts_per_tok,
         )
     return loss
+
+
+def iteration_cluster_spread(probs5: torch.Tensor, membership: torch.Tensor, token_mask: torch.Tensor | None = None) -> torch.Tensor:
+    """Iteration-axis cluster locality over ``probs5`` ``[B, S, G, D, E]`` (G recurrent layers, D loop iterations).
+
+    Per token and layer: total variation between each iteration's cluster-mass distribution and the mean over
+    its iterations, averaged.  0 = every iteration routes into the same clusters, so one cluster read serves
+    them all; experts inside a cluster may still differ.  Twin of ``mlx.training.trainer._iteration_cluster_spread``.
+    """
+    _b, _s, _g, d, _e = probs5.shape
+    if d < 2 or int(membership.shape[1]) <= 1:
+        return probs5.new_zeros(())
+    mass = torch.einsum("bsgde,ec->bsgdc", probs5.float(), membership.to(probs5.device, torch.float32))
+    spread = 0.5 * (mass - mass.mean(dim=3, keepdim=True)).abs().sum(dim=-1)
+    per_token = spread.mean(dim=(2, 3))
+    if token_mask is None:
+        return per_token.mean()
+    m = token_mask.to(per_token.dtype)
+    return (per_token * m).sum() / m.sum().clamp_min(1.0)

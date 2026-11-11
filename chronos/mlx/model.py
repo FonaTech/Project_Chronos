@@ -111,6 +111,7 @@ class ChronosMLXBlock(nn.Module):
         latent_only: bool = False,
         kv_override=None,
         return_shared_kv: bool = False,
+        top_k: int | None = None,
     ):
         new_cache, shared = cache, None
         if not latent_only:
@@ -127,9 +128,9 @@ class ChronosMLXBlock(nn.Module):
             and bool(getattr(self._cfg, "activation_checkpointing", False)))
         if isinstance(self.mlp, ChronosMLXMOE):
             if sub:
-                x = x + call_block(self.mlp, mlp_in, available_expert_mask=available_expert_mask)
+                x = x + call_block(self.mlp, mlp_in, available_expert_mask=available_expert_mask, top_k=top_k)
             else:
-                x = x + self.mlp(mlp_in, available_expert_mask=available_expert_mask)
+                x = x + self.mlp(mlp_in, available_expert_mask=available_expert_mask, top_k=top_k)
         else:
             x = x + call_block(self.mlp, mlp_in) if sub else x + self.mlp(mlp_in)
         if return_shared_kv:
@@ -271,42 +272,50 @@ class ChronosMLXModel(nn.Module):
             # iteration) never exits early; shared_first/first_only may.
             allow_exit = mode != "per_iteration"
             diagnostics = []
-            for group in range(cfg.recurrent_groups):
+            order = str(getattr(cfg, "recurrent_order", "layer") or "layer")
+            # Graded top-k: loop iterations after the first route to fewer experts (0 = same as the first).
+            later_k = int(getattr(cfg, "recurrent_later_topk", 0) or 0)
+            # Prefix blocks (block order): iterations after the first run only the first later_g layers of the block.
+            later_g = int(getattr(cfg, "recurrent_later_groups", 0) or 0)
+            target = min(1.0, max(1e-6, cfg.halting_threshold))
+            
+            def run_layer(group, step, x, shared):
+                """One loop iteration of one physical layer: condition, attend/route, contract."""
                 i = cfg.prelude_layers + group
-                states, halts = [], []
-                exited, shared = False, None
-                halted = cumulative = None
-                target = min(1.0, max(1e-6, cfg.halting_threshold))
-                for step in range(depth):
-                    conditioned = controller.condition(x, step, group)
-                    slot = layout.slot(i, step)
-                    if mode == "per_iteration":
-                        refined, new_caches[slot] = run(i, conditioned, slot)
-                    elif mode == "first_only":
-                        refined, candidate = run(i, conditioned, slot, latent_only=step > 0)
-                        if step == 0:
-                            new_caches[slot] = candidate
-                    elif step == 0:
-                        refined, new_caches[slot], shared = run(i, conditioned, slot, return_shared_kv=True)
-                    else:
-                        refined, _ = run(i, conditioned, kv_override=shared)
-                    x = controller.contract(x, refined, group, cfg)
-                    states.append(x)
-                    prob = controller.halt_probability(x)
-                    halts.append(prob)
-                    # Exact per-token ACT halting (Torch parity, see model_chronos).
-                    if step + 1 >= cfg.min_recurrent_depth:
-                        clipped = mx.clip(prob.astype(mx.float32), 0.0, 1.0)
-                        if halted is None:
-                            cumulative = mx.zeros_like(clipped)
-                            halted = mx.zeros(clipped.shape, dtype=mx.bool_)
-                        newly = mx.logical_and(mx.logical_not(halted), cumulative + clipped >= target)
-                        cumulative = mx.where(mx.logical_or(halted, newly), cumulative, mx.minimum(cumulative + clipped, 1.0))
-                        halted = mx.logical_or(halted, newly)
-                    if not self.training and adaptive and allow_exit and halted is not None and step + 1 < depth:
-                        if bool(mx.all(halted).item()):
-                            exited = True
-                            break
+                tk = {"top_k": later_k} if later_k and step > 0 else {}
+                conditioned = controller.condition(x, step, group)
+                slot = layout.slot(i, step)
+                if mode == "per_iteration":
+                    refined, new_caches[slot] = run(i, conditioned, slot, **tk)
+                elif mode == "first_only":
+                    refined, candidate = run(i, conditioned, slot, latent_only=step > 0, **tk)
+                    if step == 0:
+                        new_caches[slot] = candidate
+                elif step == 0:
+                    refined, new_caches[slot], shared = run(i, conditioned, slot, return_shared_kv=True)
+                else:
+                    refined, _ = run(i, conditioned, kv_override=shared, **tk)
+                return controller.contract(x, refined, group, cfg), shared
+            
+            def track(x, step, halted, cumulative):
+                prob = controller.halt_probability(x)
+                # Exact per-token ACT halting (Torch parity, see model_chronos).
+                if step + 1 >= cfg.min_recurrent_depth:
+                    clipped = mx.clip(prob.astype(mx.float32), 0.0, 1.0)
+                    if halted is None:
+                        cumulative = mx.zeros_like(clipped)
+                        halted = mx.zeros(clipped.shape, dtype=mx.bool_)
+                    newly = mx.logical_and(mx.logical_not(halted), cumulative + clipped >= target)
+                    cumulative = mx.where(mx.logical_or(halted, newly), cumulative, mx.minimum(cumulative + clipped, 1.0))
+                    halted = mx.logical_or(halted, newly)
+                return prob, halted, cumulative
+            
+            def can_exit(halted, step):
+                if not self.training and adaptive and allow_exit and halted is not None and step + 1 < depth:
+                    return bool(mx.all(halted).item())
+                return False
+            
+            def finish(states, halts, exited, x):
                 mixed, state = auxiliary_state(states, halts, cfg.min_recurrent_depth, cfg.halting_threshold)
                 if adaptive:
                     x = mixed
@@ -316,6 +325,41 @@ class ChronosMLXModel(nn.Module):
                     state["depth_used"] = mx.full(halts[0].shape, len(states), dtype=mx.float32)
                 state["exited"] = exited
                 diagnostics.append(state)
+                return x
+            
+            if order == "block":
+                # Block-interleaved recurrence: (layer0 layer1 ... layerG-1) x depth.
+                # One state trajectory and one halting head per block iteration; each
+                # physical layer still keeps its own dt, loop/group embeddings and KV.
+                shared = [None] * cfg.recurrent_groups
+                states, halts = [], []
+                halted = cumulative = None
+                exited = False
+                for step in range(depth):
+                    for group in range(cfg.recurrent_groups if step == 0 or not later_g else min(cfg.recurrent_groups, later_g)):
+                        x, shared[group] = run_layer(group, step, x, shared[group])
+                    states.append(x)
+                    prob, halted, cumulative = track(x, step, halted, cumulative)
+                    halts.append(prob)
+                    if can_exit(halted, step):
+                        exited = True
+                        break
+                x = finish(states, halts, exited, x)
+            else:
+                # Layer-consecutive recurrence (default): layer0 x depth, layer1 x depth, ...
+                for group in range(cfg.recurrent_groups):
+                    states, halts = [], []
+                    exited, shared = False, None
+                    halted = cumulative = None
+                    for step in range(depth):
+                        x, shared = run_layer(group, step, x, shared)
+                        states.append(x)
+                        prob, halted, cumulative = track(x, step, halted, cumulative)
+                        halts.append(prob)
+                        if can_exit(halted, step):
+                            exited = True
+                            break
+                    x = finish(states, halts, exited, x)
             for i in range(cfg.prelude_layers+cfg.recurrent_groups, len(self.layers)):
                 slot = layout.slot(i, 0)
                 x, new_caches[slot] = run(i, x, slot)
