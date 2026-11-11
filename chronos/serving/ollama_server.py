@@ -172,6 +172,7 @@ def create_app(runtime, *, api_key: str | None = None, monitor_runs_dir: str | N
         cfg = meta.get("config", {})
         info = {"general.architecture": "chronos", "chronos.recurrent_depth": cfg.get("recurrent_depth"),
                 "chronos.recurrent_attention_mode": cfg.get("recurrent_attention_mode"),
+                "chronos.recurrent_order": cfg.get("recurrent_order", "layer"),
                 "chronos.num_experts": cfg.get("num_experts"), "chronos.experts_per_token": cfg.get("num_experts_per_tok"),
                 "chronos.kv_latent_dim": cfg.get("kv_latent_dim"), "chronos.context_length": cfg.get("max_position_embeddings"),
                 "chronos.hidden_size": cfg.get("hidden_size"), "chronos.vocab_size": cfg.get("vocab_size")}

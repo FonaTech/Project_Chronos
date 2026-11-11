@@ -1,0 +1,12 @@
+{
+  "tokenizer_class": "PreTrainedTokenizerFast",
+  "bos_token": "<|im_start|>",
+  "eos_token": "<|im_end|>",
+  "unk_token": null,
+  "pad_token": "<|endoftext|>",
+  "model_max_length": 32768,
+  "clean_up_tokenization_spaces": false,
+  "chat_template": "{% if tools %}{{ '<|im_start|>system\n' }}{% if messages and messages[0]['role'] == 'system' %}{{ messages[0]['content'] + '\n\n' }}{% endif %}{{ '<tools>\n' }}{% for tool in tools %}{{ tool | tojson + '\n' }}{% endfor %}{{ '</tools><|im_end|>\n' }}{% endif %}{% for message in messages %}{% if not (tools and loop.first and message['role'] == 'system') %}{{ '<|im_start|>' + message['role'] + '\n' + (message['content'] or '') }}{% if message['role'] == 'assistant' and message.get('tool_calls') %}{% set text = message['content'] or '' %}{% for call in message['tool_calls'] %}{% set fn = call['function'] if call.get('function') else call %}{% if text or not loop.first %}{{ '\n' }}{% endif %}{{ '<tool_call>' + {'name': fn['name'], 'arguments': fn['arguments']} | tojson + '</tool_call>' }}{% endfor %}{% endif %}{{ '<|im_end|>' + '\n' }}{% endif %}{% endfor %}{% if add_generation_prompt %}{{ '<|im_start|>assistant\n' }}{% endif %}",
+  "add_bos_token": false,
+  "add_eos_token": false
+}

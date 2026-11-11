@@ -28,6 +28,7 @@ import torch
 from chronos.model.moe_chronos import ChronosMOEFeedForward
 from chronos.model.temporal_loss import (
     cluster_locality_loss,
+    iteration_cluster_spread,
     temporal_locality_loss,
     lookahead_supervision_loss,
     lookahead_topk_hit_loss,
@@ -104,6 +105,35 @@ def first_iteration_router_probs(model) -> Optional[torch.Tensor]:
         mlp = getattr(layer, "mlp", None)
         if isinstance(mlp, ChronosMOEFeedForward) and mlp.iteration_router_probs:
             probs.append(mlp.iteration_router_probs[0])
+    return torch.stack(probs, dim=2) if probs else None
+
+
+def recurrent_iteration_probs(model, config, *, with_grad: bool = True) -> Optional[torch.Tensor]:
+    """``[B, S, G, D, E]``: router probabilities of each recurrent layer at each loop iteration (None unless
+    every recurrent layer dispatched the same number, at least 2, of times in the last forward)."""
+    start, groups = int(getattr(config, "prelude_layers", 0) or 0), int(getattr(config, "recurrent_groups", 0) or 0)
+    rows = []
+    for layer in list(model.model.layers)[start:start + groups]:
+        mlp = getattr(layer, "mlp", None)
+        if not isinstance(mlp, ChronosMOEFeedForward):
+            return None
+        seq = mlp.iteration_router_probs_grad if with_grad else mlp.iteration_router_probs
+        if not seq:
+            return None
+        rows.append(torch.stack(list(seq), dim=2))
+    if not rows or rows[0].shape[2] < 2 or any(r.shape[2] != rows[0].shape[2] for r in rows):
+        return None
+    return torch.stack(rows, dim=2)
+
+
+def iteration_mean_router_probs(model) -> Optional[torch.Tensor]:
+    """Per physical layer, router probabilities averaged over its loop iterations ``[B, S, L, E]``
+    (lookahead teacher covering every iteration; the step-0 routing for one-dispatch layers)."""
+    probs = []
+    for layer in model.model.layers:
+        mlp = getattr(layer, "mlp", None)
+        if isinstance(mlp, ChronosMOEFeedForward) and mlp.iteration_router_probs:
+            probs.append(torch.stack(list(mlp.iteration_router_probs), dim=0).mean(dim=0))
     return torch.stack(probs, dim=2) if probs else None
 
 
@@ -191,6 +221,13 @@ def chronos_loss_term(
                 cluster_term = cluster_locality_loss(router_4d, membership, window)
             loss = loss + lambda_cluster * cluster_term
 
+        lambda_iteration = float(getattr(config, "lambda_iteration_cluster", 0.0) or 0.0)
+        if lambda_iteration > 0.0:
+            iteration_probs = recurrent_iteration_probs(model, config)
+            if iteration_probs is not None:
+                mask = None if labels is None else real_token_mask_torch(labels)
+                loss = loss + lambda_iteration * iteration_cluster_spread(iteration_probs, cluster_membership_tensor(config, iteration_probs.device), mask)
+
         lambda_lookahead = float(getattr(config, "lambda_lookahead", 0.0))
         lookahead_steps = int(getattr(config, "lookahead_steps", 0))
         if (
@@ -200,7 +237,9 @@ def chronos_loss_term(
         ):
             # Teacher must be detached: lookahead targets are stop-grad'd
             # by construction (we predict the *future* router state).
-            teacher = lookahead_teacher(first_iteration_router_probs(model), lookahead_probs, config)
+            source = (iteration_mean_router_probs(model) if getattr(config, "lookahead_teacher_scope", "first") == "iterations"
+                    else first_iteration_router_probs(model))
+            teacher = lookahead_teacher(source, lookahead_probs, config)
             la = lookahead_supervision_loss(lookahead_probs, teacher, lookahead_steps)
             loss = loss + lambda_lookahead * la
             lambda_lookahead_topk = float(getattr(config, "lambda_lookahead_topk", 0.0))

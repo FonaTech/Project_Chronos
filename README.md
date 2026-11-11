@@ -113,13 +113,7 @@ At this size a full-depth step costs about as much as a batched verify pass. Wit
 
 `chronos.model.factory.fit_config` searches for a configuration that matches total and active parameter targets.
 
-**Kernel and extensions.** The `chronos` package trains general models and carries no task-specific code. Task tooling lives in extensions that import the kernel. The en↔zh translation demo is one: `demos/translation` (`chronos-translate`: corpus pipeline, BLEU/chrF runs, model bundles; see its README). It is not part of the `Project_Chronos` wheel and is not published on PyPI; install it from a checkout with `pip install -e demos/translation`.
-
-**Status of the 50M en→zh demo (in progress; `demos/translation`).**
-- Model: 49.69M total / 12.09M active parameters, 36 experts, MLA latent 128, SWA window 128, 16k self-built vocabulary.
-- Run: a 72-hour MLX bf16 run (pretrain, then SFT) started on 2026-11-05.
-- Interim measurement: valid CE 2.477 at pretrain step 13,996 of about 24.7k planned (it was 3.012 at step 1,656). That checkpoint is packaged as `chronos-enzh-50m-pretrain-s13996` (see Model bundle).
-- BLEU/chrF on FLORES+ and WMT22, and the ablations (attention mode, depth, lazy-expert budget, speculative γ), will be published after the run finishes. No quality numbers are claimed before then.
+**Kernel and extensions.** The `chronos` package trains general models and carries no task-specific code. Task tooling lives in extensions that import the kernel. The en↔zh translation demo is one: `demos/translation` (`chronos-translate`: corpus pipeline, BLEU/chrF runs, model bundles; see its README). It is not part of the `Project_Chronos` wheel and is not published on PyPI; install it from a checkout with `pip install -e demos/translation`. The 50M en→zh status, the released model `chronos-enzh-50m-sft` with its measurements, and the model bundle are documented in [`demos/translation/README.md`](demos/translation/README.md).
 
 **Inference and memory options (all off by default).** Each option is a config field and a `chronos serve` / Inference-tab override. Tests compare each one with its reference path on Torch and MLX.
 
@@ -501,22 +495,6 @@ All lambda terms are searchable with Optuna TPE, together with structural hyperp
 
 ---
 
-## Released model: chronos-enzh-50m-sft
-
-[`models/chronos-enzh-50m-sft/`](models/chronos-enzh-50m-sft/) packages a 49.7M-parameter Chronos v3 model (12.1M active per token) trained for 69 hours on one Apple M5 Max: configuration, tokenizer, trained prompt, decoding settings, a driver (`translate.py`) and the evaluation behind every number. The weights (99.5 MB, bfloat16 safetensors) are attached to the release [`enzh-50m-sft-v1`](https://github.com/FonaTech/Project_Chronos/releases/tag/enzh-50m-sft-v1).
-
-- **Boundary:** English → Chinese only, one sentence (≤ 128 tokens) at a time. Chinese → English is disabled: English-only fine-tuning erased it (FLORES+ BLEU 0.00 after SFT). The driver refuses input outside the boundary.
-- **Measured** (MLX bf16, greedy): FLORES+ devtest BLEU 33.48 / chrF 29.52; WMT22 BLEU 32.60 / chrF 28.83; WMT24++ BLEU 26.89 / chrF 24.43 (split into sentences).
-- **Research use only.** The training corpora's licences are unknown; see the folder's `NOTICE`.
-
-```bash
-cd models/chronos-enzh-50m-sft
-pip install --pre "Project_Chronos[mlx]==0.3.2a0"   # or "Project_Chronos==0.3.2a0" without MLX
-python translate.py --download && python translate.py "The meeting was moved to Friday."
-```
-
----
-
 ## Installation
 
 ```bash
@@ -598,6 +576,7 @@ The old preset names (Recommended-CN, Tiny/Small/Medium/Large) still load; they 
 3. **Sets LR and batch size** from the DeepSeek LLM compute-optimal fits (η = 0.3118·C^−0.125, B = 0.2920·C^0.3271), capped for wide models.
 4. **Fits memory.** It picks micro-batch, accumulation, int8 KV, router scope, activation checkpointing, optimizer paging and an expert RAM budget for the memory level.
 5. **Writes per-stage values.** Pretrain, SFT, DPO, ORPO, GRPO and distill each get their own learning rate, batch, epochs, save interval and stage-specific terms (β, temperature, α).
+6. **Sets the loop knobs (depth above 1).** `recurrent_order="block"`, `recurrent_dt_param="sigmoid"` and `recurrent_dt_init = min(0.5, 2 / depth)`, each with a `sources` entry in the report (the first two cite the 15M measurements; the step size is labelled estimated). One loop iteration is an Euler step of `dh/dτ = block(h) − h`, so `depth × dt` is the integration horizon; the planner holds it at 2 and lets depth refine the integration. Kernel defaults are unchanged (`layer`, `clamp`, 0.25). All of this was measured on one seed per arm at 15M parameters; see the CHANGELOG, "Physical mechanism" and "Known limits".
 
 The stage table is editable; the Train tab merges the selected stage's row over the shared values, and the pretrain row stays in sync with the shared widgets. "Save plan" writes the config, stage values and report to JSON. Every number in the report is labelled measured or estimated.
 
@@ -645,38 +624,6 @@ OLLAMA_HOST=127.0.0.1:11435 ollama run <model-name> "Hello"
 - Chronos options go in the request `options`: `chronos_speculative`, `chronos_draft_depth`, `chronos_gamma`, `chronos_miss_policy`.
 - Stock `ollama` / llama.cpp cannot execute Chronos GGUF files (MLA+SWA hybrid layers and the contractive recurrence have no stock equivalent); use this server instead.
 - Security: binds 127.0.0.1 without authentication by default. Other addresses require `--allow-remote` and `--api-key`; clients then send `Authorization: Bearer <key>`.
-
-### Model bundle (translation demo extension)
-
-Bundles belong to the translation extension (`demos/translation`). Build the two wheels first (`python -m build --outdir dist .` and `python -m build --outdir dist demos/translation`). `chronos-translate bundle build` packages one exported checkpoint of a run into a folder that works right after unpacking. Building only reads the run directory.
-
-```bash
-chronos-translate bundle build --run-dir runs/enzh_50m_v1 --which best --pack \
-    --wheel dist/project_chronos-0.3.2a0-py3-none-any.whl --wheel dist/chronos_translate-0.3.2a0-py3-none-any.whl
-```
-
-| Bundle path | Content |
-|---|---|
-| `model/` | weights + `.config.json` sidecar, tokenizer (`model/tokenizer/`) |
-| `eval/` | FLORES+ dev/devtest (CC BY-SA 4.0) for `bundle eval` / `probe` |
-| `data/sft_valid/` | the run's SFT validation shards |
-| `wheels/`, `bin/setup.sh`, `bin/chronos` | offline install of the kernel and extension wheels into `.venv`; launcher that sets `CHRONOS_BUNDLE` and sends `bundle …` to `chronos-translate` |
-| `recipes/source_run_spec.json`, `recommended.json` | the recipe that produced the weights; fine-tune tiers `smoke` / `quick` / `standard` / `full` |
-| `bundle.json` | provenance (step, tokens, valid CE), measured quality probe, SHA-256 of every file |
-
-On the recipient side:
-
-```bash
-bin/setup.sh                                              # venv + wheels + `bundle check`
-bin/chronos bundle translate "The weather is very nice today."
-bin/chronos bundle translate --backend mlx --speculative --file examples/translate_en.txt
-bin/chronos bundle eval --split devtest -n 200
-bin/chronos bundle prepare-data my_pairs.jsonl --out work/data      # FLORES+ is removed from your data
-bin/chronos bundle finetune --data work/data --run-dir work/ft --tier quick --mode sft
-bin/chronos bundle serve -- --port 11435
-```
-
-`--speculative` needs `--repetition-penalty 1.0` (its default), because the penalty changes the target distribution at every position. `finetune` writes a `chronos-translate run` spec with `init_checkpoint` set to the bundle weights and refuses a run directory that already holds a run. Bundles built from data with unknown licences (WMT19, OPUS-100) say in `NOTICE.md` that the weights are for research only.
 
 ### Deployment export
 
@@ -797,10 +744,14 @@ tuner.start(
         tune_num_experts=True,
         tune_num_shared_experts=True,
         tune_kv_latent_dim=True,
+        tune_recurrent_order=True,      # probes a looped model (probe_recurrent_depth, default 4)
+        tune_recurrent_dt_init=True,
     ),
     n_trials=20,
 )
 ```
+
+The probe trains on real tokens from `dataset_path` (up to 400k, encoded with the model's tokenizer, or the bundled 32k one) and falls back to random ids with a log line when the data cannot be read. The two loop knobs are a coarse screen: a few steps of a 4-layer model cannot rank step sizes that differ by less than the run-to-run noise. `recurrent_later_groups` is not searched, because it trades quality for cost and a loss-only search would always choose the full block.
 
 ---
 

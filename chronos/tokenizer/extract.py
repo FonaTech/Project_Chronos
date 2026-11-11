@@ -2,7 +2,7 @@
 
 Accepts any mix of files/directories (parquet, jsonl, json, csv, tsv, txt).
 For each record it finds text fields automatically (conversations, pairs,
-``text``/``content``/``translation.*`` …) unless a field list is given, buckets
+``text``/``content``, nested string fields …) unless a field list is given, buckets
 text by script, and keeps a seeded per-source reservoir so every source is
 represented regardless of size.
 """
@@ -59,7 +59,7 @@ def _texts_from_record(record, fields: list[str] | None) -> Iterator[str]:
     for key, value in record.items():
         if isinstance(value, str) and (key in TEXT_KEYS or len(key) <= 3 or key.startswith("sentence")):
             yield value
-        elif isinstance(value, dict):  # translation: {en: ..., zh: ...}
+        elif isinstance(value, dict):  # nested string fields, e.g. {"a": ..., "b": ...}
             for sub in value.values():
                 if isinstance(sub, str):
                     yield sub

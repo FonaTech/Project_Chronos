@@ -91,3 +91,55 @@ chronos-translate bundle build --run-dir runs/enzh_50m_v1 --wheel dist/project_c
 
 WMT19 和 OPUS-100 的许可证标注为 unknown，用它们训练的权重只能用于研究。
 FLORES+（CC BY-SA 4.0）只用于评测。
+
+**50M 英译中 demo（进行中；`demos/translation`）**
+- 模型：总参数 49.69M，激活 12.09M；36 个专家；MLA latent 128；SWA 窗口 128；自研 16k 词表。
+- 训练：72 小时 MLX bf16 任务（先预训练，后 SFT），2026-11-05 启动。
+- 中途实测：预训练第 13,996 步（计划约 24.7k 步）valid CE 为 2.477（第 1,656 步时为 3.012）。该 checkpoint 已打包为 `chronos-enzh-50m-pretrain-s13996`（见“模型包”）。
+- FLORES+ 和 WMT22 上的 BLEU/chrF，以及各项消融（注意力模式、深度、懒加载专家预算、推测 γ），等训练结束后公布。在此之前不给出任何质量数字。
+
+## 已发布模型：chronos-enzh-50m-sft
+
+[`models/chronos-enzh-50m-sft/`](../../models/chronos-enzh-50m-sft/) 打包了一个 4,969 万参数的 Chronos v3 模型（每个 token 激活 1,209 万），在一台 Apple M5 Max 上训练了 69 小时。目录中有模型配置、分词器、训练时的 prompt、解码参数、驱动脚本（`translate.py`），以及每个数字背后的评测。权重（99.5 MB，bfloat16 safetensors）作为附件放在 release [`enzh-50m-sft-v1`](https://github.com/FonaTech/Project_Chronos/releases/tag/enzh-50m-sft-v1) 中。
+
+- **边界：** 只做英译中，每次一句（≤ 128 token）。中译英已屏蔽：只含英译中的微调抹掉了这一能力（SFT 后 FLORES+ BLEU 0.00）。驱动会拒绝边界以外的输入。
+- **实测**（MLX bf16，贪心解码）：FLORES+ devtest BLEU 33.48 / chrF 29.52；WMT22 BLEU 32.60 / chrF 28.83；WMT24++ BLEU 26.89 / chrF 24.43（分句）。
+- **仅供研究使用。** 训练语料的许可未知，见目录中的 `NOTICE`。
+
+```bash
+cd models/chronos-enzh-50m-sft
+pip install --pre "Project_Chronos[mlx]==0.3.2a0"   # 不用 MLX 时装 "Project_Chronos==0.3.2a0"
+python translate.py --download && python translate.py "The meeting was moved to Friday."
+```
+
+## 模型包（翻译 demo 扩展）
+
+模型包属于翻译扩展（`demos/translation`）。先构建两个 wheel（`python -m build --outdir dist .` 和 `python -m build --outdir dist demos/translation`）。`chronos-translate bundle build` 把某次运行导出的一个 checkpoint 打包成解压即用的目录。打包过程只读取运行目录。
+
+```bash
+chronos-translate bundle build --run-dir runs/enzh_50m_v1 --which best --pack \
+    --wheel dist/project_chronos-0.3.2a0-py3-none-any.whl --wheel dist/chronos_translate-0.3.2a0-py3-none-any.whl
+```
+
+| 包内路径 | 内容 |
+|---|---|
+| `model/` | 权重 + `.config.json` 配置文件，分词器（`model/tokenizer/`） |
+| `eval/` | FLORES+ dev/devtest（CC BY-SA 4.0），供 `bundle eval` / `probe` 使用 |
+| `data/sft_valid/` | 该次运行的 SFT 验证分片 |
+| `wheels/`、`bin/setup.sh`、`bin/chronos` | 把内核和扩展两个 wheel 离线安装到 `.venv`；启动脚本设置 `CHRONOS_BUNDLE`，并把 `bundle …` 转给 `chronos-translate` |
+| `recipes/source_run_spec.json`、`recommended.json` | 产生这份权重的配方；微调档位 `smoke` / `quick` / `standard` / `full` |
+| `bundle.json` | 来源信息（步数、token 数、valid CE）、实测质量探针、每个文件的 SHA-256 |
+
+接收方的用法：
+
+```bash
+bin/setup.sh                                              # 建 venv、装 wheels、运行 `bundle check`
+bin/chronos bundle translate "The weather is very nice today."
+bin/chronos bundle translate --backend mlx --speculative --file examples/translate_en.txt
+bin/chronos bundle eval --split devtest -n 200
+bin/chronos bundle prepare-data my_pairs.jsonl --out work/data      # 会从你的数据中剔除 FLORES+
+bin/chronos bundle finetune --data work/data --run-dir work/ft --tier quick --mode sft
+bin/chronos bundle serve -- --port 11435
+```
+
+`--speculative` 要求 `--repetition-penalty 1.0`（此时的默认值），因为惩罚会逐位置改变目标分布。`finetune` 写出一份 `init_checkpoint` 指向包内权重的 `chronos-translate run` spec；运行目录里已有训练时会拒绝写入。用许可未知的数据（WMT19、OPUS-100）训练的模型包，`NOTICE.md` 中写明权重仅供研究使用。

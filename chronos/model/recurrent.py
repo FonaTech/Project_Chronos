@@ -14,6 +14,47 @@ import torch.nn as nn
 from chronos.model.precision_ops import RMSNorm
 
 
+def recommended_dt_init(depth, horizon=2.0, cap=0.5):
+    """Step-size init for a looped block: dt = horizon / depth, at most ``cap``.
+
+    One loop iteration is an explicit Euler step x <- x + dt * f(x) of dx/dtau = f(x), where f is the
+    block's residual update, so R iterations integrate over the horizon T = R * dt. Near the fixed
+    direction f(x) ~ lambda * x each iteration multiplies the residual by (1 + dt * lambda) and the loop
+    by (1 + dt * lambda)^(R-1), about exp(T * lambda): constructive interference sets the total gain through T,
+    and depth only refines the integration. Holding T fixed therefore keeps the gain while depth grows.
+
+    Measured at 15M (30 min per arm, block order, one seed per arm, noise floor about 0.005-0.008):
+    - depth 8, dt 0.25 (T = 2) beat dt 0.5 (T = 4) by 0.018-0.079 in every block of steps after step 10;
+    - depth 8, dt 0.25 beat the clamp default whose dt collapsed to 0.05 (T = 0.4) only by 0.002-0.015;
+    - depth 8, sigmoid from dt 0.0625 ended at dt 0.033 (T = 0.26) and was worse than dt 0.25 by 0.085-0.333
+      after step 100 (within noise before);
+    - depth 4 was flat for dt 0.2-0.5 (T = 0.8-2) and worse at dt 1.0 or 0.05;
+    - at equal step depth 8 (dt 0.25) led depth 4 (dt 0.5) by 0.041-0.049 in steps 100-600 and was level
+      (+0.002, +0.008) afterwards;
+    - depth 8, sigmoid from dt 0.25 (range 0.1-1) moved to dt 0.145 (T = 1.16) and ended 0.020-0.023 below
+      the fixed dt 0.25 arm after step 600 (validation CE 4.761 against 4.776), so the optimiser prefers a
+      smaller T than 2.
+    The block rescales its own output when dt changes: the per-iteration residual gain g stayed near 1.07 for
+    dt 0.15-0.5 (effective lambda = (g - 1) / dt fell from 0.48 to 0.13), and the total log-gain
+    (R - 1) * ln g was 0.45-0.51 in all three. Only kappa = dt * lambda and that total are physical; dt alone
+    is a gauge. So T = 2 is a safe starting point inside a flat region, not a fitted optimum, and ``cap`` is
+    the largest dt that was measured; depths 2 and 3 are extrapolation.
+    Use it with recurrent_dt_param="sigmoid", so the optimizer can still move dt either way."""
+    depth = max(1, int(depth))
+    return min(float(cap), float(horizon) / depth)
+
+
+def _dt_raw_init(param, dt_init, dt_min, dt_max):
+    """Raw stored value so step 0 gives dt == dt_init under the chosen parameterisation.
+    clamp: store dt_init directly.  sigmoid: store the logit that inverts dt_min + (dt_max-dt_min)*sigmoid(raw)."""
+    import math
+    if param != "sigmoid":
+        return float(dt_init)
+    span = max(float(dt_max) - float(dt_min), 1e-9)
+    frac = min(max((float(dt_init) - float(dt_min)) / span, 1e-6), 1 - 1e-6)
+    return float(math.log(frac / (1.0 - frac)))
+
+
 @dataclass
 class RecurrentDepthState:
     halting_probs: torch.Tensor
@@ -40,6 +81,7 @@ class RecurrentController(nn.Module):
         self.epsilon = float(config.halting_epsilon)
         self.dt_min = float(config.recurrent_dt_min)
         self.dt_max = float(config.recurrent_dt_max)
+        self.dt_param = str(getattr(config, "recurrent_dt_param", "clamp"))
 
         self.loop_embeddings = nn.Parameter(torch.zeros(depth, hidden))
         self.group_embeddings = nn.Parameter(torch.zeros(groups, hidden))
@@ -49,7 +91,7 @@ class RecurrentController(nn.Module):
         nn.init.zeros_(self.halting_head.weight)
         nn.init.constant_(self.halting_head.bias, -1.0)
         self.step_sizes = nn.Parameter(
-            torch.full((groups,), float(config.recurrent_dt_init))
+            torch.full((groups,), _dt_raw_init(self.dt_param, config.recurrent_dt_init, self.dt_min, self.dt_max))
         )
         self.training_progress = 0.0
 
@@ -98,6 +140,8 @@ class RecurrentController(nn.Module):
         return hidden + self.loop_embeddings[depth_idx][None, None, :] + self.group_embeddings[group][None, None, :]
 
     def step_size(self, group: int) -> torch.Tensor:
+        if self.dt_param == "sigmoid":
+            return self.dt_min + (self.dt_max - self.dt_min) * torch.sigmoid(self.step_sizes[group])
         return self.step_sizes[group].clamp(self.dt_min, self.dt_max)
 
     def contract(self, before: torch.Tensor, after: torch.Tensor, group: int) -> torch.Tensor:

@@ -538,6 +538,7 @@ def _export_metadata(
             "recommended_resident_experts": cfg.get("recommended_resident_experts"),
             "recurrent_enabled": cfg.get("recurrent_enabled", False),
             "recurrent_groups": cfg.get("recurrent_groups"),
+            "recurrent_order": cfg.get("recurrent_order", "layer"),
             "recurrent_depth": cfg.get("recurrent_depth", 1),
             "min_recurrent_depth": cfg.get("min_recurrent_depth", 1),
             "max_inference_depth": cfg.get("max_inference_depth"),

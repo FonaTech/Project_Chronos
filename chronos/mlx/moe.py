@@ -223,6 +223,7 @@ class ChronosMLXMOE(nn.Module):
         self,
         x: mx.array,
         available_expert_mask: mx.array = None,
+        top_k: int | None = None,
     ) -> mx.array:
         """
         x: [B, S, H]
@@ -243,11 +244,18 @@ class ChronosMLXMOE(nn.Module):
         # first dispatch's ids).  Indices are discrete: gradients flow through
         # topk_weight (gathered scores) only.  ``recorded`` makes a
         # recomputation follow the forward pass's routing exactly.
+        # Graded top-k: a later loop iteration may route to fewer experts (top_k < num_experts_per_tok).
+        k = self.num_experts_per_tok if not top_k else max(1, min(int(top_k), self.num_experts_per_tok))
         shared_idx = recorded(lambda: self._shared_topk_idx if self.router_scope == "shared" else None)
         if shared_idx is not None and shared_idx.shape[0] == scores.shape[0]:
             topk_idx = shared_idx
+            if k < shared_idx.shape[1]:
+                # Keep the k best-scoring experts of the first dispatch (no new expert is touched).
+                topk_idx = recorded(lambda: mx.stop_gradient(mx.take_along_axis(
+                        shared_idx,
+                        mx.argpartition(-mx.take_along_axis(scores, shared_idx, axis=-1), kth=k - 1, axis=-1)[:, :k],
+                        axis=-1)))
         else:
-            k = self.num_experts_per_tok
             topk_idx = recorded(lambda: mx.stop_gradient(mx.argpartition(-scores, kth=k - 1, axis=-1)[:, :k]))
             if self.router_scope == "shared" and self._shared_topk_idx is None and not recomputing():
                 object.__setattr__(self, "_shared_topk_idx", topk_idx)

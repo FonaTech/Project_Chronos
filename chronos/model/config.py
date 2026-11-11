@@ -48,6 +48,14 @@ class ChronosConfig(ChronosBaseConfig):
         self.recurrent_dt_init: float = kwargs.pop("recurrent_dt_init", 0.25)
         self.recurrent_dt_min: float = kwargs.pop("recurrent_dt_min", 0.05)
         self.recurrent_dt_max: float = kwargs.pop("recurrent_dt_max", 1.0)
+        # Map the learned per-group raw parameter to dt in [dt_min, dt_max]:
+        # "clamp" (default) = clip(raw, dt_min, dt_max), the historical behaviour, exact for existing checkpoints,
+        #   but the gradient is 0 below dt_min and on both bounds (a collapsed dt cannot recover).
+        # "sigmoid" = dt_min + (dt_max - dt_min) * sigmoid(raw): gradient positive everywhere, so dt can move back.
+        #   The stored scalar is the logit; the init inverts the sigmoid so dt at step 0 equals recurrent_dt_init.
+        self.recurrent_dt_param: str = str(kwargs.pop("recurrent_dt_param", "clamp"))
+        if self.recurrent_dt_param not in ("clamp", "sigmoid"):
+            raise ValueError("recurrent_dt_param must be 'clamp' or 'sigmoid'")
         # v3 recurrent attention contract (see config_schema.resolve_*):
         # shared_first | per_iteration | first_only.  An explicit legacy
         # ``recurrent_latent_refinement`` without a mode keeps v2 meaning.
@@ -63,6 +71,30 @@ class ChronosConfig(ChronosBaseConfig):
         if mode not in ("shared_first", "per_iteration", "first_only"):
             raise ValueError(f"unknown recurrent_attention_mode {mode!r}")
         self.recurrent_attention_mode: str = mode
+        # Loop order: ``layer`` repeats each recurrent layer ``depth`` times in a
+        # row (A A B B ...); ``block`` repeats the whole group of layers
+        # (A B A B ...), so iteration 0 is an ordinary depth-1 forward pass.
+        order = str(kwargs.pop("recurrent_order", "layer") or "layer").lower()
+        if order not in ("layer", "block"):
+            raise ValueError(f"unknown recurrent_order {order!r}")
+        self.recurrent_order: str = order
+        # Graded top-k: loop iterations after the first route to this many experts per token
+        # (0 = the full num_experts_per_tok); the shared expert always runs.  Iteration 0 keeps the full top-k.
+        later = int(kwargs.pop("recurrent_later_topk", 0) or 0)
+        if later < 0:
+            raise ValueError(f"recurrent_later_topk must be >= 0, got {later}")
+        self.recurrent_later_topk: int = later
+        # Prefix blocks: in block order, loop iterations after the first run only the first N recurrent layers of
+        # the block (0 = all).  Cost scales with the number of layer calls, so this cuts time and expert pages.
+        # Needs a depth-independent cache (shared_first / first_only): a skipped layer has no later KV slot.
+        later_groups = int(kwargs.pop("recurrent_later_groups", 0) or 0)
+        if later_groups < 0:
+            raise ValueError(f"recurrent_later_groups must be >= 0, got {later_groups}")
+        if later_groups and order != "block":
+            raise ValueError("recurrent_later_groups needs recurrent_order='block'")
+        if later_groups and mode == "per_iteration":
+            raise ValueError("recurrent_later_groups needs recurrent_attention_mode shared_first or first_only")
+        self.recurrent_later_groups: int = later_groups
         # Keep the legacy flag coherent for estimator/export consumers.
         self.recurrent_latent_refinement = mode == "first_only"
         # Execution/training policy for shared recurrent blocks.  ``fixed``
@@ -262,6 +294,16 @@ class ChronosConfig(ChronosBaseConfig):
         # document longer than the window is cut into window-sized parts).
         # Neither consults labels or task tokens.
         self.cluster_locality_mode: str = str(kwargs.pop("cluster_locality_mode", "window") or "window")
+        # Iteration-axis cluster locality (0 = off): weight on the total variation between the cluster
+        # distribution of each loop iteration of a token and the mean over its iterations, so every iteration
+        # of a recurrent layer reads the same expert clusters.  Experts inside a cluster stay free to differ.
+        self.lambda_iteration_cluster: float = float(kwargs.pop("lambda_iteration_cluster", 0.0) or 0.0)
+        # Lookahead teacher: routing of loop iteration 0 only ("first") or averaged over every iteration of the
+        # layer ("iterations"), so prefetch predicts the experts the deeper iterations need as well.
+        scope = str(kwargs.pop("lookahead_teacher_scope", "first") or "first").lower()
+        if scope not in ("first", "iterations"):
+            raise ValueError(f"unknown lookahead_teacher_scope {scope!r}")
+        self.lookahead_teacher_scope: str = scope
         # M4: weight on the router KL anchor (alignment stages only).
         # Prevents SFT/DPO/ORPO/GRPO gradients from drifting routing away
         # from the pretrained distribution that the cluster layout was

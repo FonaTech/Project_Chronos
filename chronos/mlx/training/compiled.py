@@ -3,7 +3,7 @@
 Measured on mlx 0.32.4 (see the 0.3.2a0 CHANGELOG): the compiled step gives
 the eager loss and gradients up to FP32 summation order (<= 1.7e-5 relative
 on CPU FP32), consumes the RNG stream identically, and runs 1.08-1.18x
-faster on the 50M en->zh config because elementwise chains (RMSNorm,
+faster on a 50M MoE config (hidden 384, 6 layers, 36 experts) because elementwise chains (RMSNorm,
 SwiGLU, softmax/CE, router regularizers) fuse into fewer kernels.
 
 What compiling needs here, and how it is handled:

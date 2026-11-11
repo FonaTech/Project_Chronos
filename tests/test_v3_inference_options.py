@@ -181,8 +181,8 @@ def test_shared_router_scope_reuses_first_iteration_experts():
     torch.manual_seed(0)
     captured = []
     original = recurrent.forward
-    def spy(x, available_expert_mask=None):
-        out = original(x, available_expert_mask)
+    def spy(x, available_expert_mask=None, **kw):
+        out = original(x, available_expert_mask, **kw)
         captured.append(recurrent._shared_topk_idx.clone())
         return out
     recurrent.forward = spy

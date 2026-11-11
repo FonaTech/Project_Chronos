@@ -324,6 +324,45 @@ def _cluster_objective(router_4d: mx.array, config, token_mask=None, input_ids=N
     return _cluster_locality_loss(router_4d, membership, window, token_mask)
 
 
+def _recurrent_iteration_probs(model, config) -> mx.array | None:
+    """``[B, S, G, D, E]``: router probabilities of each recurrent layer at each loop iteration.
+    
+    None unless every recurrent layer dispatched the same number (>= 2) of times in the last forward."""
+    start, groups = int(config.prelude_layers), int(config.recurrent_groups)
+    rows = []
+    for layer in list(getattr(model, "layers", []))[start:start + groups]:
+        moe = getattr(layer, "mlp", None)
+        if not isinstance(moe, ChronosMLXMOE) or not moe.iteration_router_probs:
+            return None
+        rows.append(mx.stack(moe.iteration_router_probs, axis=2))   # [B, S, D, E]
+    if not rows or rows[0].shape[2] < 2 or any(r.shape[2] != rows[0].shape[2] for r in rows):
+        return None
+    return mx.stack(rows, axis=2)
+
+
+def _iteration_mean_router_probs(model) -> mx.array | None:
+    """Per physical layer, router probabilities averaged over its loop iterations ``[B, S, L, E]``
+    (lookahead teacher that covers every iteration; equals the step-0 routing for one-dispatch layers)."""
+    probs = [mx.stack(layer.mlp.iteration_router_probs, axis=0).mean(axis=0) for layer in getattr(model, "layers", [])
+        if isinstance(getattr(layer, "mlp", None), ChronosMLXMOE) and layer.mlp.iteration_router_probs]
+    return mx.stack(probs, axis=2) if probs else None
+
+
+def _iteration_cluster_spread(probs5: mx.array, membership: mx.array, token_mask: mx.array | None = None) -> mx.array:
+    """Iteration-axis cluster locality: for each token and recurrent layer, the total variation between the
+    cluster-mass distribution of every loop iteration and the mean over its iterations, averaged.
+    
+    0 = every iteration of a token routes into the same clusters (one cluster read serves them all); the
+    experts inside a cluster are free to differ per iteration.  MLX twin of
+    ``chronos.model.temporal_loss.iteration_cluster_spread``."""
+    B, S, G, D, E = probs5.shape
+    C = int(membership.shape[1])
+    if D < 2 or C <= 1:
+        return mx.zeros(())
+    mass = (probs5.astype(mx.float32).reshape(-1, E) @ membership).reshape(B, S, G, D, C)
+    spread = 0.5 * mx.abs(mass - mass.mean(axis=3, keepdims=True)).sum(axis=-1)      # [B, S, G, D]
+    return _masked_mean(spread.mean(axis=(2, 3)), token_mask)
+
 def _load_balance_loss(router_4d: mx.array, num_experts_per_tok: int,
                        token_mask: mx.array | None = None) -> mx.array:
     """Switch-style ``E · Σ load·importance`` per virtual layer, summed.
@@ -657,6 +696,11 @@ def _regularized_terms(model, base_loss, lookahead_probs, config, router_ref, me
         if float(getattr(config, "lambda_cluster_locality", 0.0) or 0.0) > 0.0:
             add("cluster_locality_loss", config.lambda_cluster_locality,
                 _cluster_objective(router, config, token_mask, input_ids))
+        if float(getattr(config, "lambda_iteration_cluster", 0.0) or 0.0) > 0.0:
+            iteration_probs = _recurrent_iteration_probs(model, config)
+            if iteration_probs is not None:
+                add("iteration_cluster_loss", config.lambda_iteration_cluster,
+                    _iteration_cluster_spread(iteration_probs, _cluster_membership(config), token_mask))
         if router.shape[1] > 1:
             mean = router.mean(axis=2)
             add("temporal_loss", config.lambda_temporal, _temporal_locality_loss(mean, token_mask))
@@ -665,8 +709,9 @@ def _regularized_terms(model, base_loss, lookahead_probs, config, router_ref, me
             _PAIR_SEGMENTS[0] = _LOOKAHEAD_SEGMENTS[0]     # lookahead keeps its own document rule
             try:
                 if lookahead_probs is not None and config.lambda_lookahead > 0 and config.lookahead_steps > 0:
-                    teacher = _lookahead_teacher(_first_iteration_router_probs(model).astype(mx.float32),
-                                                 lookahead_probs, config)
+                    source = (_iteration_mean_router_probs(model) if getattr(config, "lookahead_teacher_scope", "first") == "iterations"
+                            else _first_iteration_router_probs(model))
+                    teacher = _lookahead_teacher(source.astype(mx.float32), lookahead_probs, config)
                     add("lookahead_loss", config.lambda_lookahead,
                         _lookahead_supervision_loss(lookahead_probs, teacher, config.lookahead_steps, token_mask))
                     add("lookahead_topk_loss", config.lambda_lookahead_topk,

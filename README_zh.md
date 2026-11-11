@@ -125,13 +125,7 @@ flowchart LR
 
 `chronos.model.factory.fit_config` 按总参数量和激活参数量目标搜索模型配置。
 
-**内核与扩展。** `chronos` 包用于训练通用模型，不含任何任务特化代码。任务工具放在调用内核的扩展里。英↔中翻译 demo 就是这样一个扩展：`demos/translation`（`chronos-translate`：语料流水线、BLEU/chrF 训练、模型包，详见其 README）。它不在 `Project_Chronos` wheel 里，也不发布到 PyPI，需从仓库检出后用 `pip install -e demos/translation` 安装。
-
-**50M 英译中 demo（进行中；`demos/translation`）**
-- 模型：总参数 49.69M，激活 12.09M；36 个专家；MLA latent 128；SWA 窗口 128；自研 16k 词表。
-- 训练：72 小时 MLX bf16 任务（先预训练，后 SFT），2026-11-05 启动。
-- 中途实测：预训练第 13,996 步（计划约 24.7k 步）valid CE 为 2.477（第 1,656 步时为 3.012）。该 checkpoint 已打包为 `chronos-enzh-50m-pretrain-s13996`（见“模型包”）。
-- FLORES+ 和 WMT22 上的 BLEU/chrF，以及各项消融（注意力模式、深度、懒加载专家预算、推测 γ），等训练结束后公布。在此之前不给出任何质量数字。
+**内核与扩展。** `chronos` 包用于训练通用模型，不含任何任务特化代码。任务工具放在调用内核的扩展里。英↔中翻译 demo 就是这样一个扩展：`demos/translation`（`chronos-translate`：语料流水线、BLEU/chrF 训练、模型包，详见其 README）。它不在 `Project_Chronos` wheel 里，也不发布到 PyPI，需从仓库检出后用 `pip install -e demos/translation` 安装。50M 英译中的进展、已发布模型 `chronos-enzh-50m-sft` 及其实测结果、模型包，均写在 [`demos/translation/README_zh.md`](demos/translation/README_zh.md)。
 
 **推理与内存选项（全部默认关闭）。** 每个选项既是 config 字段，也可作为 `chronos serve` 和 Inference Tab 的覆盖项；测试在 Torch 和 MLX 上把每个选项与参考路径做对比。
 
@@ -505,22 +499,6 @@ D_{\mathrm{KL}}
 
 ---
 
-## 已发布模型：chronos-enzh-50m-sft
-
-[`models/chronos-enzh-50m-sft/`](models/chronos-enzh-50m-sft/) 打包了一个 4,969 万参数的 Chronos v3 模型（每个 token 激活 1,209 万），在一台 Apple M5 Max 上训练了 69 小时。目录中有模型配置、分词器、训练时的 prompt、解码参数、驱动脚本（`translate.py`），以及每个数字背后的评测。权重（99.5 MB，bfloat16 safetensors）作为附件放在 release [`enzh-50m-sft-v1`](https://github.com/FonaTech/Project_Chronos/releases/tag/enzh-50m-sft-v1) 中。
-
-- **边界：** 只做英译中，每次一句（≤ 128 token）。中译英已屏蔽：只含英译中的微调抹掉了这一能力（SFT 后 FLORES+ BLEU 0.00）。驱动会拒绝边界以外的输入。
-- **实测**（MLX bf16，贪心解码）：FLORES+ devtest BLEU 33.48 / chrF 29.52；WMT22 BLEU 32.60 / chrF 28.83；WMT24++ BLEU 26.89 / chrF 24.43（分句）。
-- **仅供研究使用。** 训练语料的许可未知，见目录中的 `NOTICE`。
-
-```bash
-cd models/chronos-enzh-50m-sft
-pip install --pre "Project_Chronos[mlx]==0.3.2a0"   # 不用 MLX 时装 "Project_Chronos==0.3.2a0"
-python translate.py --download && python translate.py "The meeting was moved to Friday."
-```
-
----
-
 ## 安装
 
 ```bash
@@ -601,6 +579,7 @@ Config Tab 提供 5 档 v3 预设。它们都由规划器生成，存放在 `ui/
 3. **确定学习率和 batch。** 按 DeepSeek LLM 的计算最优拟合式（η = 0.3118·C^−0.125，B = 0.2920·C^0.3271）给出，宽模型的学习率另设上限。
 4. **匹配内存。** 按内存档位选择 micro-batch、梯度累积、int8 KV、路由范围、激活检查点、优化器分页和专家 RAM 预算。
 5. **生成各阶段参数。** pretrain、SFT、DPO、ORPO、GRPO、distill 各有独立的学习率、batch、epoch、保存间隔，以及各自的专用项（β、温度、α）。
+6. **设置循环参数（深度大于 1 时）。** `recurrent_order="block"`、`recurrent_dt_param="sigmoid"` 和 `recurrent_dt_init = min(0.5, 2 / depth)`，报告的 `sources` 中各有一条来源（前两项引用 15M 实测，步长标注为估算）。一次循环迭代是 `dh/dτ = block(h) − h` 的一个欧拉步，所以 `depth × dt` 是积分时程；规划器把时程固定为 2，让深度只负责把积分切得更细。内核默认值不变（`layer`、`clamp`、0.25）。以上结论都来自 15M 参数、每组一个种子的实测；见 CHANGELOG 的“Physical mechanism”和“Known limits”。
 
 阶段表可以直接编辑。Train Tab 会把所选阶段那一行合并到共享参数之上；pretrain 行与共享控件保持同步。“保存方案”把 config、各阶段参数和报告写成 JSON。报告里每个数字都标注实测或估算。
 
@@ -649,38 +628,6 @@ OLLAMA_HOST=127.0.0.1:11435 ollama run <模型名> "你好"
 - Chronos 专属参数放在请求的 `options` 里：`chronos_speculative`、`chronos_draft_depth`、`chronos_gamma`、`chronos_miss_policy`。
 - stock `ollama` / llama.cpp 无法执行 Chronos 的 GGUF 文件，因为 MLA+SWA 混合层和收缩式循环没有对应的 stock 实现；请改用本服务。
 - 安全：默认只监听 127.0.0.1，不带认证。绑定其他地址必须同时给出 `--allow-remote` 和 `--api-key`，客户端随后发送 `Authorization: Bearer <key>`。
-
-### 模型包（翻译 demo 扩展）
-
-模型包属于翻译扩展（`demos/translation`）。先构建两个 wheel（`python -m build --outdir dist .` 和 `python -m build --outdir dist demos/translation`）。`chronos-translate bundle build` 把某次运行导出的一个 checkpoint 打包成解压即用的目录。打包过程只读取运行目录。
-
-```bash
-chronos-translate bundle build --run-dir runs/enzh_50m_v1 --which best --pack \
-    --wheel dist/project_chronos-0.3.2a0-py3-none-any.whl --wheel dist/chronos_translate-0.3.2a0-py3-none-any.whl
-```
-
-| 包内路径 | 内容 |
-|---|---|
-| `model/` | 权重 + `.config.json` 配置文件，分词器（`model/tokenizer/`） |
-| `eval/` | FLORES+ dev/devtest（CC BY-SA 4.0），供 `bundle eval` / `probe` 使用 |
-| `data/sft_valid/` | 该次运行的 SFT 验证分片 |
-| `wheels/`、`bin/setup.sh`、`bin/chronos` | 把内核和扩展两个 wheel 离线安装到 `.venv`；启动脚本设置 `CHRONOS_BUNDLE`，并把 `bundle …` 转给 `chronos-translate` |
-| `recipes/source_run_spec.json`、`recommended.json` | 产生这份权重的配方；微调档位 `smoke` / `quick` / `standard` / `full` |
-| `bundle.json` | 来源信息（步数、token 数、valid CE）、实测质量探针、每个文件的 SHA-256 |
-
-接收方的用法：
-
-```bash
-bin/setup.sh                                              # 建 venv、装 wheels、运行 `bundle check`
-bin/chronos bundle translate "The weather is very nice today."
-bin/chronos bundle translate --backend mlx --speculative --file examples/translate_en.txt
-bin/chronos bundle eval --split devtest -n 200
-bin/chronos bundle prepare-data my_pairs.jsonl --out work/data      # 会从你的数据中剔除 FLORES+
-bin/chronos bundle finetune --data work/data --run-dir work/ft --tier quick --mode sft
-bin/chronos bundle serve -- --port 11435
-```
-
-`--speculative` 要求 `--repetition-penalty 1.0`（此时的默认值），因为惩罚会逐位置改变目标分布。`finetune` 写出一份 `init_checkpoint` 指向包内权重的 `chronos-translate run` spec；运行目录里已有训练时会拒绝写入。用许可未知的数据（WMT19、OPUS-100）训练的模型包，`NOTICE.md` 中写明权重仅供研究使用。
 
 ### 部署导出
 
@@ -806,10 +753,14 @@ tuner.start(
         tune_lambda_lookahead=True, tune_lookahead_steps=True,
         tune_hidden_size=True, tune_num_experts=True,
         tune_num_shared_experts=True, tune_kv_latent_dim=True,
+        tune_recurrent_order=True,      # 用循环模型做探测（probe_recurrent_depth，默认 4）
+        tune_recurrent_dt_init=True,
     ),
     n_trials=20,
 )
 ```
+
+探测用的是 `dataset_path` 中的真实 token（最多 40 万个，用模型自己的分词器编码，没有则用内置 32k 分词器）；读不出数据时退回随机 id，并写一行日志。两个循环参数只能做粗筛：对 4 层模型训练几步，分辨不出差别小于运行间噪声的步长。`recurrent_later_groups` 不参与搜索，因为它是用质量换成本，只看损失的搜索永远会选完整的块。
 
 ---
 

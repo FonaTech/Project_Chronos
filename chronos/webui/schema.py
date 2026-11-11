@@ -86,6 +86,16 @@ CONFIG_FIELDS: tuple[Field, ...] = (
        recommended="recurrent_depth", source="rule", ref="equals_recurrent_depth"),
     _f("recurrent_attention_mode", "recurrent", "choice", "shared_first",
        choices=["shared_first", "per_iteration", "first_only"], recommended="shared_first", source="code"),
+    _f("recurrent_order", "recurrent", "choice", "layer",
+       choices=["layer", "block"], recommended="block", source="planner", advanced=True),
+    _f("recurrent_later_topk", "recurrent", "int", 0, min=0, max=16, step=1, advanced=True),
+    _f("recurrent_later_groups", "recurrent", "int", 0, min=0, max=64, step=1, advanced=True),
+    _f("recurrent_dt_param", "recurrent", "choice", "clamp",
+       choices=["clamp", "sigmoid"], recommended="sigmoid", source="planner", advanced=True),
+    _f("recurrent_dt_init", "recurrent", "float", 0.25, min=0.01, max=1.0, step=0.01,
+       recommended=0.5, source="planner", advanced=True),
+    _f("recurrent_dt_min", "recurrent", "float", 0.05, min=0.001, max=1.0, step=0.005, advanced=True),
+    _f("recurrent_dt_max", "recurrent", "float", 1.0, min=0.05, max=1.0, step=0.05, advanced=True),
     _f("adaptive_halting", "recurrent", "bool", False),
     _f("halting_threshold", "recurrent", "float", 0.99, min=0.5, max=1.0, step=0.001),
     _f("depth_schedule", "recurrent", "choice", "fixed_then_adaptive",
@@ -137,6 +147,9 @@ CONFIG_FIELDS: tuple[Field, ...] = (
     _f("cluster_locality_window", "objectives", "int", 32, min=0, max=65536, step=1,
        recommended="data", source="rule", ref="window_median_record"),
     _f("cluster_locality_mode", "objectives", "choice", "window", choices=["window", "segment"],
+       source="code", advanced=True),
+    _f("lambda_iteration_cluster", "objectives", "float", 0.0, min=0.0, max=10.0, step=0.01, advanced=True),
+    _f("lookahead_teacher_scope", "objectives", "choice", "first", choices=["first", "iterations"],
        source="code", advanced=True),
     # ---- memory / lazy experts ---------------------------------------------
     _f("vram_budget_gb", "memory", "float", 4.0, min=0.01, max=256.0, step=0.01),
@@ -325,7 +338,8 @@ FORM_FIELDS: tuple[Field, ...] = (
     _f("tune.probe_steps", "autotune", "int", 80, min=10, max=1000, step=10, scope=("autotune",)),
     _f("tune.search", "autotune", "multi", ["lambda_balance", "lambda_temporal", "lr"],
        choices=["lambda_balance", "lambda_temporal", "lambda_lookahead", "lookahead_steps", "lr", "hidden_size",
-                "num_experts", "num_shared_experts", "kv_latent_dim"], scope=("autotune",)),
+                "num_experts", "num_shared_experts", "kv_latent_dim", "recurrent_order", "recurrent_dt_init"],
+       scope=("autotune",)),
     # ---- planner -----------------------------------------------------------
     _f("plan.target_m", "planner", "float", 50.0, min=0.1, max=100000.0, step=0.1, scope=("planner",)),
     _f("plan.use_moe", "planner", "bool", True, scope=("planner",)),
@@ -355,9 +369,10 @@ SOURCES = ("code", "planner", "measured", "rule")
 LITERAL_CHOICES = frozenset({
     "mlx", "cuda", "xpu", "mps", "cpu", "float32", "bfloat16", "float16", "int8", "safetensors", "pt",
     "fp16-safetensors", "q8_0-safetensors", "fp16-gguf", "q8_0-gguf", "chronos-native-gguf",
-    "pretrain", "sft", "dpo", "orpo", "grpo", "distill", "shared_first", "per_iteration", "first_only",
-    "lambda_balance", "lambda_temporal", "lambda_lookahead", "lookahead_steps", "lr", "hidden_size",
-    "num_experts", "num_shared_experts", "kv_latent_dim", "sync_on_demand", "on_demand", "fallback_diagnostic",
+    "pretrain", "sft", "dpo", "orpo", "grpo", "distill", "shared_first", "per_iteration", "first_only", "layer", "first", "iterations",
+    "clamp", "sigmoid", "lambda_balance", "lambda_temporal", "lambda_lookahead", "lookahead_steps", "lr", "hidden_size",
+    "num_experts", "num_shared_experts", "kv_latent_dim", "recurrent_order", "recurrent_dt_init",
+    "sync_on_demand", "on_demand", "fallback_diagnostic",
 })
 
 

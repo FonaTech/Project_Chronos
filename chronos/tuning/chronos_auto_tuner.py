@@ -54,6 +54,20 @@ class ChronosSearchSpaceConfig(SearchSpaceConfig):
     lambda_lookahead_min: float = 1e-3
     lambda_lookahead_max: float = 1.0
 
+    # Loop knobs (0.3.3a0). They only matter for a looped model, so searching either one makes the probe model
+    # run `probe_recurrent_depth` iterations (the other probes stay at depth 1). The probe loss comes from a few
+    # steps and cannot resolve differences as small as dt 0.2-0.5 at depth 4: treat these two as a coarse screen.
+    # `recurrent_later_groups` is not searched: it trades quality for cost, so a loss-only search would always
+    # pick the full block.
+    tune_recurrent_order: bool = False
+    recurrent_order_choices: List[str] = field(default_factory=lambda: ["layer", "block"])
+
+    tune_recurrent_dt_init: bool = False
+    recurrent_dt_init_min: float = 0.1
+    recurrent_dt_init_max: float = 1.0
+
+    probe_recurrent_depth: int = 4
+
 
 class ChronosAutoTuner(AutoTuner):
     """
@@ -110,12 +124,36 @@ class ChronosAutoTuner(AutoTuner):
             if ss.tune_lambda_lookahead:
                 params["lambda_lookahead"] = trial.suggest_float(
                     "lambda_lookahead", ss.lambda_lookahead_min, ss.lambda_lookahead_max, log=True)
+
+            # Loop knobs: the probe model needs more than one iteration for them to change anything.
+            if ss.tune_recurrent_order:
+                params["recurrent_order"] = trial.suggest_categorical(
+                    "recurrent_order", ss.recurrent_order_choices)
+            if ss.tune_recurrent_dt_init:
+                params["recurrent_dt_init"] = trial.suggest_float(
+                    "recurrent_dt_init", ss.recurrent_dt_init_min, ss.recurrent_dt_init_max, log=True)
+            if ss.tune_recurrent_order or ss.tune_recurrent_dt_init:
+                params["recurrent_depth"] = max(2, int(ss.probe_recurrent_depth))
         else:
             params["lambda_balance"] = 5e-4
             params["lambda_temporal"] = 1e-3
             params["lookahead_steps"] = 2
 
         return params
+
+    def _probe_tokens(self, dataset_path, tokenizer_dir):
+        """Real tokens of the user's dataset for the probe, read once per run; ``None`` means random ids."""
+        cache = self.__dict__.setdefault("_probe_cache", {})
+        key = (dataset_path, tokenizer_dir)
+        if key not in cache:
+            from chronos.tuning.probe_data import load_probe_tokens
+            cache[key] = load_probe_tokens(dataset_path, tokenizer_dir)
+            if cache[key] is None:
+                line = "[probe] no text could be read from the dataset; trials use random token ids"
+            else:
+                line = f"[probe] {cache[key][0].size} real tokens from the dataset (vocab {cache[key][1]})"
+            self._put({"type": "log", "line": line})
+        return cache[key]
 
     def _run_probe_trial(
         self, trial, model_id, dataset_path, train_ratio,
@@ -134,6 +172,9 @@ class ChronosAutoTuner(AutoTuner):
         from chronos.model.moe_chronos import ChronosMOEFeedForward
 
         _, device = resolve_training_device("auto")
+        if device == "mlx":
+            # The probe trains a torch model and "mlx" is not a torch device: use the best torch device instead.
+            device = "mps" if torch.backends.mps.is_available() else ("cuda" if torch.cuda.is_available() else "cpu")
         lr = params.get("learning_rate", 2e-4)
         lb = params.get("lambda_balance", 5e-4)
         lt = params.get("lambda_temporal", 1e-3)
@@ -142,6 +183,16 @@ class ChronosAutoTuner(AutoTuner):
         ne = int(params.get("num_experts", 4))
         ns = int(params.get("num_shared_experts", 1))
         kv = int(params.get("kv_latent_dim", 64))
+        real = self._probe_tokens(dataset_path, kwargs.get("tokenizer_dir"))
+        vocab_kw = {"vocab_size": real[1]} if real else {}
+        loop = {}
+        if params.get("recurrent_depth"):
+            depth = int(params["recurrent_depth"])
+            loop = dict(recurrent_enabled=True, recurrent_depth=depth, min_recurrent_depth=max(1, depth // 2),
+                    max_inference_depth=depth, prelude_layers=1, coda_layers=1)
+            for key in ("recurrent_order", "recurrent_dt_init"):
+                if key in params:
+                    loop[key] = params[key]
 
         if os.path.exists(model_id):
             try:
@@ -155,6 +206,7 @@ class ChronosAutoTuner(AutoTuner):
                         "lookahead_steps": la,
                         "lambda_balance": lb,
                         "lambda_temporal": lt,
+                        **loop,
                     },
                     require_unsniffable=True,
                 )
@@ -164,7 +216,7 @@ class ChronosAutoTuner(AutoTuner):
                     num_experts_per_tok=2, num_shared_experts=ns,
                     kv_latent_dim=kv, lookahead_steps=la,
                     lambda_balance=lb, lambda_temporal=lt,
-                    use_hybrid_attention=True, use_moe=True,
+                    use_hybrid_attention=True, use_moe=True, **vocab_kw, **loop,
                 )
         else:
             cfg = ChronosConfig(
@@ -179,7 +231,13 @@ class ChronosAutoTuner(AutoTuner):
                 lambda_temporal=lt,
                 use_hybrid_attention=True,
                 use_moe=True,
+                **vocab_kw,
+                **loop,
             )
+        if real and real[1] > int(cfg.vocab_size):
+            # A checkpoint's smaller vocabulary cannot embed this tokenizer's ids.
+            self._put({"type": "log", "line": f"[probe] model vocab {cfg.vocab_size} < tokenizer vocab {real[1]}; trials use random token ids"})
+            real = None
         model = ChronosForCausalLM(cfg).to(device)
         if os.path.exists(model_id):
             try:
@@ -195,7 +253,11 @@ class ChronosAutoTuner(AutoTuner):
         model.train()
         losses = []
         for step in range(probe_steps):
-            ids = torch.randint(0, vocab_size, (batch, seq_len), device=device)
+            if real:
+                from chronos.tuning.probe_data import probe_batch
+                ids = torch.from_numpy(probe_batch(real[0], step, batch, seq_len)).to(device)
+            else:
+                ids = torch.randint(0, vocab_size, (batch, seq_len), device=device)
             out, _ = model(ids, labels=ids, legacy_output=True)
             moe_layers = [l.mlp for l in model.model.layers
                           if isinstance(l.mlp, ChronosMOEFeedForward)]
@@ -230,6 +292,7 @@ class ChronosAutoTuner(AutoTuner):
                 "lambda_balance", "lambda_temporal", "lambda_lookahead",
                 "lookahead_steps", "hidden_size", "num_experts",
                 "num_shared_experts", "kv_latent_dim",
+                "recurrent_order", "recurrent_dt_init",
             ):
                 if key in p:
                     patch[key] = p[key]
