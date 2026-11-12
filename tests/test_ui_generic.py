@@ -135,6 +135,23 @@ def test_kernel_has_no_translation_task_code():
     assert not hits, "\n".join(hits)
 
 
+def test_task_models_and_tests_live_under_demos():
+    """A task's model folder and its tests sit inside its demo, and each main README points at the demo once."""
+    import re
+    task = re.compile(r"enzh|en_zh|zh_en|translat", re.I)
+    misplaced = []
+    for top in ("models", "tests"):
+        for folder, dirs, files in os.walk(os.path.join(_repo_root, top)):
+            dirs[:] = [d for d in dirs if d != "__pycache__"]
+            misplaced += [os.path.join(folder, n) for n in dirs + files if task.search(n)]
+    assert not misplaced, misplaced
+    mention = re.compile(r"en→zh|en↔zh|en-zh|英→中|英↔中|英译中|FLORES|BLEU")
+    for name in ("README.md", "README_zh.md"):
+        with open(os.path.join(_repo_root, name), encoding="utf-8") as fh:
+            lines = [line for line in fh if mention.search(line)]
+        assert len(lines) == 1 and "demos/translation" in lines[0], (name, [line[:100] for line in lines])
+
+
 # ---- data inspector -------------------------------------------------------------
 def test_record_schema_covers_common_dataset_shapes():
     from ui.tabs.data_tab import record_schema

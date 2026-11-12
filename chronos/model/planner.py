@@ -588,6 +588,20 @@ def plan_training(req: PlanRequest, profile: DatasetProfile | None = None, *, ve
         sources["recurrent_order"] = "measured, 15M one seed: block beat layer at equal step with a healthy dt"
         sources["recurrent_dt_param"] = "measured, 15M: the clamp default collapsed onto its floor and stopped learning"
         sources["recurrent_dt_init"] = "estimated: horizon 2 / depth (15M, depth 4 and 8; other sizes not measured)"
+        # The other loop knobs keep the values the 15M runs favoured; each source says why.
+        loop_knobs.update(recurrent_later_topk=0, recurrent_later_groups=0, lambda_iteration_cluster=0.0,
+                lookahead_teacher_scope='first', recurrent_dt_min=0.05, recurrent_dt_max=1.0)
+        sources["recurrent_later_topk"] = ("measured, 15M one seed: 1 expert in later iterations raised valid CE "
+            "4.543 -> 4.600 at the same speed")
+        sources["recurrent_later_groups"] = ("measured, 15M one seed: the full block is best per step; 2 of 4 layers "
+            "in later iterations give about 1.3x steps per second at depth 4 for up to 0.055 more training loss "
+            "per step; never 1 (one layer looping alone)")
+        sources["lambda_iteration_cluster"] = ("measured, 15M: with cluster locality on, 99.5-100% of later-iteration "
+            "clusters are already used at iteration 0")
+        sources["lookahead_teacher_scope"] = ("measured, 15M: the lookahead head picks the right cluster for 0.97 of "
+            "tokens at every iteration")
+        sources["recurrent_dt_min"] = sources["recurrent_dt_max"] = ("measured, 15M: sigmoid arms with range 0.05-1 "
+            "(depth 4) and 0.1-1 (depth 8) learned dt 0.14-0.30, inside the range")
     model = dict(
         architecture_version=3, recurrent_attention_mode="shared_first", rope_layout="per_head",
         hidden_size=h, num_hidden_layers=L, num_attention_heads=arch.num_attention_heads,
