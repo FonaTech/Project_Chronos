@@ -106,14 +106,14 @@ are for research use only. FLORES+ (CC BY-SA 4.0) is used for evaluation only.
 
 ## Released model: chronos-enzh-50m-sft
 
-[`models/chronos-enzh-50m-sft/`](../../models/chronos-enzh-50m-sft/) packages a 49.7M-parameter Chronos v3 model (12.1M active per token) trained for 69 hours on one Apple M5 Max: configuration, tokenizer, trained prompt, decoding settings, a driver (`translate.py`) and the evaluation behind every number. The weights (99.5 MB, bfloat16 safetensors) are attached to the release [`enzh-50m-sft-v1`](https://github.com/FonaTech/Project_Chronos/releases/tag/enzh-50m-sft-v1).
+[`models/chronos-enzh-50m-sft/`](models/chronos-enzh-50m-sft/) packages a 49.7M-parameter Chronos v3 model (12.1M active per token) trained for 69 hours on one Apple M5 Max: configuration, tokenizer, trained prompt, decoding settings, a driver (`translate.py`) and the evaluation behind every number. The weights (99.5 MB, bfloat16 safetensors) are attached to the release [`enzh-50m-sft-v1`](https://github.com/FonaTech/Project_Chronos/releases/tag/enzh-50m-sft-v1).
 
 - **Boundary:** English → Chinese only, one sentence (≤ 128 tokens) at a time. Chinese → English is disabled: English-only fine-tuning erased it (FLORES+ BLEU 0.00 after SFT). The driver refuses input outside the boundary.
 - **Measured** (MLX bf16, greedy): FLORES+ devtest BLEU 33.48 / chrF 29.52; WMT22 BLEU 32.60 / chrF 28.83; WMT24++ BLEU 26.89 / chrF 24.43 (split into sentences).
 - **Research use only.** The training corpora's licences are unknown; see the folder's `NOTICE`.
 
 ```bash
-cd models/chronos-enzh-50m-sft
+cd demos/translation/models/chronos-enzh-50m-sft
 pip install --pre "Project_Chronos[mlx]==0.3.2a0"   # or "Project_Chronos==0.3.2a0" without MLX
 python translate.py --download && python translate.py "The meeting was moved to Friday."
 ```
@@ -149,3 +149,10 @@ bin/chronos bundle serve -- --port 11435
 ```
 
 `--speculative` needs `--repetition-penalty 1.0` (its default), because the penalty changes the target distribution at every position. `finetune` writes a `chronos-translate run` spec with `init_checkpoint` set to the bundle weights and refuses a run directory that already holds a run. Bundles built from data with unknown licences (WMT19, OPUS-100) say in `NOTICE.md` that the weights are for research only.
+
+## Kernel measurements taken on this demo
+
+Three measurements in the main README use this demo's model or data:
+- Self-speculative decoding table: pretrain step-13,996 checkpoint, greedy, batch 1, FLORES+ dev en→zh prompts, draft depth 1, γ 4 (reports in `reports/speculative/`).
+- 0.3.2 native-kernel parity: the logits of the 50M en→zh checkpoint are bit-identical between 0.3.1a3 + minimind and the native kernel; the timings ran while the 50M en→zh SFT run was training on the GPU.
+- MLX compiled step and activation recomputation (2026-11-08): the 50M en→zh recipe's model config from random init, real en→zh shards.

@@ -89,7 +89,7 @@ flowchart LR
 
 **Self-speculative decoding (no extra parameters).** The same model drafts γ tokens at a shallow depth and verifies them with one full-depth batched forward pass. Greedy output is token-for-token identical to full-depth greedy. Sampling uses rejection sampling, which preserves the full-depth distribution. After a rejection, the cache is truncated: MLA slices `c_kv`, and the sliding-window cache keeps `window + γ_max` entries. Torch (`chronos/runtime/speculative.py`) and MLX (`chronos/mlx/speculative.py`, `ChronosMLXInferenceEngine.generate(speculative=True)`) share the algorithm. Tests cover greedy identity, the rejection distribution and rollback against a fresh prefill on both backends. The Web UI Inference tab has a switch for it, with draft depth and γ.
 
-For the 50M demo it is exact but not faster on any runtime we measured (pretrain step-13,996 checkpoint, greedy, batch 1, FLORES+ dev en→zh, draft depth 1, γ 4; reports in `reports/speculative/`):
+For the 50M demo checkpoint it is exact but not faster on any runtime we measured (pretrain step-13,996 checkpoint of the demo in `demos/translation`, greedy, batch 1, the demo's dev prompts, draft depth 1, γ 4; exact conditions in [`demos/translation/README.md`](demos/translation/README.md); reports in `reports/speculative/`):
 
 | Runtime | Plain tok/s | Speculative tok/s | Ratio | Acceptance |
 |---|---|---|---|---|
@@ -113,7 +113,7 @@ At this size a full-depth step costs about as much as a batched verify pass. Wit
 
 `chronos.model.factory.fit_config` searches for a configuration that matches total and active parameter targets.
 
-**Kernel and extensions.** The `chronos` package trains general models and carries no task-specific code. Task tooling lives in extensions that import the kernel. The en↔zh translation demo is one: `demos/translation` (`chronos-translate`: corpus pipeline, BLEU/chrF runs, model bundles; see its README). It is not part of the `Project_Chronos` wheel and is not published on PyPI; install it from a checkout with `pip install -e demos/translation`. The 50M en→zh status, the released model `chronos-enzh-50m-sft` with its measurements, and the model bundle are documented in [`demos/translation/README.md`](demos/translation/README.md).
+**Kernel and extensions.** The `chronos` package trains general models and carries no task-specific code. Task tooling lives in extensions that import the kernel. The en↔zh translation demo is one: `demos/translation` (`chronos-translate`: corpus pipeline, BLEU/chrF runs, model bundles; see its README). It is not part of the `Project_Chronos` wheel and is not published on PyPI; install it from a checkout with `pip install -e demos/translation`. The 50M en→zh status, the released model `chronos-enzh-50m-sft` (files in `demos/translation/models/`) with its measurements, and the model bundle are documented in [`demos/translation/README.md`](demos/translation/README.md).
 
 **Inference and memory options (all off by default).** Each option is a config field and a `chronos serve` / Inference-tab override. Tests compare each one with its reference path on Torch and MLX.
 
@@ -153,11 +153,11 @@ Up to 0.3.1a3, Chronos took its config base, RoPE tables, gated FFN, dense atten
 
 **Old vs new, measured 2026-11-08**
 
-Setup: Apple M5 Max, PyTorch 2.10 on CPU, FP32, 4 threads, median of 5–7 runs, each kernel in its own process, runs alternated twice. The 50M en→zh SFT run was training on the GPU at the same time, so absolute timings carry noise. Old = 0.3.1a3 + minimind `24896cd`.
+Setup: Apple M5 Max, PyTorch 2.10 on CPU, FP32, 4 threads, median of 5–7 runs, each kernel in its own process, runs alternated twice. A 50M training run was using the GPU at the same time, so absolute timings carry noise. Old = 0.3.1a3 + minimind `24896cd`.
 
 | Check | 0.3.1a3 + minimind | 0.3.2 native |
 |---|---|---|
-| Logits, `out/chronos_256_moe.pth` and the 50M en→zh checkpoint (full, padded and prefill+decode paths) | reference | bit-identical (max abs diff 0) |
+| Logits, `out/chronos_256_moe.pth` and the 50M demo checkpoint (full, padded and prefill+decode paths) | reference | bit-identical (max abs diff 0) |
 | Random-init `state_dict` and config values (same seed) | reference | identical |
 | `import chronos` with no cache and no network | fails (`git clone` error) | works |
 | minimind on `sys.path`, top-level `model` module imported | yes | no |
@@ -181,7 +181,7 @@ Up to 0.3.1a3 the MLX trainers ran every micro step eagerly and kept every activ
 - **Compiled micro step** (`chronos/mlx/training/compiled.py`, on by default). Loss and gradients run as one `mx.compile` graph per signature. The executed recurrent depth, the ACT switch, input shapes and plain config values are part of the signature, so a step never reuses a stale graph. Weights and the RNG state are compile inputs and outputs, so dropout and the cache-miss simulation consume the RNG stream exactly as before. Multimodal batches, lazy (paged) experts and any signature that fails to trace run eagerly, and the reason is logged once. `CHRONOS_MLX_COMPILE=auto|on|off` or the recipe's `extra.mlx_compile` switches it.
 - **Activation recomputation** (`chronos/mlx/checkpointing.py`, `activation_checkpointing=true`; the planner's memory-constrained tiers turn it on). Each block call becomes one recomputed region. A plain `mx.checkpoint` is wrong here in two ways, both measured on mlx 0.32.4. Dropout masks and the cache-miss draws would be drawn again during recomputation; they are recorded in the forward pass and replayed. A region that returns the same graph node twice keeps the gradient of only one copy. A block's KV cache and its shared view are such a pair whenever the SWA window covers the sequence (a full-length slice is a new Python object over the same node), and the gradients were 37–40% off. Region outputs are therefore packed into one array per dtype.
 
-**Measured 2026-11-08.** Setup: Apple M5 Max, mlx 0.32.4, bf16, the 50M en→zh recipe's model config from random init, real en→zh shards, the recipe's step sizes (SFT 8 micro-batches per step, pretrain 16). Median of the second half of 16 (SFT) or 12 (pretrain) steps. The 72-hour run was training on the same GPU, so absolute timings carry noise.
+**Measured 2026-11-08.** Setup: Apple M5 Max, mlx 0.32.4, bf16, the 50M demo recipe's model config (`demos/translation/recipes/`) from random init, the demo's real training shards, the recipe's step sizes (SFT 8 micro-batches per step, pretrain 16). Median of the second half of 16 (SFT) or 12 (pretrain) steps. The 72-hour run was training on the same GPU, so absolute timings carry noise.
 
 | Micro step | SFT s/step | SFT peak memory | Pretrain s/step | Pretrain peak memory |
 |---|---|---|---|---|
@@ -519,7 +519,7 @@ pip install "Project_Chronos[mlx]"
 
 ```bash
 pip install "Project_Chronos[serve]"      # chronos serve / chronos monitor (fastapi, uvicorn)
-pip install -e demos/translation          # en↔zh demo extension, from a checkout only (not on PyPI): chronos-translate
+pip install -e demos/translation          # translation demo extension (chronos-translate), from a checkout only, not on PyPI
 ```
 
 **vLLM serving (optional, Linux + CUDA only):**
@@ -858,7 +858,7 @@ Project_Chronos/
 ├── docs/
 │   └── vllm_integration.md
 ├── demos/
-│   └── translation/               # en↔zh extension (chronos-translate): corpus, runs, bundles; not in the wheel
+│   └── translation/               # demo extension (chronos-translate): corpus, runs, bundles, the 50M demo model; not in the wheel
 ├── pyproject.toml
 └── README.md / README_zh.md / THIRD_PARTY_NOTICES.md
 ```
@@ -908,7 +908,7 @@ timeline
         : int8 KV, MLA absorbed decode, shared router scope (opt-in)
         : Auto planner, v3 presets, tokenizer and serve tabs
     Next
-        : 50M en-zh results and ablations
+        : Multi-seed and larger-size runs of the 0.3.3 loop settings
         : Speculative decoding: a draft path that pays off on larger models and lazy experts
         : Train IntentClassifier on large activation corpora
         : Benchmark 7B+ checkpoints

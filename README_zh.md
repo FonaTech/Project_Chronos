@@ -94,7 +94,7 @@ flowchart LR
 - Torch（`chronos/runtime/speculative.py`）与 MLX（`chronos/mlx/speculative.py`、`ChronosMLXInferenceEngine.generate(speculative=True)`）使用同一套算法。
 - 两个后端的测试都覆盖 greedy 一致性、拒绝采样分布，以及回滚结果与从头 prefill 一致。
 - Web UI 推理 Tab 提供自推测开关，可调起草深度和 γ。
-- 50M demo 在实测过的所有运行时上都结果一致，但都没有提速。实测条件：预训练 step 13,996 checkpoint，greedy，batch 1，FLORES+ dev 英→中，起草深度 1，γ 4。报告在 `reports/speculative/`。
+- 50M demo checkpoint 在实测过的所有运行时上都结果一致，但都没有提速。实测条件：`demos/translation` 中 demo 的预训练 step 13,996 checkpoint，greedy，batch 1，该 demo 的 dev 提示，起草深度 1，γ 4；完整条件见 [`demos/translation/README_zh.md`](demos/translation/README_zh.md)。报告在 `reports/speculative/`。
 
 | 运行时 | 普通 tok/s | 自推测 tok/s | 比值 | 接受率 |
 |---|---|---|---|---|
@@ -125,7 +125,7 @@ flowchart LR
 
 `chronos.model.factory.fit_config` 按总参数量和激活参数量目标搜索模型配置。
 
-**内核与扩展。** `chronos` 包用于训练通用模型，不含任何任务特化代码。任务工具放在调用内核的扩展里。英↔中翻译 demo 就是这样一个扩展：`demos/translation`（`chronos-translate`：语料流水线、BLEU/chrF 训练、模型包，详见其 README）。它不在 `Project_Chronos` wheel 里，也不发布到 PyPI，需从仓库检出后用 `pip install -e demos/translation` 安装。50M 英译中的进展、已发布模型 `chronos-enzh-50m-sft` 及其实测结果、模型包，均写在 [`demos/translation/README_zh.md`](demos/translation/README_zh.md)。
+**内核与扩展。** `chronos` 包用于训练通用模型，不含任何任务特化代码。任务工具放在调用内核的扩展里。英↔中翻译 demo 就是这样一个扩展：`demos/translation`（`chronos-translate`：语料流水线、BLEU/chrF 训练、模型包，详见其 README）。它不在 `Project_Chronos` wheel 里，也不发布到 PyPI，需从仓库检出后用 `pip install -e demos/translation` 安装。50M 英译中的进展、已发布模型 `chronos-enzh-50m-sft`（文件在 `demos/translation/models/`）及其实测结果、模型包，均写在 [`demos/translation/README_zh.md`](demos/translation/README_zh.md)。
 
 **推理与内存选项（全部默认关闭）。** 每个选项既是 config 字段，也可作为 `chronos serve` 和 Inference Tab 的覆盖项；测试在 Torch 和 MLX 上把每个选项与参考路径做对比。
 
@@ -165,11 +165,11 @@ Web UI 新增 Tokenizer Tab（抽取 → 训练 → 评估）和 Serve Tab（启
 
 **新旧对比（2026-11-08 实测）**
 
-条件：Apple M5 Max，PyTorch 2.10 CPU，FP32，4 线程，取 5–7 次的中位数；每个内核在独立进程中运行，交替运行两轮。测量时 50M 英译中 SFT 正在 GPU 上训练，绝对耗时有噪声。旧版 = 0.3.1a3 + minimind `24896cd`。
+条件：Apple M5 Max，PyTorch 2.10 CPU，FP32，4 线程，取 5–7 次的中位数；每个内核在独立进程中运行，交替运行两轮。测量时一个 50M 训练任务正在使用 GPU，绝对耗时有噪声。旧版 = 0.3.1a3 + minimind `24896cd`。
 
 | 检查项 | 0.3.1a3 + minimind | 0.3.2 原生 |
 |---|---|---|
-| Logits：`out/chronos_256_moe.pth` 与 50M 英译中 checkpoint（完整、padding、prefill+decode 三条路径） | 参考 | 逐位一致（最大绝对差 0） |
+| Logits：`out/chronos_256_moe.pth` 与 50M demo checkpoint（完整、padding、prefill+decode 三条路径） | 参考 | 逐位一致（最大绝对差 0） |
 | 随机初始化的 `state_dict` 和 config 取值（同一种子） | 参考 | 一致 |
 | 无缓存、无网络时 `import chronos` | 失败（`git clone` 报错） | 正常 |
 | minimind 在 `sys.path` 上，导入了顶层 `model` 模块 | 是 | 否 |
@@ -193,7 +193,7 @@ Web UI 新增 Tokenizer Tab（抽取 → 训练 → 评估）和 Serve Tab（启
 - **编译的 micro step**（`chronos/mlx/training/compiled.py`，默认开启）。损失和梯度按签名各编译成一张 `mx.compile` 图。实际执行的循环深度、ACT 开关、输入形状和普通 config 取值都属于签名，所以训练步不会复用过期的图。权重和 RNG 状态同时是编译的输入和输出，dropout 与缓存未命中模拟消耗 RNG 流的方式与之前完全相同。多模态 batch、懒加载（分页）专家，以及任何 trace 失败的签名都以 eager 方式运行，并记录一次原因。用 `CHRONOS_MLX_COMPILE=auto|on|off` 或 recipe 的 `extra.mlx_compile` 切换。
 - **激活重计算**（`chronos/mlx/checkpointing.py`，`activation_checkpointing=true`；规划器的内存受限档位会自动开启）。每次 block 调用成为一个重计算区域。在这里直接用 `mx.checkpoint` 会出错，两处问题都在 mlx 0.32.4 上实测确认。第一，重计算时 dropout mask 和缓存未命中抽样会被重新抽取；现在前向时记录，重计算时回放。第二，区域两次返回同一个图节点时，只有一份能拿到梯度。只要 SWA 窗口覆盖整个序列，block 的 KV cache 和它的共享视图就是这样一对（全长切片是同一节点上的新 Python 对象），梯度偏差达 37–40%。因此区域输出按 dtype 打包成每种 dtype 一个数组。
 
-**2026-11-08 实测。** 条件：Apple M5 Max，mlx 0.32.4，bf16，50M 英译中 recipe 的模型配置，随机初始化，真实英译中分片，recipe 的步长（SFT 每步 8 个 micro-batch，预训练 16 个）。取 16 步（SFT）或 12 步（预训练）后半段的中位数。72 小时训练任务同时在同一块 GPU 上运行，绝对耗时有噪声。
+**2026-11-08 实测。** 条件：Apple M5 Max，mlx 0.32.4，bf16，50M demo recipe（`demos/translation/recipes/`）的模型配置，随机初始化，该 demo 的真实训练分片，recipe 的步长（SFT 每步 8 个 micro-batch，预训练 16 个）。取 16 步（SFT）或 12 步（预训练）后半段的中位数。72 小时训练任务同时在同一块 GPU 上运行，绝对耗时有噪声。
 
 | Micro step | SFT s/步 | SFT 峰值内存 | 预训练 s/步 | 预训练峰值内存 |
 |---|---|---|---|---|
@@ -521,7 +521,7 @@ pip install "Project_Chronos[mlx]"
 **可选依赖组**（版本已固定）：
 ```bash
 pip install "Project_Chronos[serve]"      # chronos serve / chronos monitor（fastapi、uvicorn）
-pip install -e demos/translation          # 英↔中 demo 扩展 chronos-translate，仅限仓库检出安装（不在 PyPI）
+pip install -e demos/translation          # 翻译 demo 扩展 chronos-translate，仅限仓库检出安装（不在 PyPI）
 ```
 
 **vLLM 服务（可选，仅 Linux+CUDA）：**
@@ -867,7 +867,7 @@ Project_Chronos/
 ├── docs/
 │   └── vllm_integration.md
 ├── demos/
-│   └── translation/               # 英↔中扩展（chronos-translate）：语料、训练、模型包；不进 wheel
+│   └── translation/               # demo 扩展（chronos-translate）：语料、训练、模型包、50M demo 模型；不进 wheel
 ├── pyproject.toml
 └── README.md / README_zh.md / THIRD_PARTY_NOTICES.md
 ```
@@ -917,7 +917,7 @@ timeline
         : int8 KV、MLA 吸收式解码、共享路由（显式开启）
         : 自动规划器、v3 预设、分词器与 serve Tab
     Next
-        : 50M 英译中结果与消融
+        : 0.3.3 循环设置的多种子与更大规模实验
         : 自推测解码：在更大模型与懒加载专家下真正提速的起草路径
         : 大规模激活语料训练 IntentClassifier
         : 7B+ checkpoint 基准测试

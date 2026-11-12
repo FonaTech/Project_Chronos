@@ -128,7 +128,7 @@ def test_webui_exposes_the_loop_knobs_to_the_search_and_maps_them_onto_the_space
     from chronos.webui import schema
     choices = schema.FIELDS['tune.search'].choices
     assert 'recurrent_order' in choices and 'recurrent_dt_init' in choices
-    assert 'recurrent_later_groups' not in choices   # trades quality for cost: a loss-only search would always pick the full block
+    assert 'recurrent_later_groups' in choices   # 0.3.3a1: searched with choices 0 and 2; the trial log carries its step time
     space = ChronosSearchSpaceConfig(**{f'tune_{name}': name in ('recurrent_order',) for name in choices})
     assert space.tune_recurrent_order and not space.tune_recurrent_dt_init
     base = os.path.join(os.path.dirname(schema.__file__), 'i18n')

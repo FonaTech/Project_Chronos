@@ -100,14 +100,14 @@ FLORES+（CC BY-SA 4.0）只用于评测。
 
 ## 已发布模型：chronos-enzh-50m-sft
 
-[`models/chronos-enzh-50m-sft/`](../../models/chronos-enzh-50m-sft/) 打包了一个 4,969 万参数的 Chronos v3 模型（每个 token 激活 1,209 万），在一台 Apple M5 Max 上训练了 69 小时。目录中有模型配置、分词器、训练时的 prompt、解码参数、驱动脚本（`translate.py`），以及每个数字背后的评测。权重（99.5 MB，bfloat16 safetensors）作为附件放在 release [`enzh-50m-sft-v1`](https://github.com/FonaTech/Project_Chronos/releases/tag/enzh-50m-sft-v1) 中。
+[`models/chronos-enzh-50m-sft/`](models/chronos-enzh-50m-sft/) 打包了一个 4,969 万参数的 Chronos v3 模型（每个 token 激活 1,209 万），在一台 Apple M5 Max 上训练了 69 小时。目录中有模型配置、分词器、训练时的 prompt、解码参数、驱动脚本（`translate.py`），以及每个数字背后的评测。权重（99.5 MB，bfloat16 safetensors）作为附件放在 release [`enzh-50m-sft-v1`](https://github.com/FonaTech/Project_Chronos/releases/tag/enzh-50m-sft-v1) 中。
 
 - **边界：** 只做英译中，每次一句（≤ 128 token）。中译英已屏蔽：只含英译中的微调抹掉了这一能力（SFT 后 FLORES+ BLEU 0.00）。驱动会拒绝边界以外的输入。
 - **实测**（MLX bf16，贪心解码）：FLORES+ devtest BLEU 33.48 / chrF 29.52；WMT22 BLEU 32.60 / chrF 28.83；WMT24++ BLEU 26.89 / chrF 24.43（分句）。
 - **仅供研究使用。** 训练语料的许可未知，见目录中的 `NOTICE`。
 
 ```bash
-cd models/chronos-enzh-50m-sft
+cd demos/translation/models/chronos-enzh-50m-sft
 pip install --pre "Project_Chronos[mlx]==0.3.2a0"   # 不用 MLX 时装 "Project_Chronos==0.3.2a0"
 python translate.py --download && python translate.py "The meeting was moved to Friday."
 ```
@@ -143,3 +143,10 @@ bin/chronos bundle serve -- --port 11435
 ```
 
 `--speculative` 要求 `--repetition-penalty 1.0`（此时的默认值），因为惩罚会逐位置改变目标分布。`finetune` 写出一份 `init_checkpoint` 指向包内权重的 `chronos-translate run` spec；运行目录里已有训练时会拒绝写入。用许可未知的数据（WMT19、OPUS-100）训练的模型包，`NOTICE.md` 中写明权重仅供研究使用。
+
+## 在本 demo 上做的内核实测
+
+主 README 中有三项实测用到了本 demo 的模型或数据：
+- 自推测解码表：预训练 step 13,996 checkpoint，greedy，batch 1，FLORES+ dev 英→中提示，起草深度 1，γ 4（报告在 `reports/speculative/`）。
+- 0.3.2 原生内核一致性：50M 英译中 checkpoint 的 logits 在 0.3.1a3 + minimind 与原生内核之间逐位一致；计时时 50M 英译中 SFT 正在 GPU 上训练。
+- MLX 编译步与激活重计算（2026-11-08）：50M 英译中 recipe 的模型配置，随机初始化，真实英译中分片。

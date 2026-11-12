@@ -13,4 +13,3 @@ prune reports
 prune .archive
 prune Translation?Training?Data
 prune demos
-prune models

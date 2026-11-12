@@ -1,5 +1,44 @@
 # Changelog
 
+## [0.3.3a1] — 2026-11-12 (beta)
+
+This release closes three gaps in 0.3.3a0. Every loop knob now has a planner recommendation and an auto-tune switch. The auto-tune probe now scores what it was meant to score. The en-zh model folder has left the repository root. Kernel defaults are unchanged, so existing configs and checkpoints behave as in 0.3.3a0.
+
+### Added
+- Planner: a looped plan (`recurrent_depth > 1`) now also sets six more loop knobs. Each comes with a `sources` entry that states the measurement behind it (15M parameters, one seed per arm). The Web UI shows these values as planner recommendations, and `ui/presets_v3.json` gains the four keys whose value differs from the base defaults.
+  - `recurrent_later_topk=0`: routing later iterations to 1 expert raised validation CE from 4.543 to 4.600 at the same speed (71.6k against 71.5k tokens/s).
+  - `recurrent_later_groups=0`: the full block has the lowest loss per step. Running 2 of 4 layers in later iterations gives about 1.3x more steps per second at depth 4. It costs up to 0.012 more training loss per step with dt fixed at 1.0 and 0.013-0.055 with the sigmoid step size. 1 is never recommended, because one layer looping alone is no longer a block loop.
+  - `lambda_iteration_cluster=0`: with cluster locality on, 99.5-100% of the clusters that later iterations use are already used at iteration 0.
+  - `lookahead_teacher_scope="first"`: the lookahead head already picks the right cluster for 0.97 of tokens at every iteration.
+  - `recurrent_dt_min=0.05` and `recurrent_dt_max=1.0`: the sigmoid arms used the ranges 0.05-1 (depth 4) and 0.1-1 (depth 8), and their learned dt stayed between 0.14 and 0.30, inside the range.
+- Auto-tune can now search every loop knob. The list adds `recurrent_dt_param`, `recurrent_dt_min`, `recurrent_dt_max`, `recurrent_later_topk` (0 or 1), `recurrent_later_groups` (0 or 2), `lambda_iteration_cluster` (0, 0.1, 0.3 or 1.0) and `lookahead_teacher_scope`. They join `recurrent_order` and `recurrent_dt_init`.
+  - Searching any of them makes the probe a looped model with 4 block layers, one prelude layer and one coda layer. The 0.3.3a0 probe had 2 block layers, so `recurrent_later_groups=2` would have meant the full block.
+  - `recurrent_later_groups` is drawn only in block order, and 1 is not offered.
+  - If a drawn `recurrent_dt_init` falls outside the drawn `[dt_min, dt_max]`, the trial starts at the nearest bound.
+  - Each trial logs its median step time and stores it as the Optuna user attribute `step_time_s`. `recurrent_later_topk` and `recurrent_later_groups` save time, not loss, so a cross-entropy score alone favours "off".
+- Help text for these knobs and for the auto-tune search list now gives the measured reason and the recommended value, in English, 简体中文, 繁體中文 and 日本語.
+
+### Fixed
+- Auto-tune score. The probe trained on and scored `CE + lambda_balance * L_balance + lambda_temporal * L_temporal`, so a smaller weight lowered a trial's score by itself. The probe now trains on the trainers' objective (`chronos_loss_term`, every weighted term of the config) and scores cross-entropy only.
+- Auto-tune `lambda_lookahead` had no effect. The probe never passed it to the model config or to the loss, and it never trained the lookahead head, so `lookahead_steps` changed the model without supervising it. With the 0.3.3a0 probe, `lambda_lookahead` 1e-3 and 1.0 gave identical per-step scores; with this release the scores differ after the first update. The lookahead, iteration-cluster and recurrent terms of the config now act in the probe as they do in training.
+- Web UI schema payload. `Field.as_dict` dropped every value equal to `False`, and in Python `0 == False`. So `min=0` of 48 fields, and `recommended=0` of `max_steps` and `cluster_locality_clusters`, never reached the page. Those number inputs had no lower bound, and their tooltips showed the minimum as "−∞". The payload now drops only unset values.
+
+### Changed
+- The en-zh model folder moved from `models/chronos-enzh-50m-sft` to `demos/translation/models/chronos-enzh-50m-sft`, and its driver test moved from `tests/` to `demos/translation/tests/`. CI runs that test in its own step after the kernel suite, and the repository root no longer holds a task-specific model. The driver finds its files relative to itself, so commands run inside the folder are unchanged, and the weights stay on the release `enzh-50m-sft-v1`. `MANIFEST.in` no longer prunes `models/`.
+- The main READMEs now describe the speculative-decoding, native-kernel parity and MLX compile measurements as taken on the 50M demo checkpoint. They link to a new section of `demos/translation/README.md` and `README_zh.md` that states the exact conditions (FLORES+ dev en→zh prompts, en→zh shards); the numbers are unchanged. Each main README names the translation demo in one pointer paragraph only. `tests/test_ui_generic.py::test_task_models_and_tests_live_under_demos` checks this rule and the folder layout.
+- The preset label "Chronos-v3 50M (16k vocab)" stays. It names the preset's explicit 16,384-token vocabulary and no task.
+
+### Verified
+- End to end through the Web UI endpoint, with an in-process client and no open port: a 4-trial study of 10 probe steps each searched all nine loop knobs plus `lambda_lookahead`. It trained on 19,090 real dataset tokens with the bundled 32k tokenizer, completed every trial, logged each trial's cross-entropy and median step time, and returned a best-config patch with every searched knob.
+
+### Tests
+- New `tests/test_loop_knobs_wiring.py` (10 items). It checks that every loop knob is searchable and reaches the probe model, and that `recurrent_later_groups` never offers 1 and is drawn only in block order. It checks that `lambda_lookahead` 1e-3 and 1.0 give the same score at step 0 and different scores after the first update. It also covers the best-config patch, the Web UI search list with help in four languages, planner recommendations with a source at depths 2, 4 and 8, a depth-1 plan with no loop knob, and a schema payload that keeps 0.
+- New `tests/test_ui_generic.py::test_task_models_and_tests_live_under_demos`: `models/` and `tests/` hold no task-specific names, and each main README names the en-zh demo in one line, which points to `demos/translation`.
+- `tests/test_autotune_loop.py`: `recurrent_later_groups` is now expected in the search list.
+- `demos/translation/tests/test_model_enzh_50m_sft.py` (15 items, moved from `tests/`) passes from its new folder; CI runs it as the step "Demo driver tests".
+- Full suite on macOS (Apple silicon, Python 3.11, MLX on CPU): 728 passed, 4 skipped. `ruff check .` passes on the whole tree.
+- A local wheel and sdist build both carry the `general_32k` tokenizer and no file from `demos/`, no model folder and no weights.
+
 ## [0.3.3a0] — 2026-11-12 (beta)
 
 ### Added

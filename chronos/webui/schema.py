@@ -37,7 +37,9 @@ class Field:
     nullable: bool = False             # "auto" / empty allowed
 
     def as_dict(self) -> dict:
-        out = {k: v for k, v in asdict(self).items() if v not in (None, (), False) or k in ("default",)}
+        # Drop unset values only. A membership test such as `v not in (None, (), False)` also dropped 0 and 0.0
+        # (0 == False), so min=0 and recommended=0 never reached the page.
+        out = {k: v for k, v in asdict(self).items() if k == "default" or not (v is None or v is False or v == ())}
         out["choices"] = list(self.choices) if self.choices else None
         out["scope"] = list(self.scope)
         return {k: v for k, v in out.items() if v is not None or k == "default"}
@@ -88,14 +90,18 @@ CONFIG_FIELDS: tuple[Field, ...] = (
        choices=["shared_first", "per_iteration", "first_only"], recommended="shared_first", source="code"),
     _f("recurrent_order", "recurrent", "choice", "layer",
        choices=["layer", "block"], recommended="block", source="planner", advanced=True),
-    _f("recurrent_later_topk", "recurrent", "int", 0, min=0, max=16, step=1, advanced=True),
-    _f("recurrent_later_groups", "recurrent", "int", 0, min=0, max=64, step=1, advanced=True),
+    _f("recurrent_later_topk", "recurrent", "int", 0, min=0, max=16, step=1, recommended=0,
+       source="planner", advanced=True),
+    _f("recurrent_later_groups", "recurrent", "int", 0, min=0, max=64, step=1, recommended=0,
+       source="planner", advanced=True),
     _f("recurrent_dt_param", "recurrent", "choice", "clamp",
        choices=["clamp", "sigmoid"], recommended="sigmoid", source="planner", advanced=True),
     _f("recurrent_dt_init", "recurrent", "float", 0.25, min=0.01, max=1.0, step=0.01,
        recommended=0.5, source="planner", advanced=True),
-    _f("recurrent_dt_min", "recurrent", "float", 0.05, min=0.001, max=1.0, step=0.005, advanced=True),
-    _f("recurrent_dt_max", "recurrent", "float", 1.0, min=0.05, max=1.0, step=0.05, advanced=True),
+    _f("recurrent_dt_min", "recurrent", "float", 0.05, min=0.001, max=1.0, step=0.005,
+       recommended=0.05, source="planner", advanced=True),
+    _f("recurrent_dt_max", "recurrent", "float", 1.0, min=0.05, max=1.0, step=0.05,
+       recommended=1.0, source="planner", advanced=True),
     _f("adaptive_halting", "recurrent", "bool", False),
     _f("halting_threshold", "recurrent", "float", 0.99, min=0.5, max=1.0, step=0.001),
     _f("depth_schedule", "recurrent", "choice", "fixed_then_adaptive",
@@ -148,9 +154,10 @@ CONFIG_FIELDS: tuple[Field, ...] = (
        recommended="data", source="rule", ref="window_median_record"),
     _f("cluster_locality_mode", "objectives", "choice", "window", choices=["window", "segment"],
        source="code", advanced=True),
-    _f("lambda_iteration_cluster", "objectives", "float", 0.0, min=0.0, max=10.0, step=0.01, advanced=True),
+    _f("lambda_iteration_cluster", "objectives", "float", 0.0, min=0.0, max=10.0, step=0.01,
+       recommended=0.0, source="planner", advanced=True),
     _f("lookahead_teacher_scope", "objectives", "choice", "first", choices=["first", "iterations"],
-       source="code", advanced=True),
+       recommended="first", source="planner", advanced=True),
     # ---- memory / lazy experts ---------------------------------------------
     _f("vram_budget_gb", "memory", "float", 4.0, min=0.01, max=256.0, step=0.01),
     _f("pinned_memory_max_fraction", "memory", "float", 0.25, min=0.01, max=0.95, step=0.01),
@@ -338,7 +345,9 @@ FORM_FIELDS: tuple[Field, ...] = (
     _f("tune.probe_steps", "autotune", "int", 80, min=10, max=1000, step=10, scope=("autotune",)),
     _f("tune.search", "autotune", "multi", ["lambda_balance", "lambda_temporal", "lr"],
        choices=["lambda_balance", "lambda_temporal", "lambda_lookahead", "lookahead_steps", "lr", "hidden_size",
-                "num_experts", "num_shared_experts", "kv_latent_dim", "recurrent_order", "recurrent_dt_init"],
+                "num_experts", "num_shared_experts", "kv_latent_dim", "recurrent_order", "recurrent_dt_param",
+                "recurrent_dt_min", "recurrent_dt_max", "recurrent_dt_init", "recurrent_later_topk",
+                "recurrent_later_groups", "lambda_iteration_cluster", "lookahead_teacher_scope"],
        scope=("autotune",)),
     # ---- planner -----------------------------------------------------------
     _f("plan.target_m", "planner", "float", 50.0, min=0.1, max=100000.0, step=0.1, scope=("planner",)),
@@ -372,6 +381,8 @@ LITERAL_CHOICES = frozenset({
     "pretrain", "sft", "dpo", "orpo", "grpo", "distill", "shared_first", "per_iteration", "first_only", "layer", "first", "iterations",
     "clamp", "sigmoid", "lambda_balance", "lambda_temporal", "lambda_lookahead", "lookahead_steps", "lr", "hidden_size",
     "num_experts", "num_shared_experts", "kv_latent_dim", "recurrent_order", "recurrent_dt_init",
+    "recurrent_dt_param", "recurrent_dt_min", "recurrent_dt_max", "recurrent_later_topk", "recurrent_later_groups",
+    "lambda_iteration_cluster", "lookahead_teacher_scope",
     "sync_on_demand", "on_demand", "fallback_diagnostic",
 })
 
