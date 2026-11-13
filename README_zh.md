@@ -8,6 +8,35 @@
 
 [English](README.md)
 
+![Chronos 前向栈：嵌入、prelude、recurrent 区（迭代执行）、coda，与独立的输入 / 输出通道](docs/assets/arch/chronos_forward_stack.png)
+
+*Chronos 前向栈。Embedding 查表之后是 $P$ 层 prelude、$G$ 层 recurrent 区（以条件化方式迭代 $R$ 次）、$C$ 层 coda，最后接 tied LM head。Prefetch、lookahead 与专家驻留均挂接在 recurrent 区。*
+
+---
+
+## 文档索引
+
+**入口：** [docs/README.md](docs/README.md) 是带阅读路线与配图的完整索引。
+
+| 分区 | 章节 | 回答的问题 |
+|---|---|---|
+| 入口 | [OVERVIEW.md](docs/OVERVIEW.md) | 计算、路由与驻留如何相互衔接？ |
+| 入口 | [KERNEL_ARCHITECTURE.md](docs/KERNEL_ARCHITECTURE.md) | 端到端执行图的实现级描述。 |
+| 参考 | [SYMBOLS.md](docs/SYMBOLS.md) | 轴、单位与配置字段。 |
+| 参考 | [THEORY.md](docs/THEORY.md) | 稳定性、信息与资源推导（含假设）。 |
+| 模型 | [ATTENTION.md](docs/ATTENTION.md) | MLA/SWA 的投影、缓存、重构与掩码。 |
+| 模型 | [MOE_ROUTING.md](docs/MOE_ROUTING.md) | 路由分发、共享平均、回退与正则项。 |
+| 模型 | [CLUSTER_LOCALITY.md](docs/CLUSTER_LOCALITY.md) | 固定划分下的互信息目标。 |
+| 模型 | [LOOKAHEAD.md](docs/LOOKAHEAD.md) | 未来 token 的专家分布预测与训练。 |
+| 模型 | [LOOP_DEPTH.md](docs/LOOP_DEPTH.md) | 匹配步数与匹配时间的递归深度实验。 |
+| 运行时 | [LAZY_EXPERTS.md](docs/LAZY_EXPERTS.md) | 专家页的加载、准入与物化。 |
+| 运行时 | [RESIDENCY.md](docs/RESIDENCY.md) | 驱逐策略与驻留计数器。 |
+| 运行时 | [SPEC_DECODE.md](docs/SPEC_DECODE.md) | 草稿/校验采样的正确性与代价。 |
+| 运行时 | [LONG_CONTEXT.md](docs/LONG_CONTEXT.md) | 分块损失、分块注意力与重计算。 |
+| 证据 | [REPRODUCIBILITY.md](docs/REPRODUCIBILITY.md) | 性能/质量结论所需的证据与控制。 |
+| 服务 | [vllm_integration.md](docs/vllm_integration.md) | 已实现的服务接口与集成骨架。 |
+| 中文 | [READING_GUIDE_ZH.md](docs/READING_GUIDE_ZH.md) | 中文阅读路线、核心机制与符号导引。 |
+
 ---
 
 ## 现有方案的根本性缺陷
