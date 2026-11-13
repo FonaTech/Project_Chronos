@@ -22,7 +22,7 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from transformers import AutoTokenizer
 
-import chronos.deps  # noqa: F401
+import chronos.deps  # default tokenizer path
 from chronos.backend import resolve_training_device
 from chronos.data.flexible_dataset import FlexibleDataset, StreamingSFTDataset
 from chronos.eval.io_profiler import evaluate_lookahead_accuracy, estimate_cache_hit_rate

@@ -3,13 +3,12 @@ chronos/trainer/sft_trainer.py
 
 Chronos-aware supervised fine-tuning trainer.
 
-Built around minimind's SFTDataset (jsonl with `conversations` field,
-tokenizer.apply_chat_template + per-assistant-token loss mask) so the data
-pipeline is identical to the one in minimind-master/trainer/train_full_sft.py.
-What we add:
+Data: jsonl with a ``conversations`` field, rendered with
+``tokenizer.apply_chat_template`` and a per-assistant-token loss mask
+(``StreamingSFTDataset``; the common chat-SFT jsonl layout). On top of CE:
 
-1. The model returns ``(outputs, lookahead_probs)``, which minimind's trainer
-   does not know about. We forward it explicitly.
+1. The model returns ``(outputs, lookahead_probs)``; the lookahead output is
+   forwarded explicitly.
 2. ``chronos_loss_term`` mixes in λ_balance·aux + λ_temporal·temporal +
    λ_lookahead·lookahead on top of the base CE.
 3. Optional ``router_kl_anchor`` pulls the current router distribution back
@@ -25,9 +24,8 @@ import torch
 from torch import optim
 from torch.utils.data import DataLoader
 
-import chronos.deps  # ensure minimind on sys.path
 
-from trainer.trainer_utils import Logger, is_main_process  # type: ignore
+from chronos.model.kernel import Logger, is_main_process
 from chronos.data.flexible_dataset import (
     StreamingSFTDataset, MultimodalStreamingSFTDataset, multimodal_collate,
 )
@@ -126,7 +124,7 @@ class ChronosSFTTrainer:
 
             loss = chronos_loss_term(
                 self.model, ce_loss, lookahead_probs, self.config,
-                aux_loss=aux_loss,
+                aux_loss=aux_loss, input_ids=input_ids, labels=labels,
             )
 
             # Router KL anchor

@@ -13,36 +13,26 @@ below or linked.
 **License**: Apache License, Version 2.0
 **Copyright**: Copyright jingyaogong and MiniMind Contributors
 
-**Files derived from MiniMind**:
+**Status since 0.3.2: no runtime dependency, no bundled code.** Releases up to
+0.3.1a3 imported a minimind checkout at runtime (`chronos.deps` cloned
+`master` into `~/.cache/chronos/minimind-master/` and put it on `sys.path`).
+0.3.2 removes that dependency. The pieces Chronos used are re-implemented in
+`chronos/model/kernel.py` (`ChronosBaseConfig`, RoPE/YaRN tables, gated FFN,
+logging and resume utilities). Nothing is downloaded.
 
-| Chronos file | Derived from MiniMind |
+**What still derives from MiniMind**:
+
+| Chronos file | What it keeps from MiniMind |
 |---|---|
-| `chronos/model/config.py` | `model/model_minimind.py` — `MiniMindConfig` |
-| `chronos/model/model_chronos.py` | `model/model_minimind.py` — `MiniMindModel`, `MiniMindForCausalLM`, `MiniMindBlock` |
-| `chronos/model/moe_chronos.py` | `model/model_minimind.py` — `MOEFeedForward`, `FeedForward` |
-| `chronos/model/hybrid_attention.py` | `model/model_minimind.py` — `Attention`, `apply_rotary_pos_emb`, `repeat_kv`, `RMSNorm` |
-| `chronos/model/lookahead_router.py` | Architecture inspired by MiniMind's routing design |
-| `chronos/trainer/chronos_trainer.py` | `trainer/train_pretrain.py` — pretraining loop structure |
-| `chronos/trainer/sft_trainer.py` | `trainer/train_full_sft.py` — SFT loop + chat-template loss masking |
-| `chronos/trainer/dpo_trainer.py` | `trainer/train_dpo.py` — log-σ(β·logits) DPO formulation, `_logits_to_log_probs` helper |
-| `chronos/trainer/grpo_trainer.py` | `trainer/train_grpo.py` — GRPO group-relative PG + KL formulation |
-| `chronos/trainer/distill_trainer.py` | `trainer/train_distillation.py` — temperature-scaled KL distillation |
-| `chronos/trainer/reward.py` | `trainer/trainer_utils.py` — `LMForRewardModel` ABI (`get_score`) wrapper |
-| `chronos/eval/io_profiler.py` | `eval_llm.py` — evaluation patterns |
+| `chronos/model/kernel.py` | Field names and defaults of `MiniMindConfig`, the rotate-half RoPE/YaRN layout and numerics, and the `gate_proj/up_proj/down_proj` FFN naming. They are kept so that checkpoints trained before 0.3.2 load bit-identically. The code is a new implementation. |
+| `chronos/assets/tokenizers/legacy_6400/` | `tokenizer.json` and `tokenizer_config.json`, copied unchanged (data files only) from commit `24896cd2c4e9328a0911cf69ff61ace17a459b71`, with its `LICENSE` and a `NOTICE` that records the sha256 of each file. It is the default tokenizer only for old checkpoints that never recorded one. |
+| `chronos/trainer/sft_trainer.py`, `dpo_trainer.py`, `grpo_trainer.py`, `distill_trainer.py` | The loop structure and loss formulations first followed minimind's `train_full_sft.py`, `train_dpo.py`, `train_grpo.py` and `train_distillation.py` (chat-template loss masking, log-σ(β·Δ) DPO, group-relative policy gradient with KL, temperature-scaled KD). These trainers are self-contained Chronos code. ORPO was written from scratch (Hong et al. 2024). |
+| `chronos/trainer/reward.py` | The `get_score(tokenizer, messages)` reward-model ABI wrapper. |
+| `tools/compare_minimind_chronos*.py` | Optional comparison harnesses that run minimind as an external baseline. They need a checkout the user provides through `--minimind-dir` or `CHRONOS_MINIMIND_DIR`. |
 
-**Nature of modifications**:
-
-- `ChronosConfig` extends `MiniMindConfig` with new fields: `lookahead_steps`, hybrid attention dims, λ loss coefficients (balance / temporal / lookahead / router-anchor), VRAM budget, pinned RAM fraction, `storage_format`, `cluster_manifest_path`.
-- `ChronosForCausalLM` replaces `MiniMindForCausalLM` with hybrid attention, LookaheadRouter injection, dual-layer routing hooks, an `available_expert_masks` forward kwarg, and `_tied_weights_keys` / `all_tied_weights_keys` shims for HF safetensors round-trips.
-- `ChronosMOEFeedForward` extends `MOEFeedForward` with always-resident shared experts and compile-safe soft gating (`avail[i] * expert_out + (1−avail[i]) * shared_out`).
-- `MLAAttention` and `SlidingWindowAttention` are new implementations sharing RMSNorm and RoPE utilities from MiniMind's `Attention`.
-- The full Stage 1–6 trainer family (Pretrain / SFT / DPO / ORPO / GRPO / Distill) wraps the corresponding minimind loops where they exist (Pretrain / SFT / DPO / GRPO / Distill) and adds **ORPO from scratch** (Hong et al. 2024 — minimind has no ORPO trainer). Every wrapper injects `chronos_loss_term` (lookahead + temporal + balance) and an optional `router_kl_anchor` term.
-- `ChronosGRPOTrainer` is **self-contained**: it ships its own rollout (vanilla `model.generate` style sampling) and accepts a pluggable `reward_fn`. It does not require minimind's sglang-based `rollout_engine`.
-
-**Automatic download**: When `minimind-master` is not found locally, Project Chronos
-automatically clones it from `https://github.com/jingyaogong/minimind` into
-`~/.cache/chronos/minimind-master/`. This download is governed by the Apache-2.0
-license of the MiniMind project.
+Chronos-specific parts (MLA/SWA hybrid attention, recurrent-depth controller,
+LookaheadRouter, shared-expert MoE, lazy expert paging, speculative decoding,
+MLX backend, tokenizer builder) are original work.
 
 **Apache-2.0 License Text**:
 
@@ -60,7 +50,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ```
 
-Full license: https://github.com/jingyaogong/minimind/blob/master/LICENSE
+Full license: https://github.com/jingyaogong/minimind/blob/master/LICENSE (also shipped as
+`chronos/assets/tokenizers/legacy_6400/LICENSE`)
 
 ---
 

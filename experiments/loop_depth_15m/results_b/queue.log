@@ -1,0 +1,5 @@
+[exp] b4 start 03:27:26 load 3.37 3.85 3.67 src /tmp/chronos_src_A
+{"label": "b4", "depth": 4, "steps": 1225, "wall_s": 1801.0, "valid_ce": 4.878100201487541, "peak_gb": 7.43}
+[exp] b8 start 03:58:04 load 5.81 5.01 4.13 src /tmp/chronos_src_A
+{"label": "b8", "depth": 8, "steps": 830, "wall_s": 1803.8, "valid_ce": 5.186852492392063, "peak_gb": 10.35}
+[exp] QUEUE B DONE

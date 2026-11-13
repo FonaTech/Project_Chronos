@@ -38,7 +38,7 @@ def browser_server(tmp_path_factory):
             port = sock.getsockname()[1]
         url = f"http://127.0.0.1:{port}"
         log = (tmp_path_factory.mktemp("browser-server") / "server.log").open("w+")
-        process = subprocess.Popen([sys.executable, "-u", "chronos_app.py", "--host", "127.0.0.1", "--port", str(port)],
+        process = subprocess.Popen([sys.executable, "-u", "chronos_app.py", "--legacy", "--host", "127.0.0.1", "--port", str(port)],
                                    cwd=ROOT, stdout=log, stderr=subprocess.STDOUT)
         try:
             deadline = time.monotonic() + 40

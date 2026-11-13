@@ -53,7 +53,7 @@ class PlanRequest:
     active_experts: int | None = None        # ... or this (top-k); active_params wins if both
     memory_saving: str = "none"              # MEMORY_LEVELS
     data_paths: tuple = ()                   # pretrain + sft + preference files/dirs
-    vocab_size: int | None = None            # None: tokenizer report / dataset, else 16384
+    vocab_size: int | None = None            # None: tokenizer report / dataset, else the bundled 32768 tokenizer
     seq_len: int | None = None               # None: from the dataset profile
     ram_gb: float | None = None              # None: detected
     token_budget: float | None = None        # pretrain tokens; None: dataset tokens (one pass)
@@ -73,6 +73,7 @@ class DatasetProfile:
     chars_per_token: float | None = None
     seq_p95_tokens: int | None = None                  # sampled records (estimated)
     seq_cap_tokens: int | None = None                  # exact cap from a shard manifest
+    seq_median_tokens: float | None = None             # sampled records (estimated)
     vocab_size: int | None = None
     tokenizer_dir: str = ""
     notes: list = field(default_factory=list)
@@ -224,7 +225,8 @@ def profile_datasets(paths, *, max_files: int = 64) -> DatasetProfile:
         prof.seq_p95_tokens = int(math.ceil(tok_lens[int(0.95 * (len(tok_lens) - 1))]))
         total_tok = sum(tok_lens)
         prof.chars_per_token = round(chars / total_tok, 3) if total_tok else None
-        prof.notes.append(f"median record ≈ {statistics.median(tok_lens):.0f} tokens (estimated)")
+        prof.seq_median_tokens = float(statistics.median(tok_lens))
+        prof.notes.append(f"median record ≈ {prof.seq_median_tokens:.0f} tokens (estimated)")
     return prof
 
 
@@ -446,8 +448,10 @@ def plan_training(req: PlanRequest, profile: DatasetProfile | None = None, *, ve
     policy = MEMORY_POLICIES[level]
     prof = profile if profile is not None else profile_datasets(req.data_paths)
     notes, sources = list(prof.notes), {}
-    vocab = int(req.vocab_size or prof.vocab_size or 16384)
-    sources["vocab_size"] = "user" if req.vocab_size else ("tokenizer report" if prof.vocab_size else "default")
+    from chronos.deps import GENERAL_TOKENIZER_VOCAB
+    vocab = int(req.vocab_size or prof.vocab_size or GENERAL_TOKENIZER_VOCAB)
+    sources["vocab_size"] = ("user" if req.vocab_size else "tokenizer report" if prof.vocab_size
+        else "default (bundled general 32k tokenizer)")
     depth = max(1, int(req.recurrent_depth))
     arch = search_architecture(req.target_total, use_moe=req.use_moe, num_experts=req.num_experts,
                                vocab_size=vocab, depth=depth, active_params=req.active_params,
@@ -557,12 +561,47 @@ def plan_training(req: PlanRequest, profile: DatasetProfile | None = None, *, ve
     # SWA window: the typical record must fit; long documents use MLA layers.
     window = min(seq_len, max(128, 1 << int(math.ceil(math.log2(max(2, p95 // 4)))))) if p95 \
         else max(128, seq_len // 4)
+    # Cluster-locality training (on for MoE): measured default strength, window
+    # = one record (stream segment); C = ⌈E/2k⌉ is resolved from the topology.
+    from chronos.expert_clusters import DEFAULT_LAMBDA, recommended_window
+    cluster_lambda = DEFAULT_LAMBDA if req.use_moe and arch.num_experts > 2 * arch.num_experts_per_tok else 0.0
+    cluster_window = recommended_window(prof.seq_median_tokens, seq_len)
+    sources["lambda_cluster_locality"] = (
+        "measured sweep, tools/bench_cluster_locality.py (smallest λ on the plateau)" if cluster_lambda
+        else "off: dense model or fewer than two clusters")
+    sources["cluster_locality_window"] = (
+        "median record length (estimated)" if prof.seq_median_tokens else "default (no record lengths sampled)")
     per_expert_bytes = 3 * h * arch.ffn_width * 2                # bf16 page
     expert_mb = routed * 2 / 2**20
     ram_budget = None if policy["ram_fraction"] >= 1 or not req.use_moe else \
         round(max(per_expert_bytes * L * max(2, arch.num_experts_per_tok) / 2**20,
                   expert_mb * policy["ram_fraction"]), 1)
     resident_weights = (arch.total - routed * (1 - policy["resident_fraction"])) * 2
+    # Loop knobs. Measured at 15M (30 min per arm, one seed per arm): block order beat layer order at equal step
+    # once the step size is healthy, and a fixed integration horizon T = depth * dt = 2 held at depth 4 and 8.
+    # The sigmoid parameterisation keeps dt trainable (the clamp default collapsed onto its floor).
+    loop_knobs = {}
+    if depth > 1:
+        from chronos.model.recurrent import recommended_dt_init
+        loop_knobs = dict(recurrent_order='block', recurrent_dt_param='sigmoid',
+                recurrent_dt_init=round(recommended_dt_init(depth), 4))
+        sources["recurrent_order"] = "measured, 15M one seed: block beat layer at equal step with a healthy dt"
+        sources["recurrent_dt_param"] = "measured, 15M: the clamp default collapsed onto its floor and stopped learning"
+        sources["recurrent_dt_init"] = "estimated: horizon 2 / depth (15M, depth 4 and 8; other sizes not measured)"
+        # The other loop knobs keep the values the 15M runs favoured; each source says why.
+        loop_knobs.update(recurrent_later_topk=0, recurrent_later_groups=0, lambda_iteration_cluster=0.0,
+                lookahead_teacher_scope='first', recurrent_dt_min=0.05, recurrent_dt_max=1.0)
+        sources["recurrent_later_topk"] = ("measured, 15M one seed: 1 expert in later iterations raised valid CE "
+            "4.543 -> 4.600 at the same speed")
+        sources["recurrent_later_groups"] = ("measured, 15M one seed: the full block is best per step; 2 of 4 layers "
+            "in later iterations give about 1.3x steps per second at depth 4 for up to 0.055 more training loss "
+            "per step; never 1 (one layer looping alone)")
+        sources["lambda_iteration_cluster"] = ("measured, 15M: with cluster locality on, 99.5-100% of later-iteration "
+            "clusters are already used at iteration 0")
+        sources["lookahead_teacher_scope"] = ("measured, 15M: the lookahead head picks the right cluster for 0.97 of "
+            "tokens at every iteration")
+        sources["recurrent_dt_min"] = sources["recurrent_dt_max"] = ("measured, 15M: sigmoid arms with range 0.05-1 "
+            "(depth 4) and 0.1-1 (depth 8) learned dt 0.14-0.30, inside the range")
     model = dict(
         architecture_version=3, recurrent_attention_mode="shared_first", rope_layout="per_head",
         hidden_size=h, num_hidden_layers=L, num_attention_heads=arch.num_attention_heads,
@@ -574,12 +613,13 @@ def plan_training(req: PlanRequest, profile: DatasetProfile | None = None, *, ve
         intermediate_size=0 if req.use_moe else arch.ffn_width,
         lookahead_steps=LOOKAHEAD_STEPS, layer_aware_lookahead=True, layer_aware_cache=True,
         recurrent_enabled=depth > 1, recurrent_groups=groups, recurrent_depth=depth, prelude_layers=1,
-        coda_layers=1, min_recurrent_depth=max(1, depth // 2), max_inference_depth=depth,
+        coda_layers=1, min_recurrent_depth=max(1, depth // 2), max_inference_depth=depth, **loop_knobs,
         adaptive_halting=depth > 1, halting_threshold=0.95, depth_schedule="fixed_then_adaptive",
         depth_schedule_warmup_fraction=0.3, recurrent_strategy="scheduled", recurrent_latent_refinement=False,
         ponder_loss_coef=3e-3, recurrent_distill_coef=0.05, recurrent_stability_coef=1e-3,
         lambda_balance=5e-3 if req.use_moe else 0.0, lambda_temporal=1e-3, lambda_lookahead=0.1,
         lambda_lookahead_topk=0.05, fallback_mask_prob=0.08 if req.use_moe else 0.0, dropout=0.0,
+        lambda_cluster_locality=cluster_lambda, cluster_locality_clusters=0, cluster_locality_window=cluster_window,
         kv_cache_dtype=policy["kv_cache_dtype"], mla_cache_rope=policy["mla_cache_rope"],
         router_scope=policy["router_scope"], ram_budget_mb=ram_budget,
         activation_checkpointing=policy["activation_checkpointing"], optimizer_paging=policy["optimizer_paging"],
@@ -590,6 +630,12 @@ def plan_training(req: PlanRequest, profile: DatasetProfile | None = None, *, ve
         # The tokenizer the dataset was profiled with is the one the model needs.
         config["tokenizer_path"] = prof.tokenizer_dir
         sources["tokenizer_path"] = "dataset tokenizer report"
+    elif not req.vocab_size and not prof.vocab_size:
+        # Nothing named a vocabulary: new models start from the bundled task-neutral 32k tokenizer, whose
+        # size is the vocab_size chosen above.  Old checkpoints keep the legacy 6400 default (chronos.deps).
+        from chronos.deps import get_general_tokenizer_path
+        config["tokenizer_path"] = get_general_tokenizer_path()
+        sources["tokenizer_path"] = "default (bundled general 32k tokenizer)"
 
     longrun = [
         dict(name="pretrain", budget_fraction=0.5, peak_lr=lr, tokens_per_step=int(batch_tokens),

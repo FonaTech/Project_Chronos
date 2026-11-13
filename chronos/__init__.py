@@ -1,9 +1,5 @@
 # Project Chronos: On-device low-latency lookahead dual-layer MoE inference
-__version__ = "0.3.0"
-
-# Bootstrap minimind dependency before any submodule imports
-from chronos.deps import ensure_minimind as _ensure_minimind
-_ensure_minimind()
+__version__ = "0.3.3"
 
 # Register with HuggingFace AutoXXX factories so
 # AutoModelForCausalLM.from_pretrained("path/to/chronos") works out of the box.

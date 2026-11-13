@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "Project_Chronos"
-version = "0.3.0"
+version = "0.3.3"
 description = "Storage-aware recurrent-depth MoE: lookahead expert prefetch, SSD-lazy experts, hybrid MLA/SWA attention, self-speculative decoding"
 readme = "README.md"
 license = "Apache-2.0"
@@ -36,7 +36,6 @@ dependencies = [
 cluster = ["python-louvain>=0.16", "networkx>=3.0"]
 mlx     = ["mlx>=0.32.4"]  # gather_mm sparse MoE: 0.31.x is broken on M5 GPUs
 serve   = ["fastapi==0.115.9", "uvicorn==0.34.3"]  # chronos serve / chronos monitor
-translate = ["sacrebleu==2.6.0", "sacremoses==0.2.0"]  # corpus detok + BLEU/chrF probes
 dev     = ["pytest>=7.0", "black>=24.0", "ruff>=0.4.0", "httpx>=0.27", "fastapi==0.115.9", "uvicorn==0.34.3"]
 
 [project.urls]
@@ -45,7 +44,7 @@ Issues = "https://github.com/FonaTech/Project_Chronos/issues"
 
 [project.scripts]
 chronos       = "chronos.cli:main"
-chronos-ui    = "chronos.app:main"
+chronos-ui    = "chronos.webui.server:main"
 chronos-train = "train_chronos:main"
 chronos-eval  = "chronos.eval.io_profiler:main"
 chronos-bench = "chronos.eval.benchmark:main"
@@ -68,6 +67,8 @@ include = ["chronos*", "ui*"]
 [tool.setuptools.package-data]
 ui = ["event_contract.js", "presets_v3.json"]
 "chronos.monitor" = ["static/*.html", "static/*.js", "static/*.css"]
+"chronos.webui" = ["static/*.html", "static/*.js", "static/*.css", "static/*.svg", "i18n/*.json"]
+"chronos.assets" = ["tokenizers/*/*.json", "tokenizers/*/LICENSE", "tokenizers/*/NOTICE"]
 
 [tool.black]
 line-length = 100

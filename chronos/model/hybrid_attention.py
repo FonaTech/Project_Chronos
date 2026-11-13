@@ -13,9 +13,6 @@ Hybrid attention for Project Chronos:
   Even layers: MLA for global context with compressed cache
   Odd layers: SlidingWindow for local patterns with bounded cache
 """
-import sys
-import chronos.deps  # ensure minimind on sys.path
-
 import math
 import torch
 import torch.nn as nn
@@ -295,6 +292,9 @@ class MLAAttention(_RopeTables, nn.Module):
 
 # ── Sliding Window Attention ──────────────────────────────────────
 
+_CONFIG_WINDOW = object()    # sentinel: take ``sliding_window_size`` from the config
+
+
 class SlidingWindowAttention(_RopeTables, nn.Module):
     """
     Local sliding window attention. KV cache is capped at window_size tokens,
@@ -304,14 +304,15 @@ class SlidingWindowAttention(_RopeTables, nn.Module):
     During decode:  KV cache evicts oldest tokens beyond window_size.
     """
 
-    def __init__(self, config: ChronosConfig):
+    def __init__(self, config: ChronosConfig, window_size=_CONFIG_WINDOW):
         super().__init__()
         self.n_heads = config.num_attention_heads
         self.n_kv_heads = config.num_key_value_heads or config.num_attention_heads
         self.head_dim = config.head_dim
         self.n_rep = self.n_heads // self.n_kv_heads
         self.dropout = config.dropout
-        self.window_size = getattr(config, 'sliding_window_size', 2048)
+        # ``None`` = no window (GlobalAttention): full causal GQA, no eviction.
+        self.window_size = getattr(config, 'sliding_window_size', 2048) if window_size is _CONFIG_WINDOW else window_size
         # Extra retained cache entries (outside the attention window, masked
         # out) so speculative decoding can roll back rejected draft tokens.
         self.cache_slack = 0
@@ -362,16 +363,18 @@ class SlidingWindowAttention(_RopeTables, nn.Module):
 
         # Keep full keys for this chunk's queries, then bound the persistent
         # cache. Track absolute positions after eviction for correct RoPE.
-        keep = self.window_size + int(self.cache_slack)
+        keep = None if self.window_size is None else self.window_size + int(self.cache_slack)
         past_kv = None
         if use_cache and self.kv_int8 and kv_override is None:
             # Quantize only the new tokens (each token once); evict afterwards.
             prev = past_key_value if past_key_value is not None else (None, None)
             qk = kv_store(new_k, prev[0], True, self.kv_group)
             qv = kv_store(new_v, prev[1], True, self.kv_group)
-            past_kv = (qk[:, max(0, qk.shape[1] - keep):], qv[:, max(0, qv.shape[1] - keep):], past_len + S)
+            if keep is not None:
+                qk, qv = qk[:, max(0, qk.shape[1] - keep):], qv[:, max(0, qv.shape[1] - keep):]
+            past_kv = (qk, qv, past_len + S)
         elif use_cache:
-            past_kv = (xk[:, -keep:], xv[:, -keep:], past_len+S)
+            past_kv = (xk, xv, past_len + S) if keep is None else (xk[:, -keep:], xv[:, -keep:], past_len + S)
         shared_kv = (xk, xv, past_len + S)
 
         T = xk.shape[1]
@@ -386,12 +389,28 @@ class SlidingWindowAttention(_RopeTables, nn.Module):
         return self.resid_dropout(self.o_proj(out)), past_kv
 
 
+class GlobalAttention(SlidingWindowAttention):
+    """Full causal GQA, used when ``use_hybrid_attention=False``.
+
+    It is the sliding-window kernel without a window. Parameter names
+    (``q/k/v/o_proj``, ``q_norm``, ``k_norm``) and the ``(k, v, abs_pos)``
+    cache are the same, so every recurrent mode works on it, as do int8 KV,
+    padding masks and speculative rollback.
+    """
+
+    def __init__(self, config: ChronosConfig):
+        super().__init__(config, window_size=None)
+
+
 def make_attention(layer_id: int, config: ChronosConfig) -> nn.Module:
     """
-    Layer assignment:
+    Layer assignment (``use_hybrid_attention``, default True):
       even layers → MLAAttention  (global context, compressed KV cache)
       odd  layers → SlidingWindowAttention (local patterns, bounded KV cache)
+    With hybrid attention off, every layer is GlobalAttention (full GQA).
     """
+    if not getattr(config, "use_hybrid_attention", True):
+        return GlobalAttention(config)
     if layer_id % 2 == 0:
         return MLAAttention(config)
     return SlidingWindowAttention(config)

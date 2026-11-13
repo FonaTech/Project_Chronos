@@ -1,0 +1,9 @@
+[exp] b4re start 08:42:54 load 3.03 2.57 2.44 src /tmp/chronos_src_C
+{"label": "b4re", "depth": 4, "steps": 1960, "wall_s": 1802.4, "valid_ce": 4.5429393500089645, "peak_gb": 7.43}
+[exp] b4dt1 start 09:13:21 load 2.89 2.77 2.62 src /tmp/chronos_src_C
+{"label": "b4dt1", "depth": 4, "steps": 1850, "wall_s": 1804.8, "valid_ce": 4.558837652206421, "peak_gb": 7.43}
+[exp] b4k1 start 09:43:53 load 3.80 3.35 2.97 src /tmp/chronos_src_C
+{"label": "b4k1", "depth": 4, "steps": 1960, "wall_s": 1801.0, "valid_ce": 4.599790059030056, "peak_gb": 7.43}
+[exp] b4ic start 10:14:20 load 3.89 4.20 3.91 src /tmp/chronos_src_C
+{"label": "b4ic", "depth": 4, "steps": 1735, "wall_s": 1801.5, "valid_ce": 4.6707650646567345, "peak_gb": 7.43}
+[exp] QUEUE C DONE

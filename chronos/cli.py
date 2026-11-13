@@ -11,9 +11,13 @@ Commands:
     chronos migrate   — explicitly migrate a v1 checkpoint to v2
     chronos serve     — Ollama/OpenAI-compatible server (native runtime; optional /monitor page)
     chronos tokenizer — train a Chronos tokenizer from selected datasets
-    chronos corpus    — download / clean / dedup / shard training corpora
     chronos longrun   — time-budgeted resumable MLX training run (alias: run)
     chronos monitor   — read-only training monitor page + JSON API
+    chronos lazy-probe — lazy-expert efficiency / hit rate / fidelity of a checkpoint or a run
+    chronos webui     — Web UI (alias: ui)
+
+Task-specific tooling (corpora, evaluation, model bundles) lives in extensions
+that import the kernel; the kernel itself carries no task.
 """
 import sys
 import os
@@ -85,15 +89,6 @@ def _module_main(module: str, rest):
     raise SystemExit(importlib.import_module(module).main(rest))
 
 
-def _cmd_corpus(rest):
-    """chronos corpus {download|build|shards} ..."""
-    if not rest or rest[0] not in {"download", "build", "shards"}:
-        raise SystemExit("usage: chronos corpus {download|build|shards} [options]")
-    module = {"download": "chronos.data.corpus.sources", "build": "chronos.data.corpus.presets",
-              "shards": "chronos.data.corpus.shards"}[rest[0]]
-    _module_main(module, rest[1:])
-
-
 def main():
     parser = argparse.ArgumentParser(
         prog='chronos',
@@ -110,10 +105,12 @@ def main():
     sub.add_parser('migrate',   help='Explicitly migrate a v1 checkpoint to v2', add_help=False)
     sub.add_parser('serve',     help='Ollama/OpenAI-compatible server (native Chronos runtime)', add_help=False)
     sub.add_parser('tokenizer', help='Train a Chronos tokenizer from selected datasets', add_help=False)
-    sub.add_parser('corpus',    help='Download/clean/dedup/shard training corpora', add_help=False)
     sub.add_parser('longrun',   help='Time-budgeted resumable MLX training run', aliases=['run'], add_help=False)
     sub.add_parser('monitor',   help='Read-only training monitor page + JSON API', add_help=False)
-    sub.add_parser('bundle',    help='Out-of-the-box model bundle: build/check/translate/finetune/serve', add_help=False)
+    sub.add_parser('lazy-probe', help='Lazy-expert efficiency/hit-rate/fidelity probe (checkpoint or --watch run)',
+                   add_help=False)
+    sub.add_parser('webui',     help='Web UI (FastAPI; --legacy for the Gradio console)', aliases=['ui'],
+                   add_help=False)
 
     known, rest = parser.parse_known_args()
     longrun = lambda rest: _module_main('chronos.mlx.training.longrun', rest)  # noqa: E731
@@ -127,11 +124,12 @@ def main():
         'migrate':   cmd_migrate,
         'serve':     lambda rest: _module_main('chronos.serving.ollama_server', rest),
         'tokenizer': lambda rest: _module_main('chronos.tokenizer', rest),
-        'corpus':    _cmd_corpus,
         'longrun':   longrun,
         'run':       longrun,
         'monitor':   lambda rest: _module_main('chronos.monitor.server', rest),
-        'bundle':    lambda rest: _module_main('chronos.bundle.cli', rest),
+        'lazy-probe': lambda rest: _module_main('chronos.workbench.lazy_probe', rest),
+        'webui':     lambda rest: _module_main('chronos.webui.server', rest),
+        'ui':        lambda rest: _module_main('chronos.webui.server', rest),
     }
     dispatch[known.command](rest)
 

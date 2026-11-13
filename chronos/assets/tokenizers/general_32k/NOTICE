@@ -1,0 +1,30 @@
+General 32k tokenizer (Chronos BPE, vocab 32768)
+
+Trained with chronos.tokenizer (algorithm chronos-bpe-v1) by the Project Chronos
+authors. Files: chronos_tokenizer.json (native), tokenizer.json /
+tokenizer_config.json / special_tokens_map.json (Hugging Face fast tokenizer),
+tokenizer_report.json (trainer settings, sample statistics, held-out results).
+
+Training sample: 233,619 text chunks of at most 2,000 characters, drawn from
+FineWeb-Edu, Fineweb-Edu-Chinese V2.1, Cosmopedia v2, Wikipedia (en) and
+Wikipedia (zh), weighted by mix share x characters per token. The tokenizer
+contains a vocabulary and merge list only; it does not contain the corpus text.
+
+Control tokens (ids 0-63) follow the kernel's task-neutral layout
+(chronos.tokenizer.special_tokens_with()):
+  0 <|endoftext|>  1 <|im_start|>  2 <|im_end|>  3 <|pad|>  4-63 <|reserved_0..59|>
+No task token (language tag, translation marker) is a default. A task that
+needs one claims a reserved slot in its own code.
+
+This copy differs from the training run's original output only in the labels of
+control ids 3-63 (the original carried task tokens at ids 3-5). Ordinary tokens,
+merges and ids are identical: 1,004 held-out texts encode to the same ids with
+both the native and the Hugging Face encoder. Original fingerprint 169668b1be29...,
+this copy 6d4b3b524922... (recorded in tokenizer_report.json "derived_from").
+
+License: the tokenizer files are released under Apache-2.0, the same as the
+repository. The sample corpora carry their own terms, as stated on their dataset
+cards when checked on 2026-11-09: FineWeb-Edu ODC-By (plus Common Crawl terms of
+use); Cosmopedia v2 (smollm-corpus) ODC-By; Wikipedia CC-BY-SA-3.0 and GFDL;
+Fineweb-Edu-Chinese V2.1 asks for permission before commercial use. Check those
+terms for your own use.

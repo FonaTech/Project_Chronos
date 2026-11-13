@@ -203,6 +203,12 @@ def create_monitor_app(runs_dir: str, *, api_key: str | None = None, session_hou
         _guard(request)
         return {"name": name, "history": _run_or_404(mon.tensor_history, run, name)}
 
+    @app.get("/api/lazy_probes")
+    def lazy_probes(request: Request, run: str | None = None, limit: int = 200):
+        """Every lazy-expert probe of a run (``lazy_probe.jsonl``), newest last; the snapshot keeps 20."""
+        _guard(request)
+        return {"probes": _run_or_404(mon.lazy_probes, run, max(1, min(int(limit), 1000)))}
+
     @app.get("/api/log")
     def log(request: Request, run: str | None = None, bytes: int = 16000):  # noqa: A002 - query name
         _guard(request)

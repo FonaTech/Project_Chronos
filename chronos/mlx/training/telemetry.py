@@ -144,10 +144,13 @@ def expert_table(tensors: list[dict]) -> dict:
     return {"layers": layers, "weight_rms": grid(1), "grad_rms": grid(2)} if layers else {}
 
 
-def routing_snapshot(model) -> dict | None:
-    """Per virtual layer: load share, mean router probability and entropy of
-    the last forward's dispatches (``[V, E]``), with ``L<layer>·<iteration>``
-    labels so recurrent iterations of one physical layer sit side by side."""
+def routing_snapshot(model, counts=None) -> dict | None:
+    """Per virtual layer: load share, mean router probability and entropy
+    (``[V, E]``), with ``L<layer>·<iteration>`` labels so recurrent iterations
+    of one physical layer sit side by side.
+
+    ``counts`` (``longrun.RoutingCounts``) = the whole step's real tokens;
+    without it, the last forward's dispatches (every position)."""
     from chronos.mlx.moe import ChronosMLXMOE
     probs, labels = [], []
     for li, layer in enumerate(getattr(model, "layers", [])):
@@ -156,21 +159,30 @@ def routing_snapshot(model) -> dict | None:
             for it, p in enumerate(moe.iteration_router_probs):
                 probs.append(p)
                 labels.append(f"L{li}·{it}")
-    if not probs:
-        return None
     top_k = int(model.config.num_experts_per_tok)
-    router = mx.stack(probs, axis=2)                                      # [B, S, V, E]
-    E, V = router.shape[-1], router.shape[2]
-    flat = router.reshape(-1, V, E).astype(mx.float32)
-    top = mx.argpartition(-flat, kth=top_k - 1, axis=-1)[..., :top_k]
-    load = (top[..., None] == mx.arange(E)).astype(mx.float32).sum(-2).mean(0) / top_k
-    importance = flat.mean(0)
-    entropy = -(flat * mx.log(mx.maximum(flat, 1e-9))).sum(-1).mean(0)
+    if counts is not None and counts.load is not None and counts.tokens > 0:
+        n = float(counts.tokens)
+        load, importance, entropy = counts.load / (n * top_k), counts.importance / n, counts.entropy / n
+        E = int(load.shape[-1])
+        if len(labels) != int(load.shape[0]):
+            labels = [f"V{v}" for v in range(int(load.shape[0]))]
+        source = "all micro-batches of the step, real tokens"
+    else:
+        if not probs:
+            return None
+        router = mx.stack(probs, axis=2)                                  # [B, S, V, E]
+        E, V = router.shape[-1], router.shape[2]
+        flat = router.reshape(-1, V, E).astype(mx.float32)
+        top = mx.argpartition(-flat, kth=top_k - 1, axis=-1)[..., :top_k]
+        load = (top[..., None] == mx.arange(E)).astype(mx.float32).sum(-2).mean(0) / top_k
+        importance = flat.mean(0)
+        entropy = -(flat * mx.log(mx.maximum(flat, 1e-9))).sum(-1).mean(0)
+        source = "last micro-batch of the step"
     mx.eval(load, importance, entropy)
     r4 = lambda grid: [[round(v, 4) for v in row] for row in grid]
     return {"labels": labels, "experts": E, "top_k": top_k, "load": r4(load.tolist()),
             "importance": r4(importance.tolist()), "entropy": [round(v, 4) for v in entropy.tolist()],
-            "entropy_max": round(math.log(E), 4), "source": "last micro-batch of the step"}
+            "entropy_max": round(math.log(E), 4), "source": source}
 
 
 def code_fingerprint(root: str | None = None) -> dict:

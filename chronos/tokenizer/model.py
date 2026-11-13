@@ -21,17 +21,57 @@ _CONTROL_RE = re.compile(_CONTROL_PATTERN)
 _BYTE_RE = re.compile(r"^<0x([0-9A-F]{2})>$")
 _BYTE_SPLIT_RE = re.compile(r"(<0x[0-9A-F]{2}>)")
 
+# Plain turns render exactly as before (``<|im_start|>role\ncontent<|im_end|>\n``).
+# Tools: the definitions go into one system block, an assistant turn's
+# ``tool_calls`` follow its text as ``<tool_call>{json}</tool_call>`` lines, and
+# ``tool`` turns carry the results.  ``chronos.data.chat_records.render_chat``
+# produces the same text in Python (with per-turn spans for loss masks).
 CHAT_TEMPLATE = (
+    "{% if tools %}{{ '<|im_start|>system\n' }}"
+    "{% if messages and messages[0]['role'] == 'system' %}{{ messages[0]['content'] + '\n\n' }}{% endif %}"
+    "{{ '<tools>\n' }}{% for tool in tools %}{{ tool | tojson + '\n' }}{% endfor %}"
+    "{{ '</tools><|im_end|>\n' }}{% endif %}"
     "{% for message in messages %}"
-    "{{ '<|im_start|>' + message['role'] + '\n' + message['content'] + '<|im_end|>' + '\n' }}"
+    "{% if not (tools and loop.first and message['role'] == 'system') %}"
+    "{{ '<|im_start|>' + message['role'] + '\n' + (message['content'] or '') }}"
+    "{% if message['role'] == 'assistant' and message.get('tool_calls') %}"
+    "{% set text = message['content'] or '' %}"
+    "{% for call in message['tool_calls'] %}"
+    "{% set fn = call['function'] if call.get('function') else call %}"
+    "{% if text or not loop.first %}{{ '\n' }}{% endif %}"
+    "{{ '<tool_call>' + {'name': fn['name'], 'arguments': fn['arguments']} | tojson + '</tool_call>' }}"
+    "{% endfor %}{% endif %}"
+    "{{ '<|im_end|>' + '\n' }}"
+    "{% endif %}"
     "{% endfor %}"
     "{% if add_generation_prompt %}{{ '<|im_start|>assistant\n' }}{% endif %}"
 )
 
-DEFAULT_SPECIAL_TOKENS = (
-    "<|endoftext|>", "<|im_start|>", "<|im_end|>",
-    "<|en|>", "<|zh|>", "<|translate|>", "<|pad|>",
-) + tuple(f"<|reserved_{i}|>" for i in range(57))
+#: Ids 0–2 are fixed (EOS / chat start / chat end); the rest of the 64
+#: control slots are ``<|reserved_i|>`` until a task claims them.
+CORE_SPECIAL_TOKENS = ("<|endoftext|>", "<|im_start|>", "<|im_end|>", "<|pad|>")
+SPECIAL_SLOTS = 64
+
+
+def special_tokens_with(extra=(), *, slots: int = SPECIAL_SLOTS) -> tuple[str, ...]:
+    """Core control tokens, then ``extra`` task tokens, padded with reserved slots.
+
+    ``extra`` tokens go right after ``<|im_end|>`` (ids 3, 4, …) in the given
+    order; a token already in the core set keeps its core position.
+    """
+    head = list(CORE_SPECIAL_TOKENS[:3])
+    for tok in extra:
+        if tok not in head:
+            head.append(tok)
+    for tok in CORE_SPECIAL_TOKENS[3:]:
+        if tok not in head:
+            head.append(tok)
+    if len(head) > slots:
+        raise ValueError(f"{len(head)} special tokens exceed the {slots} control slots")
+    return tuple(head) + tuple(f"<|reserved_{i}|>" for i in range(slots - len(head)))
+
+
+DEFAULT_SPECIAL_TOKENS = special_tokens_with()
 
 
 def tokenizer_normalize(text: str) -> str:

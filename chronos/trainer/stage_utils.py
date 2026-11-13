@@ -12,6 +12,7 @@ from chronos.model.checkpoint import (
     resolve_checkpoint_tokenizer,
 )
 from chronos.model.config import ChronosConfig
+from chronos.expert_clusters import DEFAULT_LAMBDA, DEFAULT_WINDOW
 from chronos.config_schema import MODEL_FIELDS
 
 
@@ -67,7 +68,7 @@ def add_topology_args(parser, *, defaults: bool = False):
     parser.add_argument("--vocab_size", type=int, default=(6400 if defaults else None))
     parser.add_argument("--tokenizer_path", default=None,
                         help="Tokenizer directory (tokenizer.json). Default: the checkpoint's own tokenizer "
-                             "(<ckpt dir>/tokenizer or its config metadata), else minimind.")
+                             "(<ckpt dir>/tokenizer or its config metadata), else the bundled legacy 6400 tokenizer.")
     parser.add_argument("--recurrent_groups", type=int, default=(2 if defaults else None))
     parser.add_argument("--recurrent_depth", type=int, default=(4 if defaults else None))
     parser.add_argument("--min_recurrent_depth", type=int, default=(2 if defaults else None))
@@ -138,6 +139,9 @@ def build_pretrain_config(args) -> ChronosConfig:
         "lambda_lookahead_topk": getattr(args, "lambda_lookahead_topk", 0.15),
         "lambda_lookahead_union": getattr(args, "lambda_lookahead_union", 0.05),
         "lambda_router_locality": getattr(args, "lambda_router_locality", 0.02),
+        "lambda_cluster_locality": getattr(args, "lambda_cluster_locality", DEFAULT_LAMBDA),
+        "cluster_locality_clusters": getattr(args, "cluster_locality_clusters", 0),
+        "cluster_locality_window": getattr(args, "cluster_locality_window", DEFAULT_WINDOW),
         "vram_budget_gb": getattr(args, "vram_budget_gb", 4.0),
         "use_moe": True,
         "architecture_version": 2,
@@ -192,6 +196,8 @@ def build_config_from_upstream(
         "lambda_lookahead_topk",
         "lambda_lookahead_union",
         "lambda_router_locality",
+        "lambda_cluster_locality",
+        "cluster_locality_window",
         "fallback_mask_prob",
     ):
         value = getattr(args, key, None)
@@ -219,8 +225,8 @@ def load_stage_tokenizer(args, config, checkpoint_path: str | None = None):
     """Load the tokenizer that matches ``checkpoint_path`` (or ``--tokenizer_path``).
 
     Raises an error when the tokenizer has more entries than ``config.vocab_size``.
-    A larger tokenizer would emit ids the embedding cannot hold. The minimind
-    tokenizer (6400 entries) used on a 16k-vocabulary checkpoint fails the other
+    A larger tokenizer would emit ids the embedding cannot hold. The legacy
+    6400-entry tokenizer used on a 16k-vocabulary checkpoint fails the other
     way: it trains silently on the wrong ids.
     """
     from transformers import AutoTokenizer

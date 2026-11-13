@@ -42,7 +42,7 @@ def normalize_text(text: str, *, form: str = "NFKC", unsegment_cjk: bool = False
     """NFKC, control-character removal, whitespace collapsing.
 
     ``unsegment_cjk`` removes spaces between CJK characters (for corpora that
-    ship word-segmented Chinese, e.g. the iic WMT CSV).
+    ship word-segmented Chinese).
     """
     if form:
         text = unicodedata.normalize(form, text)

@@ -89,7 +89,7 @@ flowchart LR
 
 **Self-speculative decoding (no extra parameters).** The same model drafts γ tokens at a shallow depth and verifies them with one full-depth batched forward pass. Greedy output is token-for-token identical to full-depth greedy. Sampling uses rejection sampling, which preserves the full-depth distribution. After a rejection, the cache is truncated: MLA slices `c_kv`, and the sliding-window cache keeps `window + γ_max` entries. Torch (`chronos/runtime/speculative.py`) and MLX (`chronos/mlx/speculative.py`, `ChronosMLXInferenceEngine.generate(speculative=True)`) share the algorithm. Tests cover greedy identity, the rejection distribution and rollback against a fresh prefill on both backends. The Web UI Inference tab has a switch for it, with draft depth and γ.
 
-For the 50M demo it is exact but not faster on any runtime we measured (pretrain step-13,996 checkpoint, greedy, batch 1, FLORES+ dev en→zh, draft depth 1, γ 4; reports in `reports/speculative/`):
+For the 50M demo checkpoint it is exact but not faster on any runtime we measured (pretrain step-13,996 checkpoint of the demo in `demos/translation`, greedy, batch 1, the demo's dev prompts, draft depth 1, γ 4; exact conditions in [`demos/translation/README.md`](demos/translation/README.md); reports in `reports/speculative/`):
 
 | Runtime | Plain tok/s | Speculative tok/s | Ratio | Acceptance |
 |---|---|---|---|---|
@@ -107,18 +107,13 @@ At this size a full-depth step costs about as much as a batched verify pass. Wit
 | Command | What it does |
 |---|---|
 | `chronos tokenizer` | Self-built byte-fallback BPE with script-aware pre-tokenization and language-balanced merges; writes an HF-compatible `tokenizer.json` + chat template |
-| `chronos corpus download / build / shards` | Pinned downloads, cleaning, global dedup, eval-set leak removal, uint16 shards |
-| `chronos longrun --spec recipe.json` (alias `run`) | Time-budgeted MLX run: warmup + cosine per phase wall-clock budget, NaN rollback, bit-exact resume, validation and translation probes |
+| `chronos longrun --spec recipe.json` (alias `run`) | Time-budgeted MLX run: warmup + cosine per phase wall-clock budget, NaN rollback, bit-exact resume, validation CE; tasks add their own metrics by subclassing `LongRun` (`task_eval`) |
 | `chronos serve` | Ollama/OpenAI protocol server on the native runtime (see below) |
 | `chronos monitor` | Read-only training monitor page + JSON API (see below) |
 
 `chronos.model.factory.fit_config` searches for a configuration that matches total and active parameter targets.
 
-**Status of the 50M en→zh demo (in progress).**
-- Model: 49.69M total / 12.09M active parameters, 36 experts, MLA latent 128, SWA window 128, 16k self-built vocabulary.
-- Run: a 72-hour MLX bf16 run (pretrain, then SFT) started on 2026-11-05.
-- Interim measurement: valid CE 2.477 at pretrain step 13,996 of about 24.7k planned (it was 3.012 at step 1,656). That checkpoint is packaged as `chronos-enzh-50m-pretrain-s13996` (see Model bundle).
-- BLEU/chrF on FLORES+ and WMT22, and the ablations (attention mode, depth, lazy-expert budget, speculative γ), will be published after the run finishes. No quality numbers are claimed before then.
+**Kernel and extensions.** The `chronos` package trains general models and carries no task-specific code. Task tooling lives in extensions that import the kernel. The en↔zh translation demo is one: `demos/translation` (`chronos-translate`: corpus pipeline, BLEU/chrF runs, model bundles; see its README). It is not part of the `Project_Chronos` wheel and is not published on PyPI; install it from a checkout with `pip install -e demos/translation`. The 50M en→zh status, the released model `chronos-enzh-50m-sft` (files in `demos/translation/models/`) with its measurements, and the model bundle are documented in [`demos/translation/README.md`](demos/translation/README.md).
 
 **Inference and memory options (all off by default).** Each option is a config field and a `chronos serve` / Inference-tab override. Tests compare each one with its reference path on Torch and MLX.
 
@@ -132,6 +127,72 @@ At this size a full-depth step costs about as much as a batched verify pass. Wit
 | `max_resident_experts`, `ram_budget_mb` | unset | Hard caps on the fast tier and the RAM tier. LRU eviction never evicts experts the lookahead router predicts. Prefetch covers every loop iteration of a virtual layer |
 
 Web UI: the Tokenizer tab (extract → train → evaluate) and the Serve tab (start/stop `chronos serve`; the API key goes through the environment, never argv).
+
+---
+
+## Native kernel (0.3.2): minimind removed
+
+Up to 0.3.1a3, Chronos took its config base, RoPE tables, gated FFN, dense attention and trainer utilities from [minimind](https://github.com/jingyaogong/minimind). It loaded them at import time: `chronos.deps` git-cloned the `master` branch into `~/.cache/chronos/minimind-master/` and put that folder first on `sys.path`. 0.3.2 replaces those pieces with `chronos/model/kernel.py`. Nothing is downloaded, and `sys.path` is not changed.
+
+**Why it was migrated**
+
+- **Reproducibility.** The clone followed an unpinned `master`, so two installs could run different kernel code.
+- **Offline installs.** On a machine without the cache, `import chronos` ran `git clone` and failed without network access.
+- **Namespace collisions.** minimind's top-level `model`, `trainer` and `dataset` packages went first on `sys.path`. They shadowed any user module with the same name.
+- **Dense mode was broken.** `use_hybrid_attention=False` used minimind's `Attention`, which crashed in every recurrent mode (`The size of tensor a (8) must match the size of tensor b (1024)`). It also could not use the shared KV cache.
+- **BF16 checkpoints were overwritten as FP16.** The Torch pretrain save called minimind's `lm_checkpoint`. That function rewrote the release file `chronos_<H>_moe.pth` as FP16 right after Chronos had saved it in BF16.
+- **Trainer logs were lost.** The Web UI captured trainer output by patching `trainer_utils.Logger`. The trainers import `Logger` by name at load time, so the patch never reached them.
+
+**What the native kernel does**
+
+- `ChronosBaseConfig` keeps the old field names and defaults. RoPE/YaRN tables and FFN parameter names are unchanged too, so existing checkpoints and sidecars load as before.
+- One FP32 RoPE table per `(dim, base, scaling, device)` is shared by all layers and grows on demand. Before, every attention layer kept its own copy.
+- `GlobalAttention` is the dense GQA path. It is the sliding-window kernel without a window, so all three recurrent modes, int8 KV, padding masks and speculative rollback work on it.
+- Logging uses a sink registry (`add_log_sink`). Resume state goes to `chronos_<H>_moe_resume.pth`, and the release checkpoint keeps its dtype.
+- The 6400-token tokenizer that old checkpoints use ships as data only (`chronos/assets/tokenizers/legacy_6400`, Apache-2.0, sha256 recorded in its `NOTICE`).
+
+**Old vs new, measured 2026-11-08**
+
+Setup: Apple M5 Max, PyTorch 2.10 on CPU, FP32, 4 threads, median of 5–7 runs, each kernel in its own process, runs alternated twice. A 50M training run was using the GPU at the same time, so absolute timings carry noise. Old = 0.3.1a3 + minimind `24896cd`.
+
+| Check | 0.3.1a3 + minimind | 0.3.2 native |
+|---|---|---|
+| Logits, `out/chronos_256_moe.pth` and the 50M demo checkpoint (full, padded and prefill+decode paths) | reference | bit-identical (max abs diff 0) |
+| Random-init `state_dict` and config values (same seed) | reference | identical |
+| `import chronos` with no cache and no network | fails (`git clone` error) | works |
+| minimind on `sys.path`, top-level `model` module imported | yes | no |
+| RoPE table memory, 50M shape (1024 positions) | 3.50 MiB | 0.50 MiB |
+| RoPE table memory, 768H base shape (32768 positions) | 216 MiB | 24 MiB |
+| Dense GQA mode (`use_hybrid_attention=False`) | crashes | works; prefill+decode vs full forward ≤ 1e-6 |
+| Release checkpoint dtype after BF16 Torch pretrain | FP16 | BF16 |
+| Trainer lines captured by the Web UI sink | 0 of 2 | 2 of 2 |
+| Train step, 50M shape, batch 4×128 | 0.318–0.326 s | 0.317–0.321 s |
+| Prefill 128 tokens, 50M shape | 40.0–40.7 ms | 41.4–42.8 ms |
+| Decode tokens/s, 50M shape | 146–157 | 146–151 |
+
+A repeat with 40 prefill runs per process gave medians of 64–86 ms (old) and 74–86 ms (new) as the training load changed; neither kernel was consistently faster. Compute speed is unchanged within noise: the kernel keeps the same math. The gains are in memory, robustness and the bugs listed above. The parity check runs in CI as `tests/test_native_kernel.py`, which covers config defaults, RoPE bit-identity, dense mode, imports, logging, resume and the bundled tokenizer.
+
+`chronos.deps` remains as a shim: `get_tokenizer_path()` returns the bundled tokenizer (`CHRONOS_DEFAULT_TOKENIZER` overrides it), and `ensure_minimind()` is a no-op with a deprecation warning. The comparison tools in `tools/compare_minimind_chronos*.py` still use minimind as an external baseline, from a checkout you provide (`--minimind-dir` or `CHRONOS_MINIMIND_DIR`). `benchmark_compare.py` now compares Chronos with a dense GQA baseline built from the same kernel.
+
+### MLX training: compiled step and activation recomputation (0.3.2)
+
+Up to 0.3.1a3 the MLX trainers ran every micro step eagerly and kept every activation for the backward pass. 0.3.2 adds both missing pieces to `chronos longrun` and to the Stage 1–2 MLX trainer (pretrain, SFT):
+
+- **Compiled micro step** (`chronos/mlx/training/compiled.py`, on by default). Loss and gradients run as one `mx.compile` graph per signature. The executed recurrent depth, the ACT switch, input shapes and plain config values are part of the signature, so a step never reuses a stale graph. Weights and the RNG state are compile inputs and outputs, so dropout and the cache-miss simulation consume the RNG stream exactly as before. Multimodal batches, lazy (paged) experts and any signature that fails to trace run eagerly, and the reason is logged once. `CHRONOS_MLX_COMPILE=auto|on|off` or the recipe's `extra.mlx_compile` switches it.
+- **Activation recomputation** (`chronos/mlx/checkpointing.py`, `activation_checkpointing=true`; the planner's memory-constrained tiers turn it on). Each block call becomes one recomputed region. A plain `mx.checkpoint` is wrong here in two ways, both measured on mlx 0.32.4. Dropout masks and the cache-miss draws would be drawn again during recomputation; they are recorded in the forward pass and replayed. A region that returns the same graph node twice keeps the gradient of only one copy. A block's KV cache and its shared view are such a pair whenever the SWA window covers the sequence (a full-length slice is a new Python object over the same node), and the gradients were 37–40% off. Region outputs are therefore packed into one array per dtype.
+
+**Measured 2026-11-08.** Setup: Apple M5 Max, mlx 0.32.4, bf16, the 50M demo recipe's model config (`demos/translation/recipes/`) from random init, the demo's real training shards, the recipe's step sizes (SFT 8 micro-batches per step, pretrain 16). Median of the second half of 16 (SFT) or 12 (pretrain) steps. The 72-hour run was training on the same GPU, so absolute timings carry noise.
+
+| Micro step | SFT s/step | SFT peak memory | Pretrain s/step | Pretrain peak memory |
+|---|---|---|---|---|
+| Eager (0.3.1a3) | 2.915 | 5.62 GB | 7.154 | 6.07 GB |
+| Compiled (new default) | 2.700 (1.08×) | 5.86 GB | 6.057 (1.18×) | 6.28 GB |
+| Recomputation + compiled | 3.148 | 3.50 GB | 7.357 | 3.62 GB |
+| Recomputation, eager | 3.663 | 3.42 GB | — | — |
+
+The loss curves of all variants follow the eager one: within 2e-3 over 16 SFT steps and 2e-4 over 12 pretrain steps. The first compiled step also traces the graph. Recomputation cuts peak memory by 38–40%. With compilation on, a step then takes 17% (SFT) or 21% (pretrain) longer than the compiled step without recomputation, and 8% or 3% longer than the old eager step. At 50M parameters memory is not the limit, so recomputation stays off by default; it is meant for larger models or longer sequences on the same machine.
+
+Exactness is tested per micro step on the same weights, batch and RNG state inside the real LongRun loop (`tests/test_longrun.py`, `tests/test_mlx_checkpointing.py`). On CPU FP32 the recomputed step's gradients match the eager ones within 4e-7 relative, the compiled step's within 1.7e-5, and with both on within 1e-4. That is FP32 reassociation: scaling the weights by (1 + 1e-7·N(0,1)) moves the eager gradient by 1.8e-4. On the M5 GPU, FP32 matrix products round like TF32. There, the eager gradient itself differs from the CPU FP32 one by 1.5e-2, and the recomputed one differs from the eager one by 1.4e-4.
 
 ---
 
@@ -285,7 +346,15 @@ verify results. Stop is cooperative at batch boundaries and save intervals
 write a valid `.pth` plus sibling `.config.json`, so MLX stages can resume or
 feed the PyTorch/export pipeline.
 
-The full six-stage comparison harness lives in `tools/compare_minimind_chronos_v3.py`.
+Memory, media and tools on MLX:
+
+- Every MLX model caps the MLX buffer cache at `min(RAM/8, 16 GiB)` before it allocates weights (`chronos.mlx.memory`). A recipe's `extra.mlx_cache_limit_gb` or `CHRONOS_MLX_CACHE_LIMIT_GB` may lower the cap, never raise it. The cap bounds reclaimable cache only; weights, activations and gradients are not limited.
+- Image and audio encoders and the gated cross-attention fusion run on MLX in all six stages, with the same weights and numerics as PyTorch (`chronos.mlx.multimodal`). In DPO and ORPO, both answers of a pair condition on the prompt's media. In GRPO, every rollout conditions on it. Preference and GRPO records carry media in the same `image`, `audio` and `*_embeds` fields as SFT. The PyTorch DPO, ORPO and GRPO trainers are text-only, so `auto` routes media data in those stages to MLX.
+- Tool calls:
+  - Training: the chat template renders `tools`, assistant `tool_calls` and `tool` results. `chronos.data.chat_records.encode_chat` gives each token a loss flag (assistant text and calls are learned; everything else is context), and `write_sft_records` writes `.lmask` shards that `SFTRecords` reads.
+  - Serving: when a request carries `tools`, `chronos serve` parses the model's `<tool_call>` output into Ollama `message.tool_calls` or OpenAI `tool_calls`, in streaming and non-streaming responses.
+
+The full six-stage comparison harness lives in `tools/compare_minimind_chronos_v3.py` (needs a minimind checkout via `--minimind-dir`).
 
 ---
 
@@ -426,22 +495,6 @@ All lambda terms are searchable with Optuna TPE, together with structural hyperp
 
 ---
 
-## Released model: chronos-enzh-50m-sft
-
-[`models/chronos-enzh-50m-sft/`](models/chronos-enzh-50m-sft/) packages a 49.7M-parameter Chronos v3 model (12.1M active per token) trained for 69 hours on one Apple M5 Max: configuration, tokenizer, trained prompt, decoding settings, a driver (`translate.py`) and the evaluation behind every number. The weights (99.5 MB, bfloat16 safetensors) are attached to the release [`enzh-50m-sft-v1`](https://github.com/FonaTech/Project_Chronos/releases/tag/enzh-50m-sft-v1).
-
-- **Boundary:** English → Chinese only, one sentence (≤ 128 tokens) at a time. Chinese → English is disabled: English-only fine-tuning erased it (FLORES+ BLEU 0.00 after SFT). The driver refuses input outside the boundary.
-- **Measured** (MLX bf16, greedy): FLORES+ devtest BLEU 33.48 / chrF 29.52; WMT22 BLEU 32.60 / chrF 28.83; WMT24++ BLEU 26.89 / chrF 24.43 (split into sentences).
-- **Research use only.** The training corpora's licences are unknown; see the folder's `NOTICE`.
-
-```bash
-cd models/chronos-enzh-50m-sft
-pip install --pre "Project_Chronos[mlx]==0.3.2a0"   # or "Project_Chronos==0.3.2a0" without MLX
-python translate.py --download && python translate.py "The meeting was moved to Friday."
-```
-
----
-
 ## Installation
 
 ```bash
@@ -466,7 +519,7 @@ pip install "Project_Chronos[mlx]"
 
 ```bash
 pip install "Project_Chronos[serve]"      # chronos serve / chronos monitor (fastapi, uvicorn)
-pip install "Project_Chronos[translate]"  # corpus detokenization + BLEU/chrF probes (sacremoses, sacrebleu)
+pip install -e demos/translation          # translation demo extension (chronos-translate), from a checkout only, not on PyPI
 ```
 
 **vLLM serving (optional, Linux + CUDA only):**
@@ -475,10 +528,7 @@ pip install "Project_Chronos[translate]"  # corpus detokenization + BLEU/chrF pr
 pip install vllm
 ```
 
-> **minimind dependency**: Project Chronos uses [minimind](https://github.com/jingyaogong/minimind) as its MoE kernel.
-> If it is not found locally, Chronos clones it automatically into `~/.cache/chronos/minimind-master/` on first import (this needs `git` and network access).
-> Set `CHRONOS_MINIMIND_DIR=/path/to/minimind` to use a local copy instead; model bundles ship one under `third_party/minimind` and their launcher sets the variable.
-> minimind is licensed under **Apache-2.0**. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for attribution details.
+> **No external kernel**: since 0.3.2 the kernel is self-contained (`chronos/model/kernel.py`). Installing and importing Chronos needs no `git` and no network. See [Native kernel (0.3.2)](#native-kernel-032-minimind-removed) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 **Requirements**: Python 3.10+, PyTorch 2.6+
 
@@ -486,30 +536,19 @@ pip install vllm
 
 ## Quick start
 
-### Web UI (12 tabs, 4 languages)
+### Web UI (11 pages, 4 languages)
 
 ```bash
-chronos-ui
-# or
-python chronos_app.py
+chronos-ui                       # or: python chronos_app.py
+chronos-ui --lan                 # also open it to the local network (off by default)
+chronos-ui --legacy              # the previous Gradio console
 ```
 
-Tabs included:
+A FastAPI server with a single-page app (`chronos/webui/`). It listens on 127.0.0.1 without a login. Pages: Model (v3 presets, the auto planner below, a live parameter / memory estimate), Data (scan one or several datasets), Tokenizer (extract → train → evaluate the Chronos BPE), Train (stages in order, each with its own data; optional lazy-expert probe at every validation), Monitor (read-only view of any run folder, including runs started from the command line), Inference (lazy experts vs full memory on one prompt), Export, Serve (start and stop `chronos serve`), Benchmark, Auto-tune, IO metrics.
 
-- `Config`: v3 presets, the auto planner (below) and a live parameter / memory estimator
-- `Data` for dataset scanning and conversion
-- `Tokenizer`: extract text from datasets, train the Chronos BPE, evaluate and save
-- `Train` with its own `data_path`; applies the selected stage's overrides
-- `Training Monitor` (read-only view of `runs/`; see below)
-- `6-Stage Pipeline` with per-stage dataset paths
-- `Inference`
-- `Export` for FP16/Q8_0 safetensors and GGUF deployment artifacts
-- `Serve`: start and stop `chronos serve` and view its log
-- `Benchmark` with Markdown table + comparison plots
-- `Auto-Tune` with persistent logs and one-click `Apply Best -> Config`
-- `IO Monitor`
-
-At a 1280 px wide window, Gradio moves the last tabs (Auto-Tune, IO Monitor) into its "…" overflow menu.
+- **Languages.** zh-Hans, zh-Hant, en and ja; the page follows the browser language and falls back to English. Every setting has hover help with its meaning and recommended value (after a 2 s rest; the "?" mark after 0.4 s).
+- **Paths.** "Browse…" lists folders on the server's machine. "Upload…" uses the system file manager: on the server's own machine the server opens the native dialog and the file is used where it is; from another machine the files are uploaded to `<workdir>/uploads/` and that path is used. Dataset fields take several files or folders, one per line; training and export calibration merge them into one JSONL file.
+- **LAN access** (`--lan`). Other machines sign in with `CHRONOS_UI_KEY`, or with a key printed at start when none is set; the server's own machine needs no sign-in. A signed-in browser can train and read or write files with the server user's rights, so use it on a trusted network only. The key crosses plain HTTP in clear text unless `--ssl-certfile` / `--ssl-keyfile` or a TLS proxy is used. `--max-upload-mb` caps a single upload (default 20480); `--no-native-dialog` turns the native dialog off, for example over SSH. `--allow-remote` with a key in the environment binds any other host.
 
 ### Presets and the auto planner
 
@@ -518,7 +557,7 @@ The Config tab ships five v3 presets. Each one is generated by the planner and s
 | Preset | Total / active params (measured) | Shape | Memory level | Est. training peak |
 |---|---|---|---|---|
 | Chronos-v3 Tiny (smoke / CI) | 1.51M / 1.29M | E4 top-2, vocab 6400, seq 128, depth 2 | none | 2.13 GB |
-| Chronos-v3 50M (en→zh recipe) | 49.69M / 12.09M | h384, L6, E36 top-2, vocab 16384, seq 512 | none | 16.4 GB (the live run measures 8.72 GB peak) |
+| Chronos-v3 50M (16k vocab) | 49.69M / 12.09M | h384, L6, E36 top-2, vocab 16384, seq 512 | none | 16.4 GB (the live run measures 8.72 GB peak) |
 | Chronos-v3 200M (32 GB) — default | 200.72M / 28.20M | h576, E32 top-2 | balanced | 10.14 GB |
 | Chronos-v3 500M (32 GB) | 499.53M / 61.59M | E48 top-3 | aggressive | 9.26 GB |
 | Chronos-v3 1B (64 GB) | 1002.17M / 99.74M | E64 top-4, seq 2048 | aggressive | 18.92 GB |
@@ -537,6 +576,7 @@ The old preset names (Recommended-CN, Tiny/Small/Medium/Large) still load; they 
 3. **Sets LR and batch size** from the DeepSeek LLM compute-optimal fits (η = 0.3118·C^−0.125, B = 0.2920·C^0.3271), capped for wide models.
 4. **Fits memory.** It picks micro-batch, accumulation, int8 KV, router scope, activation checkpointing, optimizer paging and an expert RAM budget for the memory level.
 5. **Writes per-stage values.** Pretrain, SFT, DPO, ORPO, GRPO and distill each get their own learning rate, batch, epochs, save interval and stage-specific terms (β, temperature, α).
+6. **Sets the loop knobs (depth above 1).** `recurrent_order="block"`, `recurrent_dt_param="sigmoid"` and `recurrent_dt_init = min(0.5, 2 / depth)`, each with a `sources` entry in the report (the first two cite the 15M measurements; the step size is labelled estimated). One loop iteration is an Euler step of `dh/dτ = block(h) − h`, so `depth × dt` is the integration horizon; the planner holds it at 2 and lets depth refine the integration. Kernel defaults are unchanged (`layer`, `clamp`, 0.25). All of this was measured on one seed per arm at 15M parameters; see the CHANGELOG, "Physical mechanism" and "Known limits".
 
 The stage table is editable; the Train tab merges the selected stage's row over the shared values, and the pretrain row stays in sync with the shared widgets. "Save plan" writes the config, stage values and report to JSON. Every number in the report is labelled measured or estimated.
 
@@ -584,38 +624,6 @@ OLLAMA_HOST=127.0.0.1:11435 ollama run <model-name> "Hello"
 - Chronos options go in the request `options`: `chronos_speculative`, `chronos_draft_depth`, `chronos_gamma`, `chronos_miss_policy`.
 - Stock `ollama` / llama.cpp cannot execute Chronos GGUF files (MLA+SWA hybrid layers and the contractive recurrence have no stock equivalent); use this server instead.
 - Security: binds 127.0.0.1 without authentication by default. Other addresses require `--allow-remote` and `--api-key`; clients then send `Authorization: Bearer <key>`.
-
-### Model bundle (ready-to-run pretrained model)
-
-`chronos bundle build` packages one exported checkpoint of a `chronos longrun` run into a folder that works right after unpacking. Building only reads the run directory.
-
-```bash
-chronos bundle build --run-dir runs/enzh_50m_v1 --which best --wheel dist/project_chronos-0.3.0-py3-none-any.whl --pack
-```
-
-| Bundle path | Content |
-|---|---|
-| `model/` | weights + `.config.json` sidecar, tokenizer (`model/tokenizer/`) |
-| `eval/` | FLORES+ dev/devtest (CC BY-SA 4.0) for `bundle eval` / `probe` |
-| `data/sft_valid/` | the run's SFT validation shards |
-| `third_party/minimind/` | vendored minimind (Apache-2.0), so no git clone is needed |
-| `wheels/`, `bin/setup.sh`, `bin/chronos` | offline install into `.venv`, launcher that sets `CHRONOS_BUNDLE` / `CHRONOS_MINIMIND_DIR` |
-| `recipes/source_run_spec.json`, `recommended.json` | the recipe that produced the weights; fine-tune tiers `smoke` / `quick` / `standard` / `full` |
-| `bundle.json` | provenance (step, tokens, valid CE), measured quality probe, SHA-256 of every file |
-
-On the recipient side:
-
-```bash
-bin/setup.sh                                              # venv + wheel + `bundle check`
-bin/chronos bundle translate "The weather is very nice today."
-bin/chronos bundle translate --backend mlx --speculative --file examples/translate_en.txt
-bin/chronos bundle eval --split devtest -n 200
-bin/chronos bundle prepare-data my_pairs.jsonl --out work/data      # FLORES+ is removed from your data
-bin/chronos bundle finetune --data work/data --run-dir work/ft --tier quick --mode sft
-bin/chronos bundle serve -- --port 11435
-```
-
-`--speculative` needs `--repetition-penalty 1.0` (its default), because the penalty changes the target distribution at every position. `finetune` writes a `chronos longrun` spec with `init_checkpoint` set to the bundle weights and refuses a run directory that already holds a run. Bundles built from data with unknown licences (WMT19, OPUS-100) say in `NOTICE.md` that the weights are for research only.
 
 ### Deployment export
 
@@ -692,8 +700,10 @@ python benchmark_training_backends.py --backends cpu mps mlx --dtypes auto bfloa
 
 ### End-to-end comparison (minimind vs Chronos)
 
+minimind is an external baseline here; pass your own checkout (Chronos does not download it).
+
 ```bash
-python tools/compare_minimind_chronos_v3.py \
+python tools/compare_minimind_chronos_v3.py --minimind-dir /path/to/minimind \
     --pretrain_steps 150 --align_steps 30 --distill_steps 30 \
     --simulated_ssd_ms 30 --device cpu \
     --output results/compare_results_v3.json
@@ -734,10 +744,14 @@ tuner.start(
         tune_num_experts=True,
         tune_num_shared_experts=True,
         tune_kv_latent_dim=True,
+        tune_recurrent_order=True,      # probes a looped model (probe_recurrent_depth, default 4)
+        tune_recurrent_dt_init=True,
     ),
     n_trials=20,
 )
 ```
+
+The probe trains on real tokens from `dataset_path` (up to 400k, encoded with the model's tokenizer, or the bundled 32k one) and falls back to random ids with a log line when the data cannot be read. The two loop knobs are a coarse screen: a few steps of a 4-layer model cannot rank step sizes that differ by less than the run-to-run noise. `recurrent_later_groups` is not searched, because it trades quality for cost and a loss-only search would always choose the full block.
 
 ---
 
@@ -746,9 +760,10 @@ tuner.start(
 ```text
 Project_Chronos/
 ├── chronos/
-│   ├── deps.py                    # Auto-download minimind if missing
+│   ├── deps.py                    # Shim: default tokenizer path (no downloads)
 │   ├── __init__.py                # AutoConfig / AutoModelForCausalLM registration
 │   ├── model/
+│   │   ├── kernel.py              # Native base: ChronosBaseConfig, shared RoPE/YaRN tables, FFN, GlobalAttention, logging, resume state
 │   │   ├── config.py              # ChronosConfig (v3 fields, v2 migration)
 │   │   ├── recurrent.py           # Loop/group embeddings, contractive step, tensor-only ACT
 │   │   ├── precision_ops.py       # RMSNorm/SDPA/RoPE with one compute dtype
@@ -773,7 +788,8 @@ Project_Chronos/
 │   │   ├── attention.py / moe.py / model.py / expert_store.py / inference.py
 │   │   ├── moe_kernels.py         # Sorted gather_mm dispatch (mlx >= 0.32.4)
 │   │   ├── speculative.py         # MLX self-speculative decoding (Torch parity)
-│   │   └── training/              # longrun.py, telemetry.py, recipes/
+│   │   ├── checkpointing.py       # Activation recomputation with replayed draws
+│   │   └── training/              # longrun.py, compiled.py (mx.compile step), telemetry.py, recipes/
 │   ├── runtime/
 │   │   ├── speculative.py         # Recurrent-depth self-speculative decoding
 │   │   ├── cache_manager.py       # prefetch_for_next_step / ensure_resident
@@ -795,21 +811,22 @@ Project_Chronos/
 │   │   └── benchmark.py           # End-to-end benchmarking
 │   ├── data/
 │   │   ├── flexible_dataset.py    # Flexible JSONL dataset loader
-│   │   └── corpus/                # download / clean / dedup / leak filter / shards
+│   │   └── shards.py              # memory-mapped pretrain / SFT shard readers
 │   ├── tokenizer/                 # Chronos BPE builder (extract, normalize, train, evaluate)
 │   ├── monitor/                   # Read-only run monitor: snapshot, API server, static page
+│   ├── webui/                     # Web UI: FastAPI server, field schema, i18n/*.json, static/ SPA
+│   ├── workbench/                 # Web UI jobs: train worker, data scan, file picking / merge, lazy probe
 │   ├── backend/
 │   │   ├── __init__.py            # BackendDispatcher (cpu/mps/cuda/mlx)
 │   │   ├── dispatcher.py          # Capability probing + priority logic
 │   │   └── ext/opencl.py          # Third-party OpenCL extension hook
 │   ├── _backend_legacy.py         # Backward-compatible older APIs
-│   ├── bundle/                    # chronos bundle: build/check/translate/finetune
 │   ├── serving/
 │   │   ├── ollama_server.py       # chronos serve: Ollama/OpenAI protocol layer
 │   │   ├── runtime.py             # Model discovery, lazy experts, speculative generation
 │   │   └── vllm_adapter.py        # Optional vLLM registration
 │   └── cli.py                     # Unified CLI
-├── ui/                            # Gradio Web UI (zh-Hans / zh-Hant / en / ja)
+├── ui/                            # Legacy Gradio console (chronos-ui --legacy)
 │   ├── i18n.py
 │   ├── estimator.py               # Live parameter / memory estimator
 │   └── tabs/
@@ -840,6 +857,8 @@ Project_Chronos/
 │   └── fixtures/
 ├── docs/
 │   └── vllm_integration.md
+├── demos/
+│   └── translation/               # demo extension (chronos-translate): corpus, runs, bundles, the 50M demo model; not in the wheel
 ├── pyproject.toml
 └── README.md / README_zh.md / THIRD_PARTY_NOTICES.md
 ```
@@ -889,7 +908,7 @@ timeline
         : int8 KV, MLA absorbed decode, shared router scope (opt-in)
         : Auto planner, v3 presets, tokenizer and serve tabs
     Next
-        : 50M en-zh results and ablations
+        : Multi-seed and larger-size runs of the 0.3.3 loop settings
         : Speculative decoding: a draft path that pays off on larger models and lazy experts
         : Train IntentClassifier on large activation corpora
         : Benchmark 7B+ checkpoints
@@ -957,7 +976,7 @@ mindmap
 
 ## Third-party attribution
 
-Project Chronos builds on **jingyaogong**'s [minimind](https://github.com/jingyaogong/minimind), licensed under **Apache-2.0**. Full attribution lives in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+Project Chronos started from **jingyaogong**'s [minimind](https://github.com/jingyaogong/minimind) (Apache-2.0). Since 0.3.2 no minimind code is used or downloaded. The native kernel keeps minimind's config field names and RoPE layout for checkpoint compatibility, and the legacy 6400-token tokenizer ships as data files with their licence. Full attribution lives in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ---
 

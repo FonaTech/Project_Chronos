@@ -1,0 +1,7 @@
+[exp] tE_dt05 start 00:01:24 load 3.24 3.08 2.94 src /tmp/chronos_src_E
+{"label": "tE_dt05", "depth": 4, "steps": 375, "wall_s": 360.3, "valid_ce": 5.963552877306938, "peak_gb": 7.43}
+[exp] tR_dt05 start 00:07:45 load 2.77 3.20 3.08 src /tmp/chronos_release_dev
+{"label": "tR_dt05", "depth": 4, "steps": 360, "wall_s": 363.0, "valid_ce": 5.9949362352490425, "peak_gb": 7.43}
+[exp] tR_sig start 00:14:08 load 2.91 2.99 3.02 src /tmp/chronos_release_dev
+{"label": "tR_sig", "depth": 4, "steps": 345, "wall_s": 360.1, "valid_ce": 6.038207449018955, "peak_gb": 7.43}
+[exp] QUEUE L DONE

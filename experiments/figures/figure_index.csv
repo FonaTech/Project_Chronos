@@ -1,0 +1,23 @@
+figure,status,evidence,title,scope
+loop_depth_efficiency,rendered,measured,Training cost across recurrent depths,15M backbone · context 512 · one seed per arm · ≈30 min training
+loop_depth_ce_curves,rendered,measured,Validation cross-entropy across loop configurations,15M backbone · one seed per arm · full trajectories and shared training windows
+per_source_ce,rendered,measured,Final validation CE by corpus,≈30 min per arm · one seed · row labels include completed optimizer steps
+per_source_ce_eq_step,rendered,measured,Validation CE at matched optimizer steps,15M backbone · nearest observed evaluation to step 800 · lower is better
+block_vs_layer_ce,rendered,measured,Block-order and layer-order training,Depth 4 · clamp and sigmoid step sizes · paired gap uses exact common optimizer steps
+dt_learned,rendered,measured,Learned recurrent step sizes,Sigmoid parameterization · all physical recurrent groups · full curves and late-step detail
+residency_bench,rendered,measured,Expert residency policies on a fixed checkpoint,50M checkpoint · FLORES+ en→zh · 16 cold-start prompts · CPU / float32
+cluster_locality_sweep,rendered,measured,Cluster-locality coefficient sweep,Synthetic stream benchmark · one seed · routing windows match 32-token topic segments
+lazy_planned_vs_lru,rendered,measured,Paired prompt-level comparison of residency policies,50M checkpoint · 16 paired cold-start prompts · next-use planning versus LRU
+speculative_bench,rendered,measured,Self-speculative decoding and verification readiness,50M checkpoint · FLORES+ en→zh · 16 prompts · every dot is one prompt
+long_context_memory,rendered,reported-unverified,Reported single-layer attention memory,One attention layer · bf16 · GPU · values reported in source documentation
+long_context_throughput,rendered,measured,Long-context training on real-corpus data,50M random-init model · Apple M5 Max / MLX / bf16 · 3–6 optimizer steps per arm
+architecture_stack,rendered,schematic,Configurable forward stack,Source-verified module graph; input lookup and output linear embedding are separate
+block_vs_layer_schema,rendered,schematic,Recurrent execution order,"Illustrative example: four physical blocks, two repeats; IDs do not denote different layer types"
+router_lookahead,rendered,schematic,Current dispatch and future expert prediction,Separate data/control paths; future prefetch does not directly contribute to the current output
+lazy_tiers,rendered,schematic,Selective expert paging and runtime policies,Code-generated kernel schematic; includes CUDA and MLX distinctions
+kernel_evolution,rendered,schematic,Supported execution configurations,"Configuration comparison, not an unverified historical mapping of releases"
+version_timeline,rendered,reported,Release dates recorded in the project changelog,Source: CHANGELOG.md; no undocumented stable-release date is inferred
+moe_balance,missing_data,measured,Expert load before and after training,Recorded benchmark · identical expert-ID ordering before / after training
+router_entropy,missing_data,measured,Routing entropy and top-one probability,Recorded training trajectories · no smoothing or extrapolation
+lazy_inference_trace,missing_data,measured,Resident expert memory and cache hit rate,Recorded decoding trace · cumulative hit rates are plotted as recorded
+prefetch_depth,missing_data,measured,Prefetch coverage across lookahead depths,Recorded benchmark points · missing depth settings are not interpolated

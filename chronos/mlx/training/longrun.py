@@ -11,7 +11,12 @@ Designed for multi-day benchmark runs on Apple silicon:
 * Metrics go to ``metrics.jsonl`` (one JSON object per log interval) —
   losses by component, recurrent depth/halting, routing balance/entropy,
   lookahead recall, grad norm, LR, tokens/s, memory, plus periodic
-  validation CE and BLEU/chrF.  The UI monitor tails this file.
+  validation CE.  The UI monitor tails this file.
+
+The runner is task-agnostic.  A task adds its own quality metrics by
+subclassing ``LongRun`` and overriding ``task_eval`` (called at every
+validation and once at the end); whatever keys it returns are logged next to
+``valid_ce`` and discovered by the monitor.
 """
 from __future__ import annotations
 
@@ -41,6 +46,12 @@ class PhaseSpec:
     min_lr_ratio: float = 0.1
     weight_decay: float = 0.1
     grad_clip: float = 1.0
+    # Length curriculum: ``[[progress, seq_len], ...]`` (progress = elapsed fraction
+    # of the phase, ascending).  The window length steps up as the phase advances;
+    # micro_tokens stays fixed, so rows shrink as rows get longer.  None = seq_len.
+    seq_len_curriculum: list | None = None
+    # SFT: join short records into full rows (``seq_len`` tokens) with separators.
+    pack_sft: bool = False
 
 
 @dataclass
@@ -55,8 +66,10 @@ class RunSpec:
     log_every_steps: int = 20
     validate_every_s: float = 3600.0
     checkpoint_every_s: float = 1800.0
-    bleu_samples: int = 200          # periodic FLORES devtest subset during SFT
-    final_eval_samples: int = 1012   # full FLORES+ devtest at the end (0 = skip)
+    # Task-metric sample counts handed to ``LongRun.task_eval`` (0 = skip):
+    # at each validation and once at the end of the run.
+    eval_samples: int = 0
+    final_eval_samples: int = 0
     seed: int = 1234
     dtype: str = "bfloat16"
     # "time": warmup + cosine over the phase's wall-clock budget, so the LR
@@ -66,15 +79,12 @@ class RunSpec:
     # Telemetry (monitor pages): per-tensor weight/grad/update statistics every
     # ``tensor_stats_every_s`` (0 = off) and per-virtual-layer routing.
     tensor_stats_every_s: float = 1800.0
-    # Greedy FLORES+ dev probe at each pretrain validation (``<|en|>…<|zh|>``
-    # format, both directions); samples go to ``samples.jsonl``.  0 = off.
-    probe_samples: int = 16
     # Start from these weights instead of a fresh initialization (a bundle's
     # ``model/*.pth``).  The checkpoint's topology and vocabulary must match
     # ``model_config``; optimizer state starts fresh.  Ignored on resume.
     init_checkpoint: str | None = None
     # Exported checkpoints are ``<run_dir>/<export_prefix>_<phase>[.best].pth``.
-    export_prefix: str = "chronos_enzh"
+    export_prefix: str = "chronos"
     extra: dict = field(default_factory=dict)
 
 
@@ -137,22 +147,76 @@ def _optimizer_restore(optimizer, model, snap: dict) -> None:
     optimizer.state = tree_unflatten(list(current.items()))
 
 
-def routing_metrics(router: mx.array | None, top_k: int) -> dict:
-    """Load balance and confidence over every dispatch ``[B, S, V, E]``."""
-    if router is None:
-        return {}
-    E = router.shape[-1]
-    flat = router.reshape(-1, router.shape[2], E).astype(mx.float32)        # [N, V, E]
-    top = mx.argpartition(-flat, kth=top_k - 1, axis=-1)[..., :top_k]
-    load = (top[..., None] == mx.arange(E)).astype(mx.float32).sum(-2).mean(0) / top_k   # [V, E]
-    importance = flat.mean(0)
-    entropy = -(flat * mx.log(mx.maximum(flat, 1e-9))).sum(-1).mean()
-    cv = (load.std(-1) / mx.maximum(load.mean(-1), 1e-9)).mean()
-    dead = (load.max(0) < (0.05 / E)).sum()
-    mx.eval(load, importance, entropy, cv, dead)
-    return {"route_entropy": float(entropy.item()), "route_entropy_max": float(math.log(E)),
-            "load_cv": float(cv.item()), "dead_experts": int(dead.item()),
-            "max_expert_load": float(load.max().item() * E)}
+def token_mask_for(labels) -> np.ndarray | None:
+    """Real-token mask ``[B, S]`` of a batch whose labels are aligned with the
+    inputs (``PretrainSource``/``SFTSource`` pairs, ``labels[t]`` = token t+1).
+    A row's real tokens end one past its last supervised label (that input
+    holds the record's final token); later positions are right-padding.
+    Prompt tokens stay real.  ``None`` when nothing is padded (packed
+    pretraining), so packed batches keep the exact unmasked loss.  Same rule
+    as ``trainer.real_token_mask(labels, aligned=True)``."""
+    labels = np.asarray(labels)
+    if labels.ndim != 2 or labels.size == 0 or not (labels[:, -1] == -100).any():
+        return None
+    pos = np.arange(labels.shape[1])
+    last = np.where(labels != -100, pos[None, :], -1).max(axis=1)
+    mask = pos[None, :] <= (last + 1)[:, None]
+    return None if mask.all() else mask
+
+
+class RoutingCounts:
+    """Top-k dispatch counts, router probability mass and entropy per virtual
+    layer, summed over every micro-batch of a step (real tokens only).
+
+    Training telemetry used to read the last micro-batch alone, padding
+    included; a step's full batch is what the router losses see."""
+
+    def __init__(self):
+        self.load = self.importance = self.entropy = None
+        self.tokens = 0
+
+    def add(self, router: mx.array | None, top_k: int, token_mask=None) -> None:
+        if router is None:
+            return
+        E, V = router.shape[-1], router.shape[2]
+        flat = router.reshape(-1, V, E).astype(mx.float32)                      # [N, V, E]
+        w = mx.ones((flat.shape[0],)) if token_mask is None else \
+            mx.array(np.asarray(token_mask).reshape(-1), dtype=mx.float32)
+        top = mx.argpartition(-flat, kth=top_k - 1, axis=-1)[..., :top_k]
+        hits = (top[..., None] == mx.arange(E)).astype(mx.float32).sum(-2)      # [N, V, E]
+        ent = -(flat * mx.log(mx.maximum(flat, 1e-9))).sum(-1)                  # [N, V]
+        load, imp = (hits * w[:, None, None]).sum(0), (flat * w[:, None, None]).sum(0)
+        ent = (ent * w[:, None]).sum(0)
+        n = w.sum()
+        mx.eval(load, imp, ent, n)
+        if self.load is None:
+            self.load, self.importance, self.entropy = load, imp, ent
+        else:
+            self.load, self.importance, self.entropy = self.load + load, self.importance + imp, self.entropy + ent
+        self.tokens += int(n.item())
+
+    def summary(self, top_k: int) -> dict:
+        if self.load is None or self.tokens <= 0:
+            return {}
+        E = self.load.shape[-1]
+        load = self.load / (self.tokens * top_k)                                 # [V, E] dispatch share
+        cv = load.std(-1) / mx.maximum(load.mean(-1), 1e-9)                      # [V]
+        entropy = (self.entropy / self.tokens).mean()
+        dead = (load.max(0) < (0.05 / E)).sum()
+        mx.eval(load, cv, entropy, dead)
+        return {"route_entropy": float(entropy.item()), "route_entropy_max": float(math.log(E)),
+                "load_cv": float(cv.mean().item()), "load_cv_max": float(cv.max().item()),
+                "dead_experts": int(dead.item()),
+                "max_expert_load": float(load.max().item() * E), "min_expert_load": float(load.min().item() * E),
+                "route_tokens": int(self.tokens)}
+
+
+def routing_metrics(router: mx.array | None, top_k: int, token_mask=None) -> dict:
+    """Load balance and confidence over every real-token dispatch ``[B, S, V, E]``
+    (``token_mask`` ``[B, S]``, 1 = real; ``None`` = all positions)."""
+    acc = RoutingCounts()
+    acc.add(router, top_k, token_mask)
+    return acc.summary(top_k)
 
 
 def recurrent_metrics(state: dict | None) -> dict:
@@ -172,9 +236,25 @@ def recurrent_metrics(state: dict | None) -> dict:
     return out
 
 
+def curriculum_seq_len(phase, progress: float) -> int:
+    """Window length for ``progress`` in [0, 1] under ``phase.seq_len_curriculum``."""
+    stages = getattr(phase, "seq_len_curriculum", None)
+    if not stages:
+        return int(phase.seq_len)
+    length = int(stages[0][1])
+    for start, n in stages:
+        if progress >= float(start):
+            length = int(n)
+    return length
+
+
 class PretrainSource:
+    def set_seq_len(self, n: int) -> None:
+        self.stream.seq_len = int(n)
+        self.valid.seq_len = int(n)
+
     def __init__(self, shards_dir, seq_len, seed):
-        from chronos.data.corpus.shards import PackedTokenStream
+        from chronos.data.shards import PackedTokenStream
         self.stream = PackedTokenStream(os.path.join(shards_dir, "pretrain", "train"), seq_len, seed=seed)
         self.valid = PackedTokenStream(os.path.join(shards_dir, "pretrain", "valid"), seq_len, seed=seed + 1)
 
@@ -199,8 +279,9 @@ class PretrainSource:
 
 
 class SFTSource:
-    def __init__(self, shards_dir, seed):
-        from chronos.data.corpus.shards import SFTRecords
+    def __init__(self, shards_dir, seed, pack_len: int = 0):
+        self.pack_len = int(pack_len or 0)
+        from chronos.data.shards import SFTRecords
         self.records = SFTRecords(os.path.join(shards_dir, "sft", "train"), seed=seed)
         self.valid = SFTRecords(os.path.join(shards_dir, "sft", "valid"), seed=seed + 1)
 
@@ -209,12 +290,16 @@ class SFTSource:
         return ids[:, :-1], labels[:, 1:]                      # labels already -100 outside replies
 
     def batch(self, micro_tokens: int):
+        if self.pack_len:
+            return self._shift(*self.records.packed_batch(micro_tokens, self.pack_len))
         return self._shift(*self.records.batch(micro_tokens))
 
     def valid_batches(self, n: int, micro_tokens: int):
         state = self.valid.rng.bit_generator.state
         self.valid.rng = np.random.default_rng(0)
-        out = [self._shift(*self.valid.batch(micro_tokens)) for _ in range(n)]
+        draw = (lambda: self.valid.packed_batch(micro_tokens, self.pack_len)) if self.pack_len else \
+            (lambda: self.valid.batch(micro_tokens))
+        out = [self._shift(*draw()) for _ in range(n)]
         self.valid.rng.bit_generator.state = state
         return out
 
@@ -239,7 +324,7 @@ def check_init_checkpoint(path: str, config) -> None:
     if not saved:
         return                                   # no sidecar: load_state_dict_controlled still checks shapes
     keys = SNIFFABLE_TOPOLOGY_FIELDS + UNSNIFFABLE_REQUIRED_FIELDS + (
-        "recurrent_depth", "prelude_layers", "coda_layers", "recurrent_attention_mode", "rope_layout")
+        "recurrent_depth", "prelude_layers", "coda_layers", "recurrent_attention_mode", "recurrent_order", "rope_layout")
     diff = {k: (saved[k], getattr(config, k, None)) for k in keys
             if k in saved and saved[k] is not None and saved[k] != getattr(config, k, None)}
     if diff:
@@ -256,6 +341,10 @@ class LongRun:
         self.spec, self.log = spec, log
         os.makedirs(spec.run_dir, exist_ok=True)
         self.config = ChronosConfig(**spec.model_config)
+        # MLX free-buffer cache bound, set before the model exists: recipe
+        # ``extra.mlx_cache_limit_gb`` (GiB) may lower min(RAM/8, 16 GiB).
+        from chronos.mlx.memory import apply_cache_limit
+        self.cache_limit = apply_cache_limit((spec.extra or {}).get("mlx_cache_limit_gb"), log=log, force=True)
         import torch
         torch.manual_seed(spec.seed)        # reproducible initialization (built in Torch, then converted)
         mx.random.seed(spec.seed)
@@ -279,7 +368,14 @@ class LongRun:
         self.telemetry = telemetry
         self.heartbeat = telemetry.Heartbeat(spec.run_dir)
         self.precision = getattr(self.model, "_chronos_precision", None)
+        # mx.compile of the micro step: recipe ``extra.mlx_compile`` (auto|on|off),
+        # else CHRONOS_MLX_COMPILE, else auto.
+        from chronos.mlx.training.compiled import env_mode
+        self.compile_mode = env_mode(str((spec.extra or {}).get("mlx_compile") or "auto"))
         self.runtime = telemetry.runtime_info(self.model, spec, self.precision)
+        if self.cache_limit is not None:
+            self.runtime["mlx_cache_limit_gb"] = self.cache_limit["limit_gb"]
+            self.runtime["mlx_cache_limit"] = {k: v for k, v in self.cache_limit.items() if k != "requested"}
         try:
             telemetry._atomic_json(os.path.join(spec.run_dir, "runtime.json"), self.runtime)
         except OSError:
@@ -349,7 +445,8 @@ class LongRun:
             rollbacks=int(st.get("rollbacks", 0)), lr_scale=float(st.get("lr_scale", 1.0)),
             best_valid=st.get("best_valid"), **fields)
 
-    def _tensor_telemetry(self, phase, step: int, grads, before, accum: int, lr: float, norm: float):
+    def _tensor_telemetry(self, phase, step: int, grads, before, accum: int, lr: float, norm: float,
+                          routes: RoutingCounts | None = None):
         """One ``parameters.jsonl`` row: per-tensor weight RMS/|max|, pre-clip
         gradient RMS, relative update, per-group norms, expert grid, routing."""
         tel = self.telemetry
@@ -360,34 +457,33 @@ class LongRun:
                                  grad_scale=1.0 / max(1, accum))
         row = {"time": time.strftime("%Y-%m-%dT%H:%M:%S"), "phase": phase.name, "step": step, "lr": lr,
                "grad_norm": norm, **stats, "experts": tel.expert_table(stats["tensors"]),
-               "routing": tel.routing_snapshot(self.model)}
+               "routing": tel.routing_snapshot(self.model, counts=routes)}
         row["telemetry_s"] = round(time.monotonic() - t0, 3)
         with open(self.parameters_path, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(row, ensure_ascii=False) + "\n")
         return row
 
     # ---- training ----------------------------------------------------------
-    def _loss_fn(self, model, ids, labels):
-        from chronos.mlx.training.trainer import _chronos_regularized_loss, draft_exit_kl, draft_exit_logits
+    def _loss_fn(self, model, ids, labels, token_mask=None):
+        """CE on supervised labels + Chronos regularizers; ``token_mask`` ``[B, S]``
+        (1 = real token) keeps right-padding out of the router regularizers."""
+        from chronos.mlx.training.trainer import _chronos_regularized_loss, draft_exit_kl, draft_exit_logits, lm_ce
         draft = draft_exit_logits(model, ids, model.config)       # None unless draft_exit_kl_coef > 0
-        logits, lookahead, _ = model(ids, logits_dtype=mx.float32)
-        lg = logits.reshape(-1, logits.shape[-1])
-        lb = labels.reshape(-1)
-        mask = lb != -100
-        ce = nn.losses.cross_entropy(lg, mx.where(mask, lb, 0), reduction="none")
-        ce = (ce * mask).sum() / mx.maximum(mask.sum(), 1)
+        ce, lookahead, logits = lm_ce(model, ids, labels, aligned=True, need_logits=draft is not None)
         # Labels here are pre-aligned with the logits (no shift).
         draft_kl = None if draft is None else draft_exit_kl(draft, logits, labels != -100)
         return _chronos_regularized_loss(model, ce, lookahead, model.config, metrics={"ce": ce, "primary": ce},
-                                         draft_kl=draft_kl)
+                                         draft_kl=draft_kl, token_mask=token_mask, input_ids=ids)
 
     def _source(self, phase: PhaseSpec):
         if phase.name == "pretrain":
-            return PretrainSource(self.spec.shards_dir, phase.seq_len, self.spec.seed)
-        return SFTSource(self.spec.shards_dir, self.spec.seed)
+            return PretrainSource(self.spec.shards_dir, max([int(phase.seq_len)] + [int(n) for _, n in (phase.seq_len_curriculum or [])]), self.spec.seed)
+        return SFTSource(self.spec.shards_dir, self.spec.seed, pack_len=phase.seq_len if phase.pack_sft else 0)
 
     def _micro_step(self, grad_fn, ids, labels):
-        loss, grads = grad_fn(self.model, mx.array(ids, dtype=mx.int32), mx.array(labels, dtype=mx.int32))
+        mask = token_mask_for(labels)
+        loss, grads = grad_fn(self.model, mx.array(ids, dtype=mx.int32), mx.array(labels, dtype=mx.int32),
+                              None if mask is None else mx.array(mask))
         return loss, grads
 
     def _apply(self, grads, n_micro, phase, lr):
@@ -417,13 +513,16 @@ class LongRun:
     def run_phase(self, pi: int, deadline_s: float, max_steps: int | None = None):
         """Train phase ``pi`` until its step total, its deadline, or ``max_steps``
         more optimizer updates (used by tests and staged runs)."""
-        from chronos.mlx.training.trainer import _add_grads, _collect_router_probs, _tree_all_finite
+        from chronos.mlx.training.trainer import _add_grads, _check_ids_in_vocab, _collect_router_probs, _tree_all_finite
         phase = self.spec.phases[pi]
         source = self._source(phase)
         if self.state["rng"].get(phase.name):
             source.set_rng_state(self.state["rng"][phase.name])
         accum = max(1, phase.tokens_per_step // phase.micro_tokens)
-        grad_fn = nn.value_and_grad(self.model, self._loss_fn)
+        if getattr(self, "_grad_fn", None) is None:   # one compiled step (and its graphs) per run
+            from chronos.mlx.training.compiled import make_grad_fn
+            self._grad_fn = make_grad_fn(self.model, self._loss_fn, mode=self.compile_mode, log=self.log)
+        grad_fn = self._grad_fn
         controller = self.model.recurrent_controller
         top_k = int(self.config.num_experts_per_tok)
         t_phase = time.monotonic()
@@ -457,6 +556,8 @@ class LongRun:
             progress = (self.state["phase_wall_s"] / self.state["phase_budget_s"]) if time_based else \
                 step / max(total or 1_000_000, 1)
             controller.set_training_progress(int(progress * 1_000_000), 1_000_000)
+            if phase.name == "pretrain" and phase.seq_len_curriculum:
+                source.set_seq_len(curriculum_seq_len(phase, progress))
             # MLX's global RNG (cache-miss simulation, dropout) cannot be
             # snapshotted, so make each step's randomness a pure function of
             # (seed, phase, step, rollbacks): resume is then bit-exact.
@@ -469,17 +570,28 @@ class LongRun:
             lr *= float(self.state.get("lr_scale", 1.0))
             t0 = time.monotonic()
             acc, tokens, processed, loss_sum = None, 0, 0, mx.zeros(())
+            # Routing telemetry covers the whole step (every micro-batch, real
+            # tokens only), counted only on steps that are logged or sampled.
+            will_log = (step + 1) % self.spec.log_every_steps == 0 or step < 3
+            want_tensors = tensor_every > 0 and time.monotonic() - last_tensors >= tensor_every
+            routes = RoutingCounts() if will_log or want_tensors else None
+            # One recurrent depth per optimizer step: jitter samples per step, not per micro-batch, so a step's
+            # gradient accumulation and router telemetry share one architecture (virtual-layer count).
+            controller._step_depth = controller.execution_depth(self.config, True)
             for _ in range(accum):
                 ids, labels = source.batch(phase.micro_tokens)
+                _check_ids_in_vocab(ids, int(self.model.config.vocab_size), "longrun batch")
                 loss, grads = self._micro_step(grad_fn, ids, labels)
+                if routes is not None:
+                    routes.add(_collect_router_probs(self.model), top_k, token_mask_for(labels))
                 acc = grads if acc is None else _add_grads(acc, grads)
                 loss_sum = loss_sum + loss
                 tokens += int((labels != -100).sum())      # supervised tokens
                 processed += int(ids.size)                  # forward/backward tokens
                 mx.eval(acc, loss_sum)          # bound the lazy graph to one micro-batch
+            controller._step_depth = None   # end of step: stop pinning the sampled depth
             # Tensor telemetry keeps references to the pre-update weights (MLX
             # arrays are immutable: no copy) and the FP32 accumulated grads.
-            want_tensors = tensor_every > 0 and time.monotonic() - last_tensors >= tensor_every
             before = self.model.parameters() if want_tensors else None
             norm = self._apply(acc, accum, phase, lr)
             mx.eval(self.model.parameters(), self.optimizer.state, norm)
@@ -508,7 +620,8 @@ class LongRun:
             self.state["phase_step"] = step + 1
             if want_tensors:
                 try:
-                    self._tensor_telemetry(phase, step + 1, acc, before, accum, lr, float(norm.item()))
+                    self._tensor_telemetry(phase, step + 1, acc, before, accum, lr, float(norm.item()),
+                                           routes=routes)
                 except Exception as exc:  # noqa: BLE001 - telemetry must never stop training
                     self.log(f"[telemetry] tensor stats skipped: {exc!r}")
                 last_tensors = time.monotonic()
@@ -528,7 +641,7 @@ class LongRun:
                     self.log(f"[run] {phase.name}: {tps:,.0f} tok/s → ~{self.state['phase_total']} steps "
                              f"(~{self.state['phase_total'] * tokens / 1e9:.2f}B tokens)")
                 self.state["phase_tokens_per_s"][phase.name] = tps
-            if (step + 1) % self.spec.log_every_steps == 0 or step < 3:
+            if will_log:
                 comps = {k: round(float(v.item()), 5) for k, v in getattr(self.model, "_last_loss_components", {}).items()}
                 rec = {"phase": phase.name, "step": step + 1, "total": self.state["phase_total"],
                        "lr": lr, "grad_norm": float(norm.item()), "loss": float(loss_sum.item()) / accum,
@@ -541,7 +654,7 @@ class LongRun:
                        "phase_wall_s": self.state.get("phase_wall_s"), "phase_budget_s": self.state.get("phase_budget_s"),
                        "lr_scale": float(self.state.get("lr_scale", 1.0)), "rollbacks": int(self.state.get("rollbacks", 0)),
                        **comps, **recurrent_metrics(getattr(self.model, "last_recurrent_state", None)),
-                       **routing_metrics(_collect_router_probs(self.model), top_k)}
+                       **(routes.summary(top_k) if routes is not None else {})}
                 self._emit(rec)
                 self.log(f"[{phase.name}] {step + 1}/{self.state['phase_total']} loss={rec['loss']:.4f} "
                          f"ce={comps.get('primary_loss', 0):.4f} gn={rec['grad_norm']:.2f} lr={lr:.2e} "
@@ -573,10 +686,7 @@ class LongRun:
         ce = self._validate(source, phase)
         rec = {"phase": phase.name, "step": self.state["phase_step"], "event": "validation", "valid_ce": ce,
                "valid_ppl": math.exp(min(ce, 30))}
-        if phase.name == "sft" and self.spec.bleu_samples:
-            rec.update(self.translation_eval(self.spec.bleu_samples))
-        elif phase.name == "pretrain" and getattr(self.spec, "probe_samples", 0):
-            rec.update(self._pretrain_probe(int(self.spec.probe_samples)))
+        rec.update(self._safe_task_eval(phase.name, final=False))
         best = self.state["best_valid"].get(phase.name)
         if best is None or ce < best:
             self.state["best_valid"][phase.name] = ce
@@ -584,93 +694,74 @@ class LongRun:
         self._emit(rec)
         self.log(f"[eval] {json.dumps(rec, ensure_ascii=False)}")
 
-    def _pretrain_probe(self, n: int) -> dict:
-        from chronos.mlx.training.inspect_checkpoint import translation_probe
+    # ---- task hooks (overridden by task extensions) --------------------------
+    def task_eval(self, phase_name: str, n: int, *, final: bool = False) -> dict:
+        """Task metrics for the current weights; the kernel itself has none.
+
+        ``n`` comes from ``eval_samples_for`` (never 0: a zero count skips the call).
+        Return flat ``{metric_key: number}``; the keys land in the
+        ``validation`` / ``final`` rows of ``metrics.jsonl``.  Use
+        ``write_samples`` for example outputs and ``generate`` for decoding.
+        """
+        return {}
+
+    def eval_samples_for(self, phase_name: str, *, final: bool) -> int:
+        """Sample count for ``task_eval`` (per phase in task extensions)."""
+        return int((self.spec.final_eval_samples if final else self.spec.eval_samples) or 0)
+
+    def _safe_task_eval(self, phase_name: str, *, final: bool, n: int | None = None) -> dict:
+        n = self.eval_samples_for(phase_name, final=final) if n is None else int(n)
+        if n <= 0:
+            return {}
         self.model.eval()
         try:
-            probe = translation_probe(asdict(self.spec), self.model, "pretrain", n)
-        except Exception as exc:  # noqa: BLE001 - a probe failure must not stop training
-            self.log(f"[eval] pretrain probe skipped: {exc!r}")
-            return {}
+            return dict(self.task_eval(phase_name, n, final=final) or {})
+        except Exception as exc:  # noqa: BLE001 - a task metric must not stop training
+            self.log(f"[eval] task_eval skipped: {exc!r}")
+            return {"task_eval_error": f"{type(exc).__name__}: {exc}"[:200]}
         finally:
             self.model.train()
-        out = {}
-        with open(os.path.join(self.spec.run_dir, "samples.jsonl"), "a", encoding="utf-8") as fh:
-            for direction in ("en_zh", "zh_en"):
-                res = probe.get(direction)
-                if not isinstance(res, dict):
-                    continue
-                out[f"probe_{direction}_bleu"], out[f"probe_{direction}_chrf"] = res["bleu"], res["chrf"]
-                for sample in res.get("samples", [])[:3]:
-                    fh.write(json.dumps({"time": time.strftime("%Y-%m-%dT%H:%M:%S"), "phase": "pretrain",
-                                         "step": self.state["phase_step"], "direction": direction,
-                                         "set": probe.get("probe_set"), **sample}, ensure_ascii=False) + "\n")
-        if out:
-            out["probe_n"], out["probe_s"] = n, probe.get("probe_s")
-        return out
 
-    # ---- translation quality (greedy, KV cache, MLX GPU) ----------------------
     def _tokenizer(self):
         if not hasattr(self, "_tok"):
             from tokenizers import Tokenizer
             self._tok = Tokenizer.from_file(os.path.join(self.spec.tokenizer_dir, "tokenizer.json"))
         return self._tok
 
-    def translate(self, sources: list[str], max_new_tokens: int = 160) -> list[str]:
-        from chronos.data.corpus.shards import SFT_PROMPT_EN_ZH
-        tok = self._tokenizer()
-        end = tok.token_to_id("<|im_end|>")
-        self.model.eval()
+    def generate(self, prompt_ids: list[int], limit: int, stop_ids=()) -> list[int]:
+        """Greedy continuation with the KV cache (no sampling, no penalty)."""
+        stop = set(int(i) for i in stop_ids)
+        logits, _, cache = self.model(mx.array([prompt_ids], dtype=mx.int32))
         out = []
-        for src in sources:
-            prompt = f"<|im_start|>user\n{SFT_PROMPT_EN_ZH}{src}<|im_end|>\n<|im_start|>assistant\n"
-            ids = tok.encode(prompt, add_special_tokens=False).ids
-            src_len = len(tok.encode(src, add_special_tokens=False).ids)
-            limit = min(max_new_tokens, int(1.6 * src_len) + 16)   # zh output ≲ 1.6× en tokens
-            logits, _, cache = self.model(mx.array([ids], dtype=mx.int32))
-            gen = []
-            for _ in range(limit):
-                nxt = int(mx.argmax(logits[0, -1]).item())
-                if nxt == end:
-                    break
-                gen.append(nxt)
-                logits, _, cache = self.model(mx.array([[nxt]], dtype=mx.int32), cache=cache)
-            out.append(tok.decode(gen, skip_special_tokens=True))
-        self.model.train()
+        for _ in range(int(limit)):
+            nxt = int(mx.argmax(logits[0, -1]).item())
+            if nxt in stop:
+                break
+            out.append(nxt)
+            logits, _, cache = self.model(mx.array([[nxt]], dtype=mx.int32), cache=cache)
         return out
 
-    def translation_eval(self, n: int) -> dict:
-        import sacrebleu
-        from chronos.data.corpus.evalsets import load_eval_sets
-        raw = self.spec.extra.get("raw_root")
-        if not raw:
-            return {}
-        pairs = load_eval_sets(raw, ["flores_devtest"]).get("flores_devtest", [])[:n]
-        if not pairs:
-            return {}
-        t0 = time.monotonic()
-        hyps = self.translate([en for en, _zh in pairs])
-        refs = [zh for _en, zh in pairs]
-        bleu = sacrebleu.corpus_bleu(hyps, [refs], tokenize="zh")
-        chrf = sacrebleu.corpus_chrf(hyps, [refs])
+    def write_samples(self, rows: list[dict]) -> None:
+        """Append example outputs to ``samples.jsonl`` (any keys; the monitor shows them)."""
+        if not rows:
+            return
+        phase = self.spec.phases[min(self.state["phase_index"], len(self.spec.phases) - 1)].name
+        stamp = time.strftime("%Y-%m-%dT%H:%M:%S")
         with open(os.path.join(self.spec.run_dir, "samples.jsonl"), "a", encoding="utf-8") as fh:
-            for (en, zh), hyp in list(zip(pairs, hyps))[:5]:
-                fh.write(json.dumps({"time": time.strftime("%Y-%m-%dT%H:%M:%S"), "phase": self.spec.phases[
-                    min(self.state["phase_index"], len(self.spec.phases) - 1)].name, "step": self.state["phase_step"],
-                    "direction": "en_zh", "set": "flores_devtest", "src": en, "ref": zh, "hyp": hyp},
-                    ensure_ascii=False) + "\n")
-        return {"flores_devtest_n": len(pairs), "bleu_zh": round(bleu.score, 2), "chrf": round(chrf.score, 2),
-                "eval_s": round(time.monotonic() - t0, 1)}
+            for r in rows:
+                fh.write(json.dumps({"time": stamp, "phase": phase, "step": self.state["phase_step"], **r},
+                                    ensure_ascii=False) + "\n")
+
+    def pinned_modules(self) -> tuple[str, ...]:
+        """Modules imported at start so source edits during a long run cannot
+        change the code that evaluates it; extensions add theirs."""
+        return ("tokenizers", "chronos.data.shards", "chronos.mlx.training.inspect_checkpoint")
 
     # ---- whole run -----------------------------------------------------------
     def run(self):
-        # Pin every lazily-used module now so source edits during a multi-day
-        # run cannot change the code that evaluates it.
-        import sacrebleu  # noqa: F401
-        import tokenizers  # noqa: F401
-        import chronos.data.corpus.evalsets  # noqa: F401
-        import chronos.data.corpus.shards  # noqa: F401
-        import chronos.mlx.training.inspect_checkpoint  # noqa: F401
+        import importlib
+        for name in self.pinned_modules():
+            importlib.import_module(name)
         try:
             return self._run()
         except KeyboardInterrupt:
@@ -703,26 +794,83 @@ class LongRun:
         self._beat("evaluating")
         final = {"event": "final", "tokens_seen": self.state["tokens_seen"],
                  "hours": round((time.monotonic() - start) / 3600, 2)}
-        if self.spec.final_eval_samples:
-            final.update(self.translation_eval(self.spec.final_eval_samples))
+        phase = self.spec.phases[-1].name if self.spec.phases else ""
+        final.update(self._safe_task_eval(phase, final=True))
         self._emit(final)
         self._beat("finished", final=final)
         self.log(f"[run] done: {json.dumps(final, ensure_ascii=False)}")
         return final
 
 
-def main(argv=None) -> int:
-    import argparse
-    parser = argparse.ArgumentParser(description="Time-budgeted Chronos MLX training run")
-    parser.add_argument("--spec", required=True, help="RunSpec JSON (see chronos/mlx/training/recipes)")
-    parser.add_argument("--budget-hours", type=float, default=None)
-    args = parser.parse_args(argv)
-    raw = json.load(open(args.spec, encoding="utf-8"))
+PATH_KEYS = ("run_dir", "shards_dir", "tokenizer_dir", "init_checkpoint")
+
+
+def load_spec(path: str, budget_hours: float | None = None, *, spec_cls=None, extra_path_keys=()) -> RunSpec:
+    """Read a RunSpec JSON.
+
+    Relative paths (``PATH_KEYS`` and ``extra.<extra_path_keys>``) resolve
+    against the recipe's folder, so a recipe can travel with its data.  Keys
+    starting with ``_`` are comments.  Any other unknown key is an error: it
+    usually belongs to a task extension's own spec class (``spec_cls``).
+    """
+    spec_cls = spec_cls or RunSpec
+    base = os.path.dirname(os.path.abspath(path))
+    with open(path, encoding="utf-8") as fh:
+        raw = {k: v for k, v in json.load(fh).items() if not k.startswith("_")}
+
+    def resolve(v):
+        return v if not v or os.path.isabs(v) else os.path.normpath(os.path.join(base, os.path.expanduser(v)))
+
+    for key in PATH_KEYS:
+        if raw.get(key):
+            raw[key] = resolve(raw[key])
+    extra = dict(raw.get("extra") or {})
+    for key in extra_path_keys:
+        if extra.get(key):
+            extra[key] = resolve(extra[key])
+    raw["extra"] = extra
+    unknown = sorted(set(raw) - set(spec_cls.__dataclass_fields__))
+    if unknown:
+        raise ValueError(f"{path}: unknown RunSpec keys {unknown}; task-specific keys need the task's "
+                         f"runner that supplies its own RunSpec class")
     raw["phases"] = [PhaseSpec(**p) for p in raw["phases"]]
-    spec = RunSpec(**raw)
-    if args.budget_hours is not None:
-        spec.budget_hours = args.budget_hours
-    LongRun(spec, log=lambda m: print(m, flush=True)).run()
+    spec = spec_cls(**raw)
+    if budget_hours is not None:
+        spec.budget_hours = float(budget_hours)
+    return spec
+
+
+def main(argv=None, *, runner_cls=None, spec_cls=None, extra_path_keys=(), description=None,
+         prepare=None) -> int:
+    """CLI for a time-budgeted run; task extensions pass their own runner/spec classes
+    (``prepare(spec, args)`` may adjust the spec after loading)."""
+    import argparse
+    runner_cls = runner_cls or LongRun
+    parser = argparse.ArgumentParser(description=description or "Time-budgeted Chronos MLX training run")
+    parser.add_argument("--spec", required=True, help="RunSpec JSON (paths may be relative to it)")
+    parser.add_argument("--budget-hours", type=float, default=None)
+    parser.add_argument("--max-steps", type=int, default=None,
+                        help="smoke test: this many updates per phase, then the closing eval (no full budget)")
+    parser.add_argument("--run-dir", default=None, help="override the recipe's run_dir (e.g. a smoke-test folder)")
+    args = parser.parse_args(argv)
+    spec = load_spec(args.spec, args.budget_hours, spec_cls=spec_cls, extra_path_keys=extra_path_keys)
+    if args.run_dir:
+        spec.run_dir = os.path.abspath(args.run_dir)
+    if prepare is not None:
+        prepare(spec, args)
+    run = runner_cls(spec, log=lambda m: print(m, flush=True))
+    if args.max_steps is None:
+        run.run()
+        return 0
+    deadline = time.monotonic() + spec.budget_hours * 3600
+    for pi in range(len(spec.phases)):
+        run.state.update(phase_index=pi, phase_step=0, phase_total=None, phase_budget_s=None, phase_wall_s=0.0)
+        run.run_phase(pi, deadline, max_steps=args.max_steps)
+    last = spec.phases[-1].name
+    n = min(run.eval_samples_for(last, final=True), 4)
+    if n > 0:                                      # smoke: errors surface instead of being logged
+        run.model.eval()
+        print(json.dumps(run.task_eval(last, n, final=True), ensure_ascii=False), flush=True)
     return 0
 
 

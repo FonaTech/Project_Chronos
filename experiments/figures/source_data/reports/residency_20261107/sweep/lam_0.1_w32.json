@@ -1,0 +1,226 @@
+{
+ "label": "measured",
+ "time": "2026-11-07T08:59:15",
+ "settings": {
+  "topics": 4,
+  "sub_vocab": 24,
+  "experts": 16,
+  "clusters": 4,
+  "hidden": 64,
+  "seq": 128,
+  "segment": 32,
+  "batch": 8,
+  "steps": 300,
+  "lr": 0.003,
+  "lam": 0.1,
+  "hot": 4,
+  "warm": 8,
+  "decode": 48,
+  "prompts": 8,
+  "seed": 7,
+  "out": "reports/residency_20261107/sweep/lam_0.1_w32.json"
+ },
+ "data": "synthetic: per-topic disjoint sub-vocabulary + sparse Markov chain; segments of 32 tokens, one topic each",
+ "arms": {
+  "baseline": {
+   "lambda_cluster_locality": 0.0,
+   "train_seconds": 38.17,
+   "curve": [
+    {
+     "step": 0,
+     "loss": 5.7093,
+     "ce": 4.8183,
+     "cluster_term": 0.0
+    },
+    {
+     "step": 30,
+     "loss": 2.699,
+     "ce": 2.2045,
+     "cluster_term": 0.0
+    },
+    {
+     "step": 60,
+     "loss": 2.2713,
+     "ce": 1.8351,
+     "cluster_term": 0.0
+    },
+    {
+     "step": 90,
+     "loss": 2.1471,
+     "ce": 1.7156,
+     "cluster_term": 0.0
+    },
+    {
+     "step": 120,
+     "loss": 2.2024,
+     "ce": 1.7713,
+     "cluster_term": 0.0
+    },
+    {
+     "step": 150,
+     "loss": 2.1309,
+     "ce": 1.7002,
+     "cluster_term": 0.0
+    },
+    {
+     "step": 180,
+     "loss": 2.1575,
+     "ce": 1.74,
+     "cluster_term": 0.0
+    },
+    {
+     "step": 210,
+     "loss": 2.1656,
+     "ce": 1.748,
+     "cluster_term": 0.0
+    },
+    {
+     "step": 240,
+     "loss": 2.1477,
+     "ce": 1.7286,
+     "cluster_term": 0.0
+    },
+    {
+     "step": 270,
+     "loss": 2.0949,
+     "ce": 1.6715,
+     "cluster_term": 0.0
+    },
+    {
+     "step": 299,
+     "loss": 2.0888,
+     "ce": 1.6615,
+     "cluster_term": 0.0
+    }
+   ],
+   "routing": {
+    "heldout_ce": 1.7034,
+    "cluster_window_entropy": 0.4883,
+    "cluster_marginal_entropy": 0.7105,
+    "clusters_per_window": 4.0,
+    "topic_cluster_purity": 0.8074,
+    "expert_usage_entropy": 0.8739,
+    "num_clusters": 4
+   },
+   "lazy_decode": {
+    "window": {
+     "tokens": 384,
+     "sync_ssd_loads": 533,
+     "cluster_loads": 569,
+     "seconds": 4.633,
+     "expert_misses_per_token": 1.388,
+     "cluster_reads_per_token": 1.4818
+    },
+    "planned": {
+     "tokens": 384,
+     "sync_ssd_loads": 368,
+     "cluster_loads": 428,
+     "seconds": 4.345,
+     "expert_misses_per_token": 0.9583,
+     "cluster_reads_per_token": 1.1146
+    },
+    "planned_identical_to_window": true
+   }
+  },
+  "cluster": {
+   "lambda_cluster_locality": 0.1,
+   "train_seconds": 40.51,
+   "curve": [
+    {
+     "step": 0,
+     "loss": 5.809,
+     "ce": 4.8183,
+     "cluster_term": 0.09968
+    },
+    {
+     "step": 30,
+     "loss": 2.6409,
+     "ce": 2.155,
+     "cluster_term": 0.04694
+    },
+    {
+     "step": 60,
+     "loss": 2.3039,
+     "ce": 1.8898,
+     "cluster_term": 0.03667
+    },
+    {
+     "step": 90,
+     "loss": 2.1818,
+     "ce": 1.7484,
+     "cluster_term": 0.04719
+    },
+    {
+     "step": 120,
+     "loss": 2.1637,
+     "ce": 1.7678,
+     "cluster_term": 0.04002
+    },
+    {
+     "step": 150,
+     "loss": 2.1021,
+     "ce": 1.7184,
+     "cluster_term": 0.03471
+    },
+    {
+     "step": 180,
+     "loss": 2.1399,
+     "ce": 1.7409,
+     "cluster_term": 0.03846
+    },
+    {
+     "step": 210,
+     "loss": 2.152,
+     "ce": 1.7567,
+     "cluster_term": 0.04088
+    },
+    {
+     "step": 240,
+     "loss": 2.0977,
+     "ce": 1.7378,
+     "cluster_term": 0.0378
+    },
+    {
+     "step": 270,
+     "loss": 2.0252,
+     "ce": 1.6751,
+     "cluster_term": 0.03228
+    },
+    {
+     "step": 299,
+     "loss": 2.0511,
+     "ce": 1.665,
+     "cluster_term": 0.0372
+    }
+   ],
+   "routing": {
+    "heldout_ce": 1.7129,
+    "cluster_window_entropy": 0.1508,
+    "cluster_marginal_entropy": 0.8669,
+    "clusters_per_window": 3.25,
+    "topic_cluster_purity": 0.9338,
+    "expert_usage_entropy": 0.8691,
+    "num_clusters": 4
+   },
+   "lazy_decode": {
+    "window": {
+     "tokens": 384,
+     "sync_ssd_loads": 58,
+     "cluster_loads": 58,
+     "seconds": 3.366,
+     "expert_misses_per_token": 0.151,
+     "cluster_reads_per_token": 0.151
+    },
+    "planned": {
+     "tokens": 384,
+     "sync_ssd_loads": 48,
+     "cluster_loads": 50,
+     "seconds": 3.25,
+     "expert_misses_per_token": 0.125,
+     "cluster_reads_per_token": 0.1302
+    },
+    "planned_identical_to_window": true
+   }
+  }
+ }
+}

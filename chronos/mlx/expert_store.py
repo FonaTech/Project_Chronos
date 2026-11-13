@@ -116,6 +116,8 @@ class MLXExpertStore:
         self._cluster_manifest: ClusterManifest | None = None
         self._loaded_clusters: set[int] = set()
         self._protected_experts: set[int] = set()
+        # Optional residency planner (see set_eviction_ranker); None = LRU.
+        self._eviction_ranker = None
         self.storage_format = "npy"
         # Pages live in the trunk's compute dtype (one precision policy end
         # to end); a cache written in another dtype is converted once per SSD
@@ -194,9 +196,9 @@ class MLXExpertStore:
 
     def _load_from_ssd(self, expert_id: int) -> Dict[int, Dict[str, mx.array]]:
         if self._cluster_manifest is not None:
-            self._load_cluster_for_expert(expert_id)
-            with self._lock:
-                return self._warm.get(expert_id, {})
+            # The loaded page is returned directly: another thread may evict it
+            # from the warm tier as soon as the lock is released.
+            return self._load_cluster_for_expert(expert_id) or {}
 
         layer_states = {}
         for li in range(self.num_layers):
@@ -285,10 +287,10 @@ class MLXExpertStore:
         except ValueError:
             return None
 
-    def _load_cluster_for_expert(self, expert_id: int) -> None:
+    def _load_cluster_for_expert(self, expert_id: int) -> Dict[int, Dict[str, mx.array]] | None:
         manifest = self._cluster_manifest
         if manifest is None or expert_id not in manifest.expert_to_cluster:
-            return
+            return None
         cid = manifest.expert_to_cluster[int(expert_id)]
         with self._lock:
             if (
@@ -296,7 +298,7 @@ class MLXExpertStore:
                 and expert_id in self._warm
                 and self._layer_states_complete(self._warm.get(expert_id))
             ):
-                return
+                return self._warm[expert_id]
         file_name = manifest.cluster_file(cid)
         path = os.path.join(self.ssd_dir, file_name)
         nested: Dict[int, Dict[int, Dict[str, mx.array]]] = {}
@@ -315,6 +317,7 @@ class MLXExpertStore:
                 self._stats["cluster_experts_loaded"] += 1
             self._stats["cluster_loads"] += 1
             self._loaded_clusters.add(cid)
+        return nested.get(int(expert_id))
 
     # ── Prefetch (SSD → unified memory) ──────────────────────────
 
@@ -324,18 +327,25 @@ class MLXExpertStore:
         Call from a background thread for async prefetch.
         """
         for eid in expert_ids:
-            with self._lock:
-                if eid in self._warm and self._layer_states_complete(self._warm.get(int(eid))):
-                    self._touch_warm_locked(int(eid))
-                    self._stats["warm_hits"] += 1
-                    continue
-            layer_states = self._complete_state(self._load_from_ssd(eid))
-            if not layer_states:
-                self._stats["prefetch_misses"] += 1
-                continue
-            with self._lock:
-                self._put_warm_locked(int(eid), layer_states, protected_expert_id=int(eid))
-                self._stats["prefetch_loads"] += 1
+            self._fetch_to_ram(int(eid))
+
+    def _fetch_to_ram(self, eid: int) -> Dict[int, Dict[str, mx.array]]:
+        """Warm page of ``eid`` (SSD read if needed); returned even if evicted meanwhile."""
+        with self._lock:
+            hit = self._warm.get(eid)
+            if self._layer_states_complete(hit):
+                self._touch_warm_locked(eid)
+                self._stats["warm_hits"] += 1
+                return hit
+        layer_states = self._complete_state(self._load_from_ssd(eid))
+        if not layer_states:
+            self._stats["prefetch_misses"] += 1
+            return {}
+        with self._lock:
+            if self._warm.get(eid) is not layer_states:
+                self._put_warm_locked(eid, layer_states, protected_expert_id=eid)
+            self._stats["prefetch_loads"] += 1
+        return layer_states
 
     def _touch_warm_locked(self, expert_id: int):
         if expert_id in self._warm_lru:
@@ -359,7 +369,31 @@ class MLXExpertStore:
                 if 0 <= int(eid) < int(self.num_experts)
             }
 
+    def set_eviction_ranker(self, ranker=None):
+        """Plug a residency planner into both tiers' eviction.
+
+        ``ranker(candidates) -> victim`` receives the evictable pages in LRU
+        order (oldest first; protected pages are already excluded) and
+        returns the one to drop, e.g. ``NextUsePlanner.victim``.  ``None``
+        restores plain LRU.  Eviction only decides *when* a page is read
+        again: a selected page is always materialised before it runs.
+        """
+        with self._lock:
+            self._eviction_ranker = ranker
+
+    def _coldest_locked(self, order, skip) -> int | None:
+        candidates = [c for c in order if c not in skip]
+        if not candidates:
+            return None
+        ranker = self._eviction_ranker
+        if ranker is None:
+            return candidates[0]
+        victim = ranker(candidates)
+        return candidates[0] if victim is None else victim
+
     def _evict_warm_locked(self, protected_expert_id: int | None = None):
+        if self._eviction_ranker is not None:
+            return self._evict_warm_scored_locked(protected_expert_id)
         while len(self._warm_lru) > self._warm_capacity:
             evict_id = None
             for candidate in self._warm_lru.keys():
@@ -392,6 +426,31 @@ class MLXExpertStore:
                 if not self._cluster_evicted_locked(cid)
             }
             self._stats["warm_evictions"] += 1
+
+    def _evict_warm_scored_locked(self, protected_expert_id: int | None = None):
+        """Score-ordered warm eviction (same tiers and hard capacity as the LRU path)."""
+        keep = {protected_expert_id} if protected_expert_id is not None else set()
+        while len(self._warm_lru) > self._warm_capacity:
+            order = list(self._warm_lru.keys())
+            guarded = keep | self._protected_experts
+            evict_id = self._coldest_locked(order, guarded | set(self._hot_lru.keys()))
+            if evict_id is None:
+                evict_id = self._coldest_locked(order, guarded)
+            if evict_id is None:
+                evict_id = self._coldest_locked(order, keep)
+            if evict_id is None:
+                return
+            evicted_was_hot = evict_id in self._hot_lru
+            self._warm_lru.pop(evict_id, None)
+            self._warm.pop(evict_id, None)
+            if not evicted_was_hot:
+                self._replace_expert_with_placeholder(evict_id)
+            self._loaded_clusters = {
+                cid for cid in self._loaded_clusters
+                if not self._cluster_evicted_locked(cid)
+            }
+            self._stats["warm_evictions"] += 1
+            self._stats["planned_evictions"] += 1
 
     def _cluster_evicted_locked(self, cluster_id: int) -> bool:
         manifest = self._cluster_manifest
@@ -487,11 +546,7 @@ class MLXExpertStore:
                 self._touch_warm_locked(expert_id)
 
         if not self._layer_states_complete(layer_states):
-            self.prefetch_to_ram([expert_id])
-            with self._lock:
-                layer_states = self._warm.get(expert_id)
-                if layer_states is not None:
-                    self._touch_warm_locked(expert_id)
+            layer_states = self._fetch_to_ram(expert_id)
         layer_states = self._complete_state(layer_states)
         if not layer_states:
             self._stats["promote_misses"] += 1
@@ -525,11 +580,12 @@ class MLXExpertStore:
                 self._hot_lru.move_to_end(expert_id)
             else:
                 while len(self._hot_lru) >= self._capacity:
-                    evicted = None
-                    for candidate in self._hot_lru.keys():
-                        if candidate != expert_id and candidate not in self._protected_experts:
-                            evicted = candidate
-                            break
+                    evicted = self._coldest_locked(
+                        list(self._hot_lru.keys()), {expert_id} | self._protected_experts)
+                    if evicted is None and self._eviction_ranker is not None:
+                        # Every other page is protected: the hard capacity
+                        # still wins, and the lowest-priority one goes.
+                        evicted = self._coldest_locked(list(self._hot_lru.keys()), {expert_id})
                     if evicted is None:
                         evicted, _ = self._hot_lru.popitem(last=False)
                         if evicted == expert_id:
@@ -598,6 +654,7 @@ class MLXExpertStore:
             "max_resident_pages": self.max_resident_pages,
             "ram_budget_pages": self.ram_budget_pages,
             "protected_pages": len(self._protected_experts),
+            "eviction_policy": "planned" if self._eviction_ranker is not None else "lru",
             "resident_experts": len(hot_ids),
             "hot_experts": len(hot_ids),
             "hot_capacity": self._capacity,

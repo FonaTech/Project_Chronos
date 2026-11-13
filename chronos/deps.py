@@ -1,80 +1,50 @@
-"""
-chronos/deps.py — Automatic dependency bootstrap for minimind-master kernel.
+"""Compatibility shim (0.3.2+): Chronos has no external kernel dependency.
 
-When minimind-master is not found locally, this module downloads it from
-GitHub and makes it importable. Called automatically on first import of
-any chronos.model module.
-
-Legal notice: minimind is licensed under Apache-2.0.
-See THIRD_PARTY_NOTICES.md for full attribution.
+Before 0.3.2 this module git-cloned minimind from an unpinned ``master`` at
+import time and inserted it at the front of ``sys.path``.  The kernel pieces
+Chronos used now live in :mod:`chronos.model.kernel`; nothing is downloaded
+and ``sys.path`` is left alone.  ``import chronos.deps`` keeps working for old
+scripts, and :func:`get_tokenizer_path` returns the bundled legacy tokenizer.
 """
-import sys
+from __future__ import annotations
+
 import os
-import subprocess
-import importlib
 from pathlib import Path
 
-MINIMIND_REPO = "https://github.com/jingyaogong/minimind"
-MINIMIND_COMMIT = "master"  # pin to a tag/commit for reproducibility
-
-# Candidate local paths (in priority order)
-_CANDIDATE_PATHS = [
-    Path(__file__).parent.parent.parent / "minimind-master",   # sibling dir
-    Path(__file__).parent.parent / "minimind-master",
-    Path.home() / ".cache" / "chronos" / "minimind-master",
-]
+LEGACY_TOKENIZER_DIR = Path(__file__).resolve().parent / "assets" / "tokenizers" / "legacy_6400"
+#: Task-neutral 32768-token BPE (en + zh + code-friendly), the default for NEW models (planner, Train page).
+GENERAL_TOKENIZER_DIR = Path(__file__).resolve().parent / "assets" / "tokenizers" / "general_32k"
+GENERAL_TOKENIZER_VOCAB = 32768
 
 
-def _find_local() -> Path | None:
-    # A bundle ships a vendored copy (``<bundle>/third_party/minimind``) and
-    # points here, so a recipient never needs git or network access.
-    override = os.environ.get("CHRONOS_MINIMIND_DIR", "").strip()
-    if override:
-        p = Path(override).expanduser()
-        if not (p / "model" / "model_minimind.py").exists():
-            raise FileNotFoundError(f"CHRONOS_MINIMIND_DIR={override!r} has no model/model_minimind.py")
-        return p
-    for p in _CANDIDATE_PATHS:
-        if (p / "model" / "model_minimind.py").exists():
-            return p
-    return None
+def get_general_tokenizer_path() -> str:
+    """Bundled general 32k tokenizer for new models (see its NOTICE).
 
-
-def _download(target: Path) -> Path:
-    target.parent.mkdir(parents=True, exist_ok=True)
-    print(f"[Chronos] minimind not found locally. Downloading from {MINIMIND_REPO} ...")
-    print(f"[Chronos] Target: {target}")
-    print(f"[Chronos] License: Apache-2.0  |  Copyright jingyaogong")
-    subprocess.run(
-        ["git", "clone", "--depth", "1", "--branch", MINIMIND_COMMIT,
-         MINIMIND_REPO, str(target)],
-        check=True,
-    )
-    print(f"[Chronos] minimind downloaded to {target}")
-    return target
-
-
-def ensure_minimind() -> Path:
+    Not used as the fallback for old checkpoints: a checkpoint that never recorded its tokenizer was
+    trained with the legacy 6400-token vocabulary, and :func:`get_tokenizer_path` keeps returning that.
     """
-    Ensure minimind-master is available and on sys.path.
-    Returns the path to the minimind root directory.
-    """
-    local = _find_local()
-    if local is None:
-        cache_dir = Path.home() / ".cache" / "chronos" / "minimind-master"
-        local = _download(cache_dir)
-
-    root = str(local)
-    if root not in sys.path:
-        sys.path.insert(0, root)
-    return local
+    return str(GENERAL_TOKENIZER_DIR)
 
 
 def get_tokenizer_path() -> str:
-    """Return the path to the minimind tokenizer directory."""
-    root = ensure_minimind()
-    return str(root / "model")
+    """Default tokenizer for checkpoints that never recorded one.
+
+    ``CHRONOS_DEFAULT_TOKENIZER`` overrides it; otherwise the bundled legacy
+    6400-token vocabulary (data files only, Apache-2.0, see its NOTICE) is
+    used.  New models record their own tokenizer in the checkpoint sidecar.
+    """
+    override = os.environ.get("CHRONOS_DEFAULT_TOKENIZER", "").strip()
+    if override:
+        p = Path(override).expanduser()
+        if not (p / "tokenizer.json").is_file():
+            raise FileNotFoundError(f"CHRONOS_DEFAULT_TOKENIZER={override!r} has no tokenizer.json")
+        return str(p)
+    return str(LEGACY_TOKENIZER_DIR)
 
 
-# Run on import
-_minimind_root = ensure_minimind()
+def ensure_minimind():
+    """Removed in 0.3.2: Chronos no longer needs minimind.  Returns ``None``."""
+    import warnings
+    warnings.warn("chronos.deps.ensure_minimind() is a no-op since 0.3.2; Chronos ships its own kernel "
+                  "(chronos.model.kernel).", DeprecationWarning, stacklevel=2)
+    return None

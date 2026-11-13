@@ -1,0 +1,5 @@
+[exp] b8f25 start 00:51:27 load 3.57 4.34 3.95 src /tmp/chronos_release_dev
+{"label": "b8f25", "depth": 8, "steps": 1215, "wall_s": 1805.5, "valid_ce": 4.776469588279724, "peak_gb": 10.35}
+[exp] b8T2 start 01:22:12 load 2.83 3.53 3.49 src /tmp/chronos_release_dev
+{"label": "b8T2", "depth": 8, "steps": 1220, "wall_s": 1806.5, "valid_ce": 4.761487424373627, "peak_gb": 10.35}
+[exp] QUEUE N DONE

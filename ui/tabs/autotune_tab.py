@@ -18,7 +18,6 @@ import time
 
 from ui.gradio_compat import gr
 
-import chronos.deps  # noqa: F401
 from ui.i18n import t, register_translatable
 from ui.presets import CONFIG_INPUT_ORDER
 from chronos.tuning.chronos_auto_tuner import ChronosAutoTuner, ChronosSearchSpaceConfig

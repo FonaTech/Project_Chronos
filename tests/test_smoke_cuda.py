@@ -21,7 +21,6 @@ def main():
         sys.exit(0)
 
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    import chronos.deps  # noqa: F401
     from chronos.model.config import ChronosConfig
     from chronos.model.model_chronos import ChronosForCausalLM
     from chronos.runtime.cache_manager import CacheManager

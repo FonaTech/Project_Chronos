@@ -1,12 +1,9 @@
-import sys
-import chronos.deps  # ensure minimind on sys.path
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from transformers.activations import ACT2FN
 
-from model.model_minimind import FeedForward, MOEFeedForward
+from .kernel import FeedForward
 from .config import ChronosConfig
 
 
@@ -38,13 +35,13 @@ def _run_expert(expert: nn.Module, x: torch.Tensor) -> torch.Tensor:
 
 class ChronosMOEFeedForward(nn.Module):
     """
-    Extends MOEFeedForward with:
+    Routed SwiGLU experts plus:
     1. shared_experts: always resident in VRAM, used as soft fallback
     2. soft_gate: when target experts are unavailable (cache miss), blend
        their routing weight into shared experts instead of blocking on I/O
 
-    Training (available_expert_mask=None): identical to MOEFeedForward,
-    plus stores per-token routing probs for temporal_locality_loss.
+    Training (available_expert_mask=None): softmax top-k dispatch with a
+    load-balance term, plus stores per-token routing probs for temporal_locality_loss.
 
     Inference (available_expert_mask provided): routes cache-miss tokens
     to shared experts with zero latency.
@@ -126,6 +123,7 @@ class ChronosMOEFeedForward(nn.Module):
         self,
         x: torch.Tensor,
         available_expert_mask: torch.Tensor = None,
+        top_k: int | None = None,
     ) -> torch.Tensor:
         """
         Args:
@@ -154,14 +152,19 @@ class ChronosMOEFeedForward(nn.Module):
         self.iteration_router_probs.append(self.last_router_probs)
         self.iteration_router_probs_grad.append(scores_bse)
 
+        # Graded top-k: a later loop iteration may route to fewer experts (top_k < num_experts_per_tok).
+        k = self.num_experts_per_tok if not top_k else max(1, min(int(top_k), self.num_experts_per_tok))
         shared_idx = self._shared_topk_idx
         if (self.router_scope == "shared" and shared_idx is not None
                 and shared_idx.shape[0] == scores.shape[0] and len(self.iteration_router_probs) > 1):
             topk_idx = shared_idx
+            if k < topk_idx.shape[1]:
+                keep = scores.gather(-1, topk_idx).topk(k, dim=-1, sorted=False).indices
+                topk_idx = topk_idx.gather(-1, keep)
             topk_weight = scores.gather(-1, topk_idx)
         else:
             topk_weight, topk_idx = torch.topk(
-                scores, k=self.num_experts_per_tok, dim=-1, sorted=False
+                scores, k=k, dim=-1, sorted=False
             )
             if self.router_scope == "shared":
                 self._shared_topk_idx = topk_idx
@@ -194,7 +197,7 @@ class ChronosMOEFeedForward(nn.Module):
             flat_idx = topk_idx.reshape(-1)
             order = torch.argsort(flat_idx, stable=True)
             counts = torch.bincount(flat_idx, minlength=self.num_experts).tolist()
-            rows = order // self.num_experts_per_tok
+            rows = order // topk_idx.shape[1]
             row_weight = topk_weight.reshape(-1)[order].unsqueeze(-1)
             offset = 0
             for i, expert in enumerate(self.experts):
@@ -261,7 +264,7 @@ class ChronosMOEFeedForward(nn.Module):
             # values and the index_add_ order are unchanged.
             flat_idx = topk_idx.reshape(-1)
             order = torch.argsort(flat_idx, stable=True)
-            sorted_rows = order // self.num_experts_per_tok
+            sorted_rows = order // topk_idx.shape[1]
             sorted_weight = topk_weight.reshape(-1)[order].unsqueeze(-1)
             mass = torch.zeros(self.num_experts, dtype=torch.float32, device=x_flat.device).index_add_(
                 0, flat_idx, topk_weight.detach().reshape(-1).float())

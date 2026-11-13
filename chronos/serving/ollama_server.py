@@ -3,8 +3,8 @@
 The stock ``ollama`` CLI and any Ollama/OpenAI client can talk to the native
 Chronos runtime by pointing at this server::
 
-    chronos serve --models-dir runs/enzh_50m_v1 --port 11435
-    OLLAMA_HOST=127.0.0.1:11435 ollama run chronos_enzh_sft "Hello world"
+    chronos serve --models-dir runs/my_run --port 11435
+    OLLAMA_HOST=127.0.0.1:11435 ollama run chronos_sft "Hello world"
 
 The kernel is never converted to another architecture: recurrent depth,
 SSD-lazy experts with lookahead prefetch, compressed KV and self-speculative
@@ -30,6 +30,8 @@ try:  # module level: FastAPI resolves ``Request`` annotations by name
 except ImportError:  # pragma: no cover - serving extra not installed
     FastAPI = HTTPException = Request = JSONResponse = PlainTextResponse = StreamingResponse = None
 
+from chronos.serving.tool_calls import ToolCallStream, ollama_tool_calls, openai_tool_calls, split_tool_calls
+
 OLLAMA_COMPAT_VERSION = "0.40.14"
 
 
@@ -40,6 +42,28 @@ def _now() -> str:
 def _digest(path: str) -> str:
     st = os.stat(path)
     return hashlib.sha256(f"{path}:{st.st_size}:{st.st_mtime_ns}".encode()).hexdigest()
+
+
+def _chat_messages(body: dict) -> list[dict]:
+    """Request messages as template input: role, content, and (when present)
+    the assistant's ``tool_calls`` (Ollama/OpenAI shapes; OpenAI string
+    arguments are parsed) so tool conversations render as they were trained."""
+    out = []
+    for m in body.get("messages") or []:
+        msg = {"role": m.get("role", "user"), "content": m.get("content") or ""}
+        calls = []
+        for call in m.get("tool_calls") or []:
+            fn = dict(call.get("function") or call)
+            if isinstance(fn.get("arguments"), str):
+                try:
+                    fn["arguments"] = json.loads(fn["arguments"])
+                except ValueError:
+                    pass
+            calls.append({"function": {"name": fn.get("name", ""), "arguments": fn.get("arguments", {})}})
+        if calls:
+            msg["tool_calls"] = calls
+        out.append(msg)
+    return out
 
 
 def _options(body: dict) -> dict:
@@ -148,6 +172,7 @@ def create_app(runtime, *, api_key: str | None = None, monitor_runs_dir: str | N
         cfg = meta.get("config", {})
         info = {"general.architecture": "chronos", "chronos.recurrent_depth": cfg.get("recurrent_depth"),
                 "chronos.recurrent_attention_mode": cfg.get("recurrent_attention_mode"),
+                "chronos.recurrent_order": cfg.get("recurrent_order", "layer"),
                 "chronos.num_experts": cfg.get("num_experts"), "chronos.experts_per_token": cfg.get("num_experts_per_tok"),
                 "chronos.kv_latent_dim": cfg.get("kv_latent_dim"), "chronos.context_length": cfg.get("max_position_embeddings"),
                 "chronos.hidden_size": cfg.get("hidden_size"), "chronos.vocab_size": cfg.get("vocab_size")}
@@ -165,7 +190,10 @@ def create_app(runtime, *, api_key: str | None = None, monitor_runs_dir: str | N
             entry.update(size_vram=int(st.get("vram_bytes", 0) or 0),
                          expires_at=datetime.fromtimestamp(runtime.last_used.get(name, time.time()) + runtime.keep_alive_s,
                                                            timezone.utc).isoformat().replace("+00:00", "Z"),
-                         chronos={"device": lm.device, "lazy_experts": lm.lazy_experts, "expert_store": st})
+                         chronos={"device": lm.device, "lazy_experts": lm.lazy_experts,
+                                  **{k: lm.meta[k] for k in ("paging", "paging_resolved", "num_pages")
+                                     if k in (lm.meta or {})},
+                                  "expert_store": st})
             out.append(entry)
         return {"models": out}
 
@@ -194,7 +222,9 @@ def create_app(runtime, *, api_key: str | None = None, monitor_runs_dir: str | N
                         final["error"] = item["error"]
                     yield shape(None, final)
                 else:
-                    yield shape(item["text"], None)
+                    chunk = shape(item["text"], None)
+                    if chunk is not None:      # text held back (possible start of a tag)
+                        yield chunk
         return events
 
     def _respond(body, events, collect):
@@ -235,8 +265,7 @@ def create_app(runtime, *, api_key: str | None = None, monitor_runs_dir: str | N
     async def chat(request: Request):
         body = await request.json()
         name = (body.get("model") or "").split(":")[0]
-        messages = [{"role": m.get("role", "user"), "content": m.get("content", "")}
-                    for m in body.get("messages") or []]
+        messages = _chat_messages(body)
         if _unload_if_requested(body, name):
             return {"model": body.get("model"), "created_at": _now(),
                     "message": {"role": "assistant", "content": ""}, "done": True, "done_reason": "unload"}
@@ -244,17 +273,36 @@ def create_app(runtime, *, api_key: str | None = None, monitor_runs_dir: str | N
         if not messages:
             return {"model": body.get("model"), "created_at": _now(),
                     "message": {"role": "assistant", "content": ""}, "done": True, "done_reason": "load"}
-        ids = runtime.encode_chat(lm, messages)
+        ids = runtime.encode_chat(lm, messages, body.get("tools"))
+        # With ``tools`` the model may answer with <tool_call> blocks: parse them
+        # into message.tool_calls (Ollama shape) as they stream.
+        parser = ToolCallStream() if body.get("tools") else None
+
+        def message(text, calls=()):
+            msg = {"role": "assistant", "content": text}
+            if calls:
+                msg["tool_calls"] = ollama_tool_calls(list(calls))
+            return msg
 
         def shape(text, final):
             if final is not None:
-                return {**final, "message": {"role": "assistant", "content": ""}}
-            return {"model": body.get("model"), "created_at": _now(),
-                    "message": {"role": "assistant", "content": text}, "done": False}
+                tail = parser.finish()[0] if parser is not None else ""
+                return {**final, "message": message(tail)}
+            if parser is None:
+                return {"model": body.get("model"), "created_at": _now(), "message": message(text), "done": False}
+            content, calls = parser.feed(text)
+            if not content and not calls:
+                return None
+            return {"model": body.get("model"), "created_at": _now(), "message": message(content, calls),
+                    "done": False}
 
         def collect(items):
-            text = "".join(i["message"]["content"] for i in items[:-1])
-            return {**items[-1], "message": {"role": "assistant", "content": text}}
+            text = "".join(i["message"]["content"] for i in items)
+            calls = [c for i in items for c in i["message"].get("tool_calls", [])]
+            msg = {"role": "assistant", "content": text.strip() if calls else text}
+            if calls:
+                msg["tool_calls"] = calls
+            return {**items[-1], "message": msg}
         return _respond(body, _run(body, ids, lm, load_s, shape), collect)
 
     @app.get("/v1/models")
@@ -268,31 +316,55 @@ def create_app(runtime, *, api_key: str | None = None, monitor_runs_dir: str | N
         body = await request.json()
         name = (body.get("model") or "").split(":")[0]
         lm, load_s = _resolve(name)
-        messages = [{"role": m.get("role", "user"), "content": m.get("content", "")} for m in body.get("messages") or []]
-        ids = runtime.encode_chat(lm, messages)
+        ids = runtime.encode_chat(lm, _chat_messages(body), body.get("tools"))
         opts = _options({**body, "options": {"num_predict": body.get("max_tokens") or body.get("max_completion_tokens") or 256,
                                              "temperature": body.get("temperature", 0.0), "top_p": body.get("top_p", 1.0),
                                              "seed": body.get("seed"), "stop": body.get("stop"),
                                              **(body.get("chronos") or {})}})
         cid, created = f"chatcmpl-{uuid.uuid4().hex}", int(time.time())
+        with_tools = bool(body.get("tools"))
+
+        def finish_reason(final, n_calls):
+            return "tool_calls" if n_calls else final.get("done_reason", "stop")
+
         if body.get("stream"):
             def sse():
+                parser = ToolCallStream() if with_tools else None
+                n_calls = 0
+
+                def chunk(delta, reason=None, extra=None):
+                    out = {"id": cid, "object": "chat.completion.chunk", "created": created, "model": name,
+                           "choices": [{"index": 0, "delta": delta, "finish_reason": reason}], **(extra or {})}
+                    return f"data: {json.dumps(out, ensure_ascii=False)}\n\n"
                 for item in runtime.generate_stream(name, ids, **opts):
                     if item.get("done"):
-                        chunk = {"id": cid, "object": "chat.completion.chunk", "created": created, "model": name,
-                                 "choices": [{"index": 0, "delta": {}, "finish_reason": item.get("done_reason", "stop")}],
-                                 "chronos": item}
-                        yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\ndata: [DONE]\n\n"
+                        tail = parser.finish()[0] if parser is not None else ""
+                        if tail:
+                            yield chunk({"content": tail})
+                        yield chunk({}, finish_reason(item, n_calls), {"chronos": item}) + "data: [DONE]\n\n"
+                    elif parser is None:
+                        yield chunk({"content": item["text"]})
                     else:
-                        chunk = {"id": cid, "object": "chat.completion.chunk", "created": created, "model": name,
-                                 "choices": [{"index": 0, "delta": {"content": item["text"]}, "finish_reason": None}]}
-                        yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+                        content, calls = parser.feed(item["text"])
+                        if content:
+                            yield chunk({"content": content})
+                        if calls:
+                            yield chunk({"tool_calls": openai_tool_calls(calls, start=n_calls)})
+                            n_calls += len(calls)
             return StreamingResponse(sse(), media_type="text/event-stream")
         items = list(runtime.generate_stream(name, ids, **opts))
         final = items[-1]
+        text = "".join(i["text"] for i in items[:-1])
+        msg = {"role": "assistant", "content": text}
+        calls = []
+        if with_tools:
+            content, calls = split_tool_calls(text)
+            if calls:
+                msg = {"role": "assistant", "content": content or None,
+                       "tool_calls": [{k: v for k, v in c.items() if k != "index"}   # index: stream deltas only
+                                      for c in openai_tool_calls(calls)]}
         return {"id": cid, "object": "chat.completion", "created": created, "model": name,
-                "choices": [{"index": 0, "message": {"role": "assistant", "content": "".join(i["text"] for i in items[:-1])},
-                             "finish_reason": final.get("done_reason", "stop")}],
+                "choices": [{"index": 0, "message": msg, "finish_reason": finish_reason(final, len(calls))}],
                 "usage": {"prompt_tokens": final.get("prompt_tokens", 0), "completion_tokens": final.get("completion_tokens", 0),
                           "total_tokens": final.get("prompt_tokens", 0) + final.get("completion_tokens", 0)},
                 "chronos": final}
@@ -311,6 +383,9 @@ def main(argv=None) -> int:
                         "(auto: CUDA bf16/fp16, MPS fp32, CPU fp32)")
     parser.add_argument("--no-lazy-experts", action="store_true", help="keep every expert resident (no SSD offload)")
     parser.add_argument("--ram-expert-fraction", type=float, default=0.5)
+    parser.add_argument("--paging", choices=["auto", "cluster", "expert"], default="auto",
+                        help="expert page layout; auto pages by training cluster when the checkpoint "
+                             "was trained with cluster locality, per expert otherwise")
     # Inference-only options (default: whatever the checkpoint config says).
     parser.add_argument("--kv-cache-dtype", choices=["auto", "int8"], default=None,
                         help="int8: per-token int8 KV cache with FP32 group scales")
@@ -338,7 +413,7 @@ def main(argv=None) -> int:
     overrides = {k: v for k, v in overrides.items() if v is not None}
     runtime = ChronosRuntime(args.models_dir, device=args.device, lazy_experts=not args.no_lazy_experts,
                              ram_expert_fraction=args.ram_expert_fraction, dtype=args.dtype,
-                             inference_overrides=overrides)
+                             inference_overrides=overrides, paging=args.paging)
     print(f"[chronos serve] http://{args.host}:{args.port}  models={sorted(runtime.available())}  "
           f"auth={'on' if args.api_key else 'off (loopback only)'}  overrides={overrides or 'none'}", flush=True)
     if args.monitor_runs_dir:

@@ -9,9 +9,6 @@ Responsibilities:
 - Evict VRAM weights via LRU when budget is exceeded
 - Track per-expert residency state for soft-gating mask generation
 """
-import sys
-import chronos.deps  # ensure minimind on sys.path
-
 import contextlib
 import os
 import threading
@@ -313,7 +310,7 @@ class ExpertStore:
             return torch.float32
 
     def _build_live_expert(self):
-        from model.model_minimind import FeedForward
+        from chronos.model.kernel import FeedForward
         # No random initialization or temporary full allocation on a cache miss.
         with torch.device("meta"):
             return FeedForward(self.config, intermediate_size=self.config.moe_intermediate_size)
@@ -353,7 +350,15 @@ class ExpertStore:
         This is the real lazy-load path for CPU/MPS inference: we avoid
         materializing MoE expert weights into the live model before setup.
         """
-        if self.storage_format == "safetensors" and clusters is None:
+        if clusters is not None:
+            # Paging by the training clusters (lambda_cluster_locality > 0):
+            # one .ctsr per cluster, so one SSD read brings a stream's experts.
+            self._write_clusters_from(
+                lambda li, ei: self._expert_state_from_checkpoint(state_dict, li, ei), clusters)
+            if replace_live:
+                self.replace_live_experts_with_placeholders()
+            return
+        if self.storage_format == "safetensors":
             # A raw .pth checkpoint has no co-activation cluster layout.
             # Falling back to one .pt shard per (layer, expert) preserves
             # true lazy loading; writing a single all-expert .ctsr cluster
@@ -383,11 +388,20 @@ class ExpertStore:
         materializing the full expert state dict in DRAM: each expert tensor is
         pulled from the export artifact only while that expert shard is written.
         """
-        if self.storage_format == "safetensors" and clusters is None:
+        keys = list(reader.keys())
+        if clusters is not None:
+            def from_reader(li, ei):
+                prefix = f"model.layers.{li}.mlp.experts.{ei}."
+                return {k[len(prefix):]: reader.get_tensor(k).detach().cpu().contiguous()
+                        for k in keys if k.startswith(prefix)}
+            self._write_clusters_from(from_reader, clusters)
+            if replace_live:
+                self.replace_live_experts_with_placeholders()
+            return
+        if self.storage_format == "safetensors":
             self.storage_format = "pt"
             self._cluster_storage = None
 
-        keys = list(reader.keys())
         for li in range(self.num_layers):
             for ei in range(self.num_experts):
                 path = self._ssd_path(ei, li)
@@ -406,6 +420,21 @@ class ExpertStore:
 
         if replace_live:
             self.replace_live_experts_with_placeholders()
+
+    def _write_clusters_from(self, get_state, clusters: List[List[int]]):
+        """Shard experts into one ``.ctsr`` per cluster from ``get_state(layer, expert)``."""
+        dtype = self._expert_dtype_cached
+
+        def cast(li, ei):
+            return {k: (v.to(dtype=dtype) if v.is_floating_point() and v.dtype != dtype else v)
+                    for k, v in get_state(li, ei).items()}
+
+        ClusterStorage.write_clusters_from_states(
+            cast, clusters=clusters, output_dir=self.ssd_dir, num_layers=self.num_layers,
+            num_experts=self.num_experts, layer_to_group=self._layer_to_group if self.layer_aware else None,
+        )
+        self.storage_format = "safetensors"
+        self._cluster_storage = ClusterStorage(self.ssd_dir)
 
     def replace_live_experts_with_placeholders(self):
         """Drop live expert modules from the active model after SSD offload."""

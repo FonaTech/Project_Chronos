@@ -1,6 +1,7 @@
 """Minimal but real MLX-native six-stage training support."""
 from __future__ import annotations
 
+import math
 import os
 import time
 from dataclasses import dataclass
@@ -24,6 +25,7 @@ try:
 
     from chronos.mlx.model import ChronosMLXModel
     from chronos.mlx.moe import ChronosMLXMOE
+    from chronos.mlx.multimodal import batch_modalities
     from chronos.mlx.training.io import mlx_state_to_torch
     from chronos.mlx.training.optim import MixedPrecisionAdamW
 except ModuleNotFoundError:
@@ -33,6 +35,7 @@ except ModuleNotFoundError:
     tree_map = None
     ChronosMLXModel = None
     ChronosMLXMOE = None
+    batch_modalities = None
     mlx_state_to_torch = None
 
 
@@ -42,6 +45,32 @@ def _ids_to_mx(x) -> mx.array:
     if isinstance(x, torch.Tensor):
         return mx.array(x.detach().cpu().numpy()).astype(mx.int32)
     return mx.array(x).astype(mx.int32)
+
+
+def _check_ids_in_vocab(ids, vocab_size: int, where: str) -> None:
+    """Raise instead of reading outside the embedding table.
+
+    MLX does not bounds-check gathers, so an id >= vocab_size reads whatever memory follows the table
+    and crashes the process some of the time.  Float arrays are not token ids and pass."""
+    import numpy as np
+    arr = ids.detach().cpu().numpy() if isinstance(ids, torch.Tensor) else np.asarray(ids)
+    if arr.dtype.kind not in "iu" or arr.size == 0:
+        return
+    low, high = int(arr.min()), int(arr.max())
+    if low < 0 or high >= int(vocab_size):
+        raise ValueError(f"{where}: token ids span [{low}, {high}] but the model's vocab_size is {int(vocab_size)}; "
+            "use the tokenizer the model was trained with")
+
+
+def _check_batch_ids(batch, vocab_size: int, stage: str) -> None:
+    """Range-check the input ids of one stage batch (a tuple, a multimodal dict or a DPO pair)."""
+    if isinstance(batch, dict):
+        for key in ("input_ids", "x_chosen", "x_rejected"):
+            if key in batch:
+                _check_ids_in_vocab(batch[key], vocab_size, f"{stage} batch[{key!r}]")
+    elif isinstance(batch, (tuple, list)) and batch:
+        _check_ids_in_vocab(batch[0], vocab_size, f"{stage} batch ids")
+
 
 
 def _f32(x: mx.array) -> mx.array:
@@ -58,6 +87,15 @@ def _masked_lm_loss(logits: mx.array, labels: mx.array) -> mx.array:
     safe_labels = mx.where(mask, flat_labels, mx.zeros_like(flat_labels))
     losses = nn.losses.cross_entropy(flat_logits, safe_labels, reduction="none")
     return (losses * mask.astype(losses.dtype)).sum() / mx.maximum(mask.astype(mx.float32).sum(), 1.0)
+
+
+def _masked_lm_loss_aligned(logits: mx.array, labels: mx.array) -> mx.array:
+    """Mean CE of labels already aligned with the logits (no shift); -100 = ignored."""
+    flat_logits = _f32(logits.reshape(-1, logits.shape[-1]))
+    flat_labels = labels.reshape(-1)
+    mask = flat_labels != -100
+    losses = nn.losses.cross_entropy(flat_logits, mx.where(mask, flat_labels, 0), reduction="none")
+    return (losses * mask).sum() / mx.maximum(mask.sum(), 1)
 
 
 def _gather_token_logprobs(logits: mx.array, labels: mx.array) -> mx.array:
@@ -108,14 +146,73 @@ def _first_iteration_router_probs(model) -> mx.array | None:
     return mx.stack(probs, axis=2) if probs else None
 
 
-def _temporal_locality_loss(router_mean: mx.array) -> mx.array:
+def _masked_mean(values: mx.array, mask: mx.array | None) -> mx.array:
+    """Mean of ``values`` over positions where ``mask`` (same shape, 1 = real) is set."""
+    if mask is None:
+        return values.mean()
+    m = mask.astype(mx.float32)
+    return (values * m).sum() / mx.maximum(m.sum(), 1.0)
+
+
+_PAIR_SEGMENTS: list = [None]   # [B, S] document ids of the batch being regularized
+_LOOKAHEAD_SEGMENTS: list = [None]   # document ids for the lookahead terms (own switch)
+
+
+def _pair_mask(token_mask: mx.array | None, k: int = 1, groups: int = 1) -> mx.array | None:
+    """``[B, S-k]``: positions t and t+k are both real tokens of one document.
+
+    Documents come from ``_PAIR_SEGMENTS`` (set by ``_chronos_regularized_loss``
+    when ``config.reset_router_at_documents``): temporal, locality and
+    lookahead terms then never pair tokens across a packed-row boundary.
+    ``groups`` > 1: the caller flattened that many routing groups into the
+    batch axis (``B*G`` rows), so the document ids are repeated to match."""
+    seg = _PAIR_SEGMENTS[0]
+    if seg is not None and groups > 1:
+        seg = mx.repeat(seg, groups, axis=0)
+    if token_mask is None and seg is None:
+        return None
+    m = None
+    if token_mask is not None:
+        t = token_mask.astype(mx.float32)
+        m = t[:, :-k] * t[:, k:]
+    if seg is not None and seg.shape[1] > k:
+        same = (seg[:, :-k] == seg[:, k:]).astype(mx.float32)
+        m = same if m is None else m * same
+    return m
+
+
+def _group_mask(token_mask: mx.array | None, groups: int) -> mx.array | None:
+    """Repeat a ``[B, S]`` mask for the ``B*G`` rows of ``_flatten_lookahead_groups``."""
+    if token_mask is None or groups <= 1:
+        return token_mask
+    return mx.repeat(token_mask, groups, axis=0)
+
+
+_TEMPORAL_SPAN: list = [0]   # temporal_grad_span of the loss being built (0 = full chain)
+
+
+def _span_detach(prev: mx.array) -> mx.array:
+    """The older side of every adjacent pair, stop-gradient at span boundaries.
+
+    With ``temporal_grad_span`` = n the sequence is cut in blocks of n positions: inside a
+    block the older token keeps its gradient; the pair that straddles a block edge detaches
+    it, so no gradient chain runs across more than n steps."""
+    n = int(_TEMPORAL_SPAN[0] or 0)
+    if n <= 0 or prev.shape[1] <= 1:
+        return prev
+    edge = (mx.arange(prev.shape[1]) % n) == (n - 1)
+    return mx.where(edge[None, :, None], mx.stop_gradient(prev), prev)
+
+
+def _temporal_locality_loss(router_mean: mx.array, token_mask: mx.array | None = None) -> mx.array:
     if router_mean.shape[1] <= 1:
         return mx.zeros(())
-    diff = router_mean[:, 1:, :] - router_mean[:, :-1, :]
-    return (diff * diff).sum(axis=-1).mean()
+    diff = router_mean[:, 1:, :] - _span_detach(router_mean[:, :-1, :])
+    return _masked_mean((diff * diff).sum(axis=-1), _pair_mask(token_mask))
 
 
-def _router_locality_loss(router_mean: mx.array, num_experts_per_tok: int) -> mx.array:
+def _router_locality_loss(router_mean: mx.array, num_experts_per_tok: int,
+                          token_mask: mx.array | None = None) -> mx.array:
     if router_mean.shape[1] <= 1:
         return mx.zeros(())
     B, _S, E = router_mean.shape
@@ -125,19 +222,171 @@ def _router_locality_loss(router_mean: mx.array, num_experts_per_tok: int) -> mx
     target_ids = mx.argpartition(-prev, kth=top_k - 1, axis=-1)[:, :, :top_k]
     target_mask = (target_ids[..., None] == mx.arange(E)).astype(cur.dtype).sum(axis=-2)
     mass = (cur * target_mask).sum(axis=-1)
-    return (-mx.log(mx.maximum(mass / float(top_k), 1e-9))).mean()
+    return _masked_mean(-mx.log(mx.maximum(mass / float(top_k), 1e-9)), _pair_mask(token_mask))
 
 
-def _load_balance_loss(router_4d: mx.array, num_experts_per_tok: int) -> mx.array:
+_MEMBERSHIP_CACHE: dict = {}
+
+
+def _cluster_membership(config) -> mx.array:
+    """``[E, C]`` one-hot of ``chronos.expert_clusters.training_clusters(config)`` (cached)."""
+    from chronos.expert_clusters import cluster_membership, resolve_cluster_count, training_clusters
+    e = int(config.num_experts)
+    key = (e, resolve_cluster_count(config))
+    hit = _MEMBERSHIP_CACHE.get(key)
+    if hit is None:
+        hit = mx.array(cluster_membership(training_clusters(config), e), dtype=mx.float32)
+        _MEMBERSHIP_CACHE[key] = hit
+    return hit
+
+
+def _cluster_locality_loss(router_4d: mx.array, membership: mx.array, window: int = 0,
+                           token_mask: mx.array | None = None) -> mx.array:
+    """MLX twin of ``chronos.model.temporal_loss.cluster_locality_loss``: ``1 − I(window; cluster)/log C``.
+
+    ``token_mask`` ``[B, S]`` (1 = real token) drops right-padding: a window's
+    cluster distribution averages its real tokens only, and windows count in
+    proportion to them, so pad runs are neither a "domain" of their own nor
+    dilute the windows they share.  ``None`` = every position is real.
+    """
+    B, S, V, E = router_4d.shape
+    C = int(membership.shape[1])
+    w = S if int(window or 0) <= 0 else min(int(window), S)
+    n = S // w
+    if C <= 1 or n <= 0:
+        return mx.zeros(())
+    mass = (router_4d.astype(mx.float32).reshape(-1, E) @ membership).reshape(B, S, V, C)
+    mass = mass[:, : n * w].reshape(B, n, w, V, C)
+
+    def entropy(p):
+        p = mx.maximum(p, 1e-9)
+        return -(p * mx.log(p)).sum(axis=-1)
+
+    if token_mask is None:
+        pw = mass.mean(axis=(2, 3)).reshape(B * n, C)
+        mutual = entropy(pw.mean(axis=0)) - entropy(pw).mean()
+        return 1.0 - mutual / math.log(C)
+    m = token_mask[:, : n * w].astype(mx.float32).reshape(B, n, w)
+    count = m.sum(axis=2)                                               # [B, n] real tokens per window
+    pw = ((mass * m[..., None, None]).sum(axis=2).mean(axis=2)
+          / mx.maximum(count, 1.0)[..., None]).reshape(B * n, C)
+    weight = (count / mx.maximum(count.sum(), 1.0)).reshape(B * n)      # windows ∝ real tokens
+    marginal = (pw * weight[:, None]).sum(axis=0)
+    mutual = entropy(marginal) - (entropy(pw) * weight).sum()
+    return 1.0 - mutual / math.log(C)
+
+
+def _segment_cluster_loss(router_4d: mx.array, membership: mx.array, segments,
+     token_mask: mx.array | None = None) -> mx.array:
+    """``1 − I(segment; cluster)/log C`` with documents as the unit (MLX twin of
+    ``chronos.model.temporal_loss.segment_cluster_loss``), written with static shapes so it traces
+    under ``mx.compile``.
+
+    ``segments`` ``[B, S]`` comes from ``chronos.expert_clusters.segment_ids`` (NumPy) or
+    ``segment_ids_mx``: the token stream's own document separators, no label or task token.  Ids stay
+    below ``S``, so ``row * S + id`` indexes ``B * S`` segment slots; unused slots have weight 0.  Each
+    segment's cluster mass is pooled over its real tokens and every dispatch; segments weigh by
+    real-token count.  A batch with a single segment gives 0, as in the Torch twin."""
+    B, S, V, E = router_4d.shape
+    C = int(membership.shape[1])
+    if C <= 1:
+        return mx.zeros(())
+    seg = (segments if isinstance(segments, mx.array) else mx.array(segments)).astype(mx.int32)
+    slots = B * S
+    idx = (seg + (mx.arange(B, dtype=mx.int32) * S)[:, None]).reshape(-1)
+    mass = (router_4d.astype(mx.float32).reshape(-1, E) @ membership).reshape(B * S, V, C).mean(axis=1)
+    m = (mx.ones((B * S,), mx.float32) if token_mask is None
+        else token_mask.reshape(B * S).astype(mx.float32))
+    total = mx.zeros((slots, C), mx.float32).at[idx].add(mass * m[:, None])
+    count = mx.zeros((slots,), mx.float32).at[idx].add(m)
+    present = mx.zeros((slots,), mx.float32).at[idx].add(mx.ones((B * S,), mx.float32))   # padding counts
+    ps = total / mx.maximum(count, 1.0)[:, None]
+    weight = count / mx.maximum(count.sum(), 1.0)
+
+    def entropy(p):
+        p = mx.maximum(p, 1e-9)
+        return -(p * mx.log(p)).sum(axis=-1)
+
+    marginal = (ps * weight[:, None]).sum(axis=0)
+    mutual = entropy(marginal) - (entropy(ps) * weight).sum()
+    loss = 1.0 - mutual / math.log(C)
+    return mx.where((present > 0).sum() > 1, loss, mx.zeros(()))
+
+
+def _cluster_objective(router_4d: mx.array, config, token_mask=None, input_ids=None) -> mx.array:
+    """The configured cluster-locality term: ``window`` (fixed token windows)
+    or ``segment`` (documents found from ``input_ids``; window form without them)."""
+    from chronos.expert_clusters import cluster_locality_mode, segment_ids_mx
+    window = int(getattr(config, "cluster_locality_window", 0) or 0)
+    membership = _cluster_membership(config)
+    if cluster_locality_mode(config) == "segment" and input_ids is not None:
+        return _segment_cluster_loss(router_4d, membership, segment_ids_mx(input_ids, chunk=window), token_mask)
+    return _cluster_locality_loss(router_4d, membership, window, token_mask)
+
+
+def _recurrent_iteration_probs(model, config) -> mx.array | None:
+    """``[B, S, G, D, E]``: router probabilities of each recurrent layer at each loop iteration.
+    
+    None unless every recurrent layer dispatched the same number (>= 2) of times in the last forward."""
+    start, groups = int(config.prelude_layers), int(config.recurrent_groups)
+    rows = []
+    for layer in list(getattr(model, "layers", []))[start:start + groups]:
+        moe = getattr(layer, "mlp", None)
+        if not isinstance(moe, ChronosMLXMOE) or not moe.iteration_router_probs:
+            return None
+        rows.append(mx.stack(moe.iteration_router_probs, axis=2))   # [B, S, D, E]
+    if not rows or rows[0].shape[2] < 2 or any(r.shape[2] != rows[0].shape[2] for r in rows):
+        return None
+    return mx.stack(rows, axis=2)
+
+
+def _iteration_mean_router_probs(model) -> mx.array | None:
+    """Per physical layer, router probabilities averaged over its loop iterations ``[B, S, L, E]``
+    (lookahead teacher that covers every iteration; equals the step-0 routing for one-dispatch layers)."""
+    probs = [mx.stack(layer.mlp.iteration_router_probs, axis=0).mean(axis=0) for layer in getattr(model, "layers", [])
+        if isinstance(getattr(layer, "mlp", None), ChronosMLXMOE) and layer.mlp.iteration_router_probs]
+    return mx.stack(probs, axis=2) if probs else None
+
+
+def _iteration_cluster_spread(probs5: mx.array, membership: mx.array, token_mask: mx.array | None = None) -> mx.array:
+    """Iteration-axis cluster locality: for each token and recurrent layer, the total variation between the
+    cluster-mass distribution of every loop iteration and the mean over its iterations, averaged.
+    
+    0 = every iteration of a token routes into the same clusters (one cluster read serves them all); the
+    experts inside a cluster are free to differ per iteration.  MLX twin of
+    ``chronos.model.temporal_loss.iteration_cluster_spread``."""
+    B, S, G, D, E = probs5.shape
+    C = int(membership.shape[1])
+    if D < 2 or C <= 1:
+        return mx.zeros(())
+    mass = (probs5.astype(mx.float32).reshape(-1, E) @ membership).reshape(B, S, G, D, C)
+    spread = 0.5 * mx.abs(mass - mass.mean(axis=3, keepdims=True)).sum(axis=-1)      # [B, S, G, D]
+    return _masked_mean(spread.mean(axis=(2, 3)), token_mask)
+
+def _load_balance_loss(router_4d: mx.array, num_experts_per_tok: int,
+                       token_mask: mx.array | None = None) -> mx.array:
+    """Switch-style ``E · Σ load·importance`` per virtual layer, summed.
+
+    ``token_mask`` ``[B, S]`` (1 = real token) restricts load and importance
+    to real tokens; ``None`` = every position counts (packed pretraining)."""
     B, S, L, E = router_4d.shape
     top_k = max(1, min(int(num_experts_per_tok or 1), E))
     total = mx.zeros(())
+    w = None
+    if token_mask is not None:
+        w = token_mask.reshape(B * S).astype(router_4d.dtype)
+        w = w / mx.maximum(w.sum(), 1.0)
     for li in range(L):
         scores = router_4d[:, :, li, :].reshape(B * S, E)
         topk_idx = mx.argpartition(-scores, kth=top_k - 1, axis=-1)[:, :top_k]
         selected = (topk_idx[..., None] == mx.arange(E)).astype(scores.dtype)
-        load = selected.mean(axis=0)  # [K, E], matching the PyTorch trainer
-        total = total + (load * scores.mean(axis=0)).sum() * E
+        if w is None:
+            load = selected.mean(axis=0)  # [K, E], matching the PyTorch trainer
+            importance = scores.mean(axis=0)
+        else:
+            load = (selected * w[:, None, None]).sum(axis=0)
+            importance = (scores * w[:, None]).sum(axis=0)
+        total = total + (load * importance).sum() * E
     return total
 
 
@@ -167,8 +416,11 @@ def _lookahead_supervision_loss(
     lookahead_probs: mx.array | None,
     teacher_router_probs: mx.array | None,
     lookahead_steps: int,
+    token_mask: mx.array | None = None,
 ) -> mx.array:
+    groups = lookahead_probs.shape[3] if lookahead_probs is not None and lookahead_probs.ndim == 5 else 1
     lookahead_probs, teacher_router_probs = _flatten_lookahead_groups(lookahead_probs, teacher_router_probs)
+    token_mask = _group_mask(token_mask, groups)
     if lookahead_probs is None:
         return mx.zeros(())
     if teacher_router_probs is None:
@@ -185,7 +437,8 @@ def _lookahead_supervision_loss(
             continue
         teacher_k = teacher[:, k:, :]
         pred_k = lookahead_probs[:, :-k, k, :].astype(mx.float32)
-        total = total + (-(teacher_k * mx.log(mx.maximum(pred_k, 1e-9))).sum(axis=-1)).mean()
+        total = total + _masked_mean(-(teacher_k * mx.log(mx.maximum(pred_k, 1e-9))).sum(axis=-1),
+                                     _pair_mask(token_mask, k, groups))
         terms += 1
     return total / max(terms, 1)
 
@@ -195,8 +448,11 @@ def _lookahead_topk_hit_loss(
     teacher_router_probs: mx.array | None,
     lookahead_steps: int,
     num_experts_per_tok: int,
+    token_mask: mx.array | None = None,
 ) -> mx.array:
+    groups = lookahead_probs.shape[3] if lookahead_probs is not None and lookahead_probs.ndim == 5 else 1
     lookahead_probs, teacher_router_probs = _flatten_lookahead_groups(lookahead_probs, teacher_router_probs)
+    token_mask = _group_mask(token_mask, groups)
     if lookahead_probs is None:
         return mx.zeros(())
     if teacher_router_probs is None:
@@ -217,7 +473,8 @@ def _lookahead_topk_hit_loss(
         target_ids = mx.argpartition(-teacher_k, kth=top_k - 1, axis=-1)[:, :, :top_k]
         target_mask = (target_ids[..., None] == mx.arange(E)).astype(pred_k.dtype).sum(axis=-2)
         hit_mass = (pred_k * target_mask).sum(axis=-1)
-        total = total + (-mx.log(mx.maximum(hit_mass / float(top_k), 1e-9))).mean()
+        total = total + _masked_mean(-mx.log(mx.maximum(hit_mass / float(top_k), 1e-9)),
+         _pair_mask(token_mask, k, groups))
         terms += 1
     return total / max(terms, 1)
 
@@ -227,8 +484,11 @@ def _lookahead_union_loss(
     teacher_router_probs: mx.array | None,
     lookahead_steps: int,
     num_experts_per_tok: int,
+    token_mask: mx.array | None = None,
 ) -> mx.array:
+    groups = lookahead_probs.shape[3] if lookahead_probs is not None and lookahead_probs.ndim == 5 else 1
     lookahead_probs, teacher_router_probs = _flatten_lookahead_groups(lookahead_probs, teacher_router_probs)
+    token_mask = _group_mask(token_mask, groups)
     if lookahead_probs is None:
         return mx.zeros(())
     if teacher_router_probs is None:
@@ -247,7 +507,8 @@ def _lookahead_union_loss(
     pred_union = lookahead_probs[:, :S - K, 1:K + 1, :].astype(mx.float32).max(axis=2)
     mass = (pred_union * union_target).sum(axis=-1)
     target_count = mx.maximum(union_target.sum(axis=-1), 1.0)
-    return (-mx.log(mx.maximum(mass / target_count, 1e-9))).mean()
+    # Union over t+1..t+K: position t counts when it and t+K are real (right padding).
+    return _masked_mean(-mx.log(mx.maximum(mass / target_count, 1e-9)), _pair_mask(token_mask, K, groups))
 
 
 def _offload_training_metrics(
@@ -334,7 +595,7 @@ def draft_exit_active(model, config) -> bool:
     return 1 <= int(getattr(config, "draft_exit_depth", 1)) < int(config.recurrent_depth)
 
 
-def draft_exit_logits(model, input_ids, config):
+def draft_exit_logits(model, input_ids, config, media=None):
     """Draft-depth FP32 logits, or None when the KL hook is off.
 
     Run *before* the full-depth forward: the full pass then owns the routing
@@ -343,7 +604,7 @@ def draft_exit_logits(model, input_ids, config):
     if not draft_exit_active(model, config):
         return None
     logits, _lookahead, _cache = model(input_ids, logits_dtype=mx.float32,
-                                       recurrent_depth=int(config.draft_exit_depth))
+                                       recurrent_depth=int(config.draft_exit_depth), **(media or {}))
     return logits
 
 
@@ -360,6 +621,22 @@ def draft_exit_kl(draft_logits: mx.array, full_logits: mx.array, keep: mx.array 
     return (kl * keep).sum() / mx.maximum(keep.sum(), 1.0)
 
 
+def real_token_mask(labels: mx.array, *, aligned: bool = False) -> mx.array:
+    """``[B, S]`` bool: input positions holding real tokens of a right-padded batch.
+
+    Padding carries label -100 after each row's last supervised token, so a
+    row's real tokens end at that token: ``labels[t]`` is token ``t`` itself
+    (``aligned=False``, HF convention, the loss shifts) or token ``t+1``
+    (``aligned=True``, labels pre-shifted onto the logits).  Prompt tokens
+    (-100 before the reply) stay real: they are routed context.  Packed
+    pretraining (no -100) gives an all-true mask.
+    """
+    labels = mx.array(labels) if not isinstance(labels, mx.array) else labels
+    pos = mx.arange(labels.shape[1])
+    last = mx.max(mx.where(labels != -100, pos[None, :], -1), axis=1)
+    return pos[None, :] <= (last + (1 if aligned else 0))[:, None]
+
+
 def _shifted_keep(labels: mx.array) -> mx.array:
     """Logit t is supervised when label t+1 is not -100 (CE shift)."""
     nxt = labels[:, 1:] != -100
@@ -367,8 +644,36 @@ def _shifted_keep(labels: mx.array) -> mx.array:
 
 
 def _chronos_regularized_loss(model, base_loss, lookahead_probs, config, router_ref=None, metrics=None,
-                              draft_kl=None):
-    """Return total loss and retain the actual weighted components for logging."""
+                              draft_kl=None, token_mask=None, input_ids=None):
+    """Return total loss and retain the actual weighted components for logging.
+
+    ``token_mask`` ``[B, S]`` (1 = real token, 0 = right padding) keeps padding
+    out of every router regularizer; ``None`` = all positions are real.
+    ``input_ids`` ``[B, S]`` lets ``cluster_locality_mode="segment"`` find the
+    documents of the batch (without it the window form is used)."""
+    segments = look_segments = None
+    reset_router = bool(getattr(config, "reset_router_at_documents", False))
+    reset_look = getattr(config, "reset_lookahead_at_documents", None)
+    reset_look = reset_router if reset_look is None else bool(reset_look)
+    if input_ids is not None and (reset_router or reset_look):
+        from chronos.expert_clusters import segment_ids_mx
+        docs = segment_ids_mx(input_ids)
+        segments = docs if reset_router else None
+        look_segments = docs if reset_look else None
+    _PAIR_SEGMENTS[0] = segments
+    _LOOKAHEAD_SEGMENTS[0] = look_segments
+    _TEMPORAL_SPAN[0] = int(getattr(config, "temporal_grad_span", 0) or 0)
+    try:
+        return _regularized_terms(model, base_loss, lookahead_probs, config, router_ref, metrics,
+                                  draft_kl, token_mask, input_ids)
+    finally:
+        _PAIR_SEGMENTS[0] = None
+        _LOOKAHEAD_SEGMENTS[0] = None
+        _TEMPORAL_SPAN[0] = 0
+
+
+def _regularized_terms(model, base_loss, lookahead_probs, config, router_ref, metrics, draft_kl,
+                       token_mask, input_ids):
     object.__setattr__(model, "_last_lookahead_probs", lookahead_probs)
     terms = {"primary_loss": base_loss.astype(mx.float32)}
     def add(name, coefficient, value):
@@ -387,20 +692,34 @@ def _chronos_regularized_loss(model, base_loss, lookahead_probs, config, router_
     if router is not None:
         router = router.astype(mx.float32)
         top_k = config.num_experts_per_tok
-        add("balance_loss", config.lambda_balance, _load_balance_loss(router, top_k))
+        add("balance_loss", config.lambda_balance, _load_balance_loss(router, top_k, token_mask))
+        if float(getattr(config, "lambda_cluster_locality", 0.0) or 0.0) > 0.0:
+            add("cluster_locality_loss", config.lambda_cluster_locality,
+                _cluster_objective(router, config, token_mask, input_ids))
+        if float(getattr(config, "lambda_iteration_cluster", 0.0) or 0.0) > 0.0:
+            iteration_probs = _recurrent_iteration_probs(model, config)
+            if iteration_probs is not None:
+                add("iteration_cluster_loss", config.lambda_iteration_cluster,
+                    _iteration_cluster_spread(iteration_probs, _cluster_membership(config), token_mask))
         if router.shape[1] > 1:
             mean = router.mean(axis=2)
-            add("temporal_loss", config.lambda_temporal, _temporal_locality_loss(mean))
-            add("locality_loss", config.lambda_router_locality, _router_locality_loss(mean, top_k))
-            if lookahead_probs is not None and config.lambda_lookahead > 0 and config.lookahead_steps > 0:
-                teacher = _lookahead_teacher(_first_iteration_router_probs(model).astype(mx.float32),
-                                             lookahead_probs, config)
-                add("lookahead_loss", config.lambda_lookahead,
-                    _lookahead_supervision_loss(lookahead_probs, teacher, config.lookahead_steps))
-                add("lookahead_topk_loss", config.lambda_lookahead_topk,
-                    _lookahead_topk_hit_loss(lookahead_probs, teacher, config.lookahead_steps, top_k))
-                add("lookahead_union_loss", config.lambda_lookahead_union,
-                    _lookahead_union_loss(lookahead_probs, teacher, config.lookahead_steps, top_k))
+            add("temporal_loss", config.lambda_temporal, _temporal_locality_loss(mean, token_mask))
+            add("locality_loss", config.lambda_router_locality, _router_locality_loss(mean, top_k, token_mask))
+            saved_pairs = _PAIR_SEGMENTS[0]
+            _PAIR_SEGMENTS[0] = _LOOKAHEAD_SEGMENTS[0]     # lookahead keeps its own document rule
+            try:
+                if lookahead_probs is not None and config.lambda_lookahead > 0 and config.lookahead_steps > 0:
+                    source = (_iteration_mean_router_probs(model) if getattr(config, "lookahead_teacher_scope", "first") == "iterations"
+                            else _first_iteration_router_probs(model))
+                    teacher = _lookahead_teacher(source.astype(mx.float32), lookahead_probs, config)
+                    add("lookahead_loss", config.lambda_lookahead,
+                        _lookahead_supervision_loss(lookahead_probs, teacher, config.lookahead_steps, token_mask))
+                    add("lookahead_topk_loss", config.lambda_lookahead_topk,
+                        _lookahead_topk_hit_loss(lookahead_probs, teacher, config.lookahead_steps, top_k, token_mask))
+                    add("lookahead_union_loss", config.lambda_lookahead_union,
+                        _lookahead_union_loss(lookahead_probs, teacher, config.lookahead_steps, top_k, token_mask))
+            finally:
+                _PAIR_SEGMENTS[0] = saved_pairs
             add("anchor_loss", 1, _router_kl_anchor(mean, router_ref, config.lambda_router_anchor))
     if draft_kl is not None:
         add("draft_exit_kl", getattr(config, "draft_exit_kl_coef", 0.0), draft_kl)
@@ -410,13 +729,62 @@ def _chronos_regularized_loss(model, base_loss, lookahead_probs, config, router_
     return loss
 
 
-def _ce_stage_loss(model, input_ids, labels):
-    draft = draft_exit_logits(model, input_ids, model.config)
-    logits, lookahead, _cache = model(input_ids, logits_dtype=mx.float32)
-    base = _masked_lm_loss(logits, labels)
+def lm_ce(model, input_ids, labels, *, aligned: bool = False, need_logits: bool = False, **forward_kw):
+    """Forward + LM cross-entropy: ``(ce, lookahead, logits_or_None)``.
+
+    ``config.ce_chunk_size`` > 0 (and no caller needing the full logits)
+    computes the loss in row chunks from the final hidden state
+    (``chronos.mlx.chunked_ce``): no ``[B, S, V]`` tensor exists.  The value
+    equals the full FP32 path.  ``aligned``: labels already sit on the
+    logits (no causal shift).  ``config.document_masking`` keeps attention inside
+    each packed document (``segments`` from the separator tokens)."""
+    from chronos.mlx.chunked_ce import ce_chunk_for, chunked_lm_loss, chunked_shifted_lm_loss
+    chunk = 0 if need_logits else ce_chunk_for(model.config, int(input_ids.shape[0]) * int(input_ids.shape[1]))
+    if getattr(model.config, "document_masking", False) and "segments" not in forward_kw:
+        from chronos.expert_clusters import segment_ids_mx
+        # Varlen packing: queries attend only inside their own document; the
+        # separator token closes the document it ends (segment_ids rule).
+        forward_kw["segments"] = segment_ids_mx(input_ids)
+    if chunk:
+        hidden, lookahead, _cache = model(input_ids, return_hidden=True, **forward_kw)
+        loss_fn = chunked_lm_loss if aligned else chunked_shifted_lm_loss
+        return loss_fn(hidden, model.head_weight(), labels, chunk=chunk), lookahead, None
+    logits, lookahead, _cache = model(input_ids, logits_dtype=mx.float32, **forward_kw)
+    if aligned:
+        return _masked_lm_loss_aligned(logits, labels), lookahead, logits
+    return _masked_lm_loss(logits, labels), lookahead, logits
+
+
+def _ce_stage_loss(model, input_ids, labels, modality_inputs=None, modality_mask=None):
+    media = {"modality_inputs": modality_inputs, "modality_mask": modality_mask} if modality_inputs else None
+    draft = draft_exit_logits(model, input_ids, model.config, media)
+    base, lookahead, logits = lm_ce(model, input_ids, labels,
+        need_logits=draft is not None, **(media or {}))
     draft_kl = None if draft is None else draft_exit_kl(draft, logits, _shifted_keep(labels))
     return _chronos_regularized_loss(model, base, lookahead, model.config, metrics={"ce": base, "primary": base},
-                                     draft_kl=draft_kl)
+                                     draft_kl=draft_kl, token_mask=real_token_mask(labels), input_ids=input_ids)
+
+
+def _tile_media(batch, copies: int) -> dict:
+    """Model kwargs with the batch's media repeated ``copies`` times along the
+    batch axis (chosen‖rejected pairs, GRPO groups); ``{}`` for text-only."""
+    media = batch.get("modality_inputs") if isinstance(batch, dict) else None
+    if not media:
+        return {}
+    from chronos.mlx.multimodal import _mx
+    tiled = {k: mx.concatenate([_mx(v)] * copies, axis=0) if copies > 1 else _mx(v)
+             for k, v in media.items() if v is not None}
+    mask = batch.get("modality_mask")
+    if mask is not None:
+        mask = _mx(mask, mx.float32)
+        mask = mx.concatenate([mask] * copies, axis=0) if copies > 1 else mask
+    return {"modality_inputs": tiled, "modality_mask": mask}
+
+
+def _frozen_media(frozen, media: dict) -> dict:
+    """A text-only reference/teacher is a valid source for a multimodal
+    student (Torch distill parity): pass media only if it can fuse them."""
+    return media if media and getattr(frozen, "multimodal_fusion", None) is not None else {}
 
 
 def _dpo_stage_loss(model, reference, batch, beta: float = 0.1, router_ref=None):
@@ -427,12 +795,13 @@ def _dpo_stage_loss(model, reference, batch, beta: float = 0.1, router_ref=None)
     m_c = _ids_to_mx(batch["mask_chosen"])
     m_r = _ids_to_mx(batch["mask_rejected"])
     x = mx.concatenate([x_c, x_r], axis=0)
-    logits, lookahead, _cache = model(x, logits_dtype=mx.float32)
+    media = _tile_media(batch, 2)            # chosen and rejected answer the same prompt media
+    logits, lookahead, _cache = model(x, logits_dtype=mx.float32, **media)
     B = x_c.shape[0]
     lp_c = _aligned_sequence_logprob(logits[:B], y_c, m_c)
     lp_r = _aligned_sequence_logprob(logits[B:], y_r, m_r)
     if reference is not None:
-        ref_logits, _ref_lp, _ref_cache = reference(x, logits_dtype=mx.float32)
+        ref_logits, _ref_lp, _ref_cache = reference(x, logits_dtype=mx.float32, **_frozen_media(reference, media))
         ref_c = mx.stop_gradient(_aligned_sequence_logprob(ref_logits[:B], y_c, m_c))
         ref_r = mx.stop_gradient(_aligned_sequence_logprob(ref_logits[B:], y_r, m_r))
         base = -mx.mean(nn.log_sigmoid(beta * ((lp_c - lp_r) - (ref_c - ref_r))))
@@ -449,7 +818,7 @@ def _orpo_stage_loss(model, batch, beta: float = 0.1, lambda_or: float = 0.1, ro
     m_c = _ids_to_mx(batch["mask_chosen"])
     m_r = _ids_to_mx(batch["mask_rejected"])
     x = mx.concatenate([x_c, x_r], axis=0)
-    logits, lookahead, _cache = model(x, logits_dtype=mx.float32)
+    logits, lookahead, _cache = model(x, logits_dtype=mx.float32, **_tile_media(batch, 2))
     B = x_c.shape[0]
     lp_c = _aligned_sequence_logprob(logits[:B], y_c, m_c, average=True)
     lp_r = _aligned_sequence_logprob(logits[B:], y_r, m_r, average=True)
@@ -473,9 +842,13 @@ def _distill_stage_loss(
     alpha: float = 0.7,
     temperature: float = 4.0,
     router_ref=None,
+    modality_inputs=None,
+    modality_mask=None,
 ):
-    logits, lookahead, _cache = model(input_ids, logits_dtype=mx.float32)
-    t_logits, _tlp, _tcache = teacher(teacher_input_ids if teacher_input_ids is not None else input_ids, logits_dtype=mx.float32)
+    media = {"modality_inputs": modality_inputs, "modality_mask": modality_mask} if modality_inputs else {}
+    logits, lookahead, _cache = model(input_ids, logits_dtype=mx.float32, **media)
+    t_logits, _tlp, _tcache = teacher(teacher_input_ids if teacher_input_ids is not None else input_ids,
+                                      logits_dtype=mx.float32, **_frozen_media(teacher, media))
     V = min(logits.shape[-1], t_logits.shape[-1])
     S = min(logits.shape[1], t_logits.shape[1])
     logits_kd = logits[:, :S, :V]
@@ -489,7 +862,9 @@ def _distill_stage_loss(
     kd = (temperature * temperature) * (kd_tok * mask).sum() / mx.maximum(mask.sum(), 1.0)
     ce = _masked_lm_loss(logits, labels)
     base = alpha * kd + (1.0 - alpha) * ce
-    return _chronos_regularized_loss(model, base, lookahead, model.config, router_ref=router_ref, metrics={"primary": kd, "secondary": ce, "ce": ce})
+    return _chronos_regularized_loss(model, base, lookahead, model.config, router_ref=router_ref,
+                                     metrics={"primary": kd, "secondary": ce, "ce": ce},
+                                     token_mask=real_token_mask(labels))
 
 
 def _fit_teacher_input(ids: mx.array, teacher_vocab_size: int) -> mx.array:
@@ -500,7 +875,8 @@ def _grpo_stage_loss(model, reference, batch, beta: float = 0.04, router_ref=Non
     ids = _ids_to_mx(batch["ids"])
     response_mask = mx.array(batch["response_mask"]).astype(mx.float32)
     advantages = mx.array(batch["advantages"]).astype(mx.float32)
-    logits, lookahead, _cache = model(ids, logits_dtype=mx.float32)
+    media = _tile_media(batch, int(ids.shape[0]))   # one prompt's media for every trajectory
+    logits, lookahead, _cache = model(ids, logits_dtype=mx.float32, **media)
     lp_tok = _shifted_token_logprobs(logits, ids)
     mask = response_mask[:, 1:]
     seq_lp = (lp_tok * mask).sum(axis=1) / mx.maximum(mask.sum(axis=1), 1.0)
@@ -508,7 +884,7 @@ def _grpo_stage_loss(model, reference, batch, beta: float = 0.04, router_ref=Non
 
     kl = mx.zeros((), dtype=logits.dtype)
     if reference is not None:
-        ref_logits, _ref_lp, _ref_cache = reference(ids, logits_dtype=mx.float32)
+        ref_logits, _ref_lp, _ref_cache = reference(ids, logits_dtype=mx.float32, **_frozen_media(reference, media))
         ref_lp_tok = mx.stop_gradient(_shifted_token_logprobs(ref_logits, ids))
         log_ratio = ref_lp_tok - lp_tok
         kl = ((mx.exp(log_ratio) - log_ratio - 1.0) * mask).sum() / mx.maximum(mask.sum(), 1.0)
@@ -519,13 +895,17 @@ def _grpo_stage_loss(model, reference, batch, beta: float = 0.04, router_ref=Non
 def _capture_router_ref(model, batch, stage: str) -> mx.array | None:
     if stage in {"pretrain", "grpo"}:
         return None
+    media, media_mask = None, None
     if stage in {"sft", "distill"}:
-        ids = _ids_to_mx(batch[0])
+        raw_ids, _labels, media, media_mask = batch_modalities(batch)
+        ids = _ids_to_mx(raw_ids)
     elif stage in {"dpo", "orpo"}:
         ids = mx.concatenate([_ids_to_mx(batch["x_chosen"]), _ids_to_mx(batch["x_rejected"])], axis=0)
+        tiled = _tile_media(batch, 2)
+        media, media_mask = tiled.get("modality_inputs"), tiled.get("modality_mask")
     else:
         return None
-    _logits, _lookahead, _cache = model(ids)
+    _logits, _lookahead, _cache = model(ids, modality_inputs=media, modality_mask=media_mask)
     router_4d = _collect_router_probs(model)
     if router_4d is None:
         return None
@@ -541,13 +921,38 @@ def _sample_next(logits: mx.array, temperature: float) -> mx.array:
     return mx.random.categorical(mx.log(probs + 1e-9)).astype(mx.int32)
 
 
-def _rollout_one(model, prompt_ids: mx.array, max_gen_len: int, temperature: float, eos_token_id: int | None) -> tuple[mx.array, list[int]]:
+def _encoded_media(model, media: dict) -> dict:
+    """Rollout kwargs with raw image/audio encoded once into ``*_embeds``.
+
+    Every decode step re-applies the fusion (Torch ``generate`` parity); the
+    encoder output is constant, so it is computed once and passed through
+    the pre-encoded path (same tokens, same offsets, same validity)."""
+    if not media:
+        return {}
+    fusion = getattr(model, "multimodal_fusion", None)
+    inputs = dict(media["modality_inputs"])
+    if fusion is not None:
+        from chronos.mlx.multimodal import _mx
+        for name, encoder in (("image", fusion.image_encoder), ("audio", fusion.audio_encoder)):
+            raw = inputs.get(name)
+            if raw is None or encoder is None or inputs.get(f"{name}_embeds") is not None:
+                continue
+            inputs.pop(name)
+            inputs[f"{name}_embeds"] = mx.stop_gradient(encoder(_mx(raw, mx.float32)))
+            mask = inputs.pop(f"{name}_mask", None)
+            if mask is not None:
+                inputs[f"{name}_embeds_mask"] = mask
+    return {"modality_inputs": inputs, "modality_mask": media.get("modality_mask")}
+
+
+def _rollout_one(model, prompt_ids: mx.array, max_gen_len: int, temperature: float, eos_token_id: int | None,
+                 media: dict | None = None) -> tuple[mx.array, list[int]]:
     ids = prompt_ids
     cache = None
     generated: list[int] = []
     for _ in range(max(1, int(max_gen_len))):
         token_in = ids if cache is None else ids[:, -1:]
-        logits, _lookahead, cache = model(token_in, cache=cache)
+        logits, _lookahead, cache = model(token_in, cache=cache, **(media or {}))
         next_id = _sample_next(logits[:, -1, :], temperature).reshape(1, 1)
         mx.eval(next_id)
         tok = int(next_id.item())
@@ -559,7 +964,28 @@ def _rollout_one(model, prompt_ids: mx.array, max_gen_len: int, temperature: flo
     return ids, generated
 
 
-def _build_grpo_batch(model, prompt: str, tokenizer, reward_fn, args) -> dict:
+def _grpo_prompt_media(item, args):
+    """``(prompt_text, media)`` for a GRPO prompt: a string, or the
+    ``{"prompt", "record"}`` dict of ``load_grpo_prompt_records`` (its
+    image/audio resolved here, once per step, with the dataset loaders)."""
+    if not isinstance(item, dict):
+        return str(item), None
+    from chronos.data.flexible_dataset import record_media
+    get = (lambda k, d: getattr(args, k, d)) if args is not None else (lambda _k, d: d)
+    found = record_media(item.get("record") or {}, image_size=int(get("image_size", 224)),
+                         audio_sample_rate=int(get("audio_sample_rate", 16000)),
+                         max_audio_seconds=float(get("max_audio_seconds", 30.0)),
+                         media_error_policy=str(get("media_error_policy", "warn")))
+    if found is None:
+        return str(item["prompt"]), None
+    media, mask = found
+    batched = {k: v.unsqueeze(0) for k, v in media.items()}      # one prompt → batch of 1
+    return str(item["prompt"]), {"modality_inputs": batched, "modality_mask": mask.unsqueeze(0)}
+
+
+def _build_grpo_batch(model, prompt, tokenizer, reward_fn, args) -> dict:
+    prompt, media = _grpo_prompt_media(prompt, args)
+    rollout_media = _encoded_media(model, media)
     rendered = tokenizer.apply_chat_template(
         [{"role": "user", "content": prompt}],
         tokenize=False,
@@ -571,6 +997,7 @@ def _build_grpo_batch(model, prompt: str, tokenizer, reward_fn, args) -> dict:
     temperature = float(getattr(args, "temperature", 1.0) if args is not None else 1.0)
     enc = tokenizer(rendered, return_tensors="pt", truncation=True, max_length=max_seq_len)
     prompt_ids = _ids_to_mx(enc.input_ids)
+    _check_ids_in_vocab(prompt_ids, int(model.config.vocab_size), "grpo prompt (tokenized with the tokenizer bundled in chronos.deps)")
     prompt_len = int(prompt_ids.shape[1])
     trajectories = []
     rewards = []
@@ -581,6 +1008,7 @@ def _build_grpo_batch(model, prompt: str, tokenizer, reward_fn, args) -> dict:
             max_gen_len=max_gen_len,
             temperature=temperature,
             eos_token_id=tokenizer.eos_token_id,
+            media=rollout_media,
         )
         trajectories.append(full_ids)
         rewards.append(float(reward_fn(prompt, response_tokens, tokenizer)))
@@ -599,11 +1027,14 @@ def _build_grpo_batch(model, prompt: str, tokenizer, reward_fn, args) -> dict:
     denom = mx.maximum(mx.sqrt(((adv * adv).mean())), 1e-6)
     advantages = adv / denom
     mx.eval(advantages)
-    return {
+    out = {
         "ids": ids_rows,
         "response_mask": mask_rows,
         "advantages": advantages.tolist(),
     }
+    if media:      # the policy update re-encodes (encoder gradients), tiled per trajectory
+        out.update(media)
+    return out
 
 
 @dataclass
@@ -886,14 +1317,17 @@ def run_mlx_stage(
 
     def loss_fn(m, batch):
         if stage in {"pretrain", "sft"}:
-            ids, labels = batch
+            ids, labels, media, media_mask = batch_modalities(batch)
+            if media:
+                return _ce_stage_loss(m, _ids_to_mx(ids), _ids_to_mx(labels),
+                                      modality_inputs=media, modality_mask=media_mask)
             return _ce_stage_loss(m, _ids_to_mx(ids), _ids_to_mx(labels))
         if stage == "dpo":
             return _dpo_stage_loss(m, reference, batch, beta=beta, router_ref=router_ref)
         if stage == "orpo":
             return _orpo_stage_loss(m, batch, beta=beta, lambda_or=lambda_or, router_ref=router_ref)
         if stage == "distill":
-            ids, labels = batch
+            ids, labels, media, media_mask = batch_modalities(batch)
             ids = _ids_to_mx(ids)
             labels = _ids_to_mx(labels)
             teacher_vocab = int(getattr(getattr(teacher, "config", config), "vocab_size", config.vocab_size))
@@ -906,12 +1340,30 @@ def run_mlx_stage(
                 alpha=alpha,
                 temperature=temperature,
                 router_ref=router_ref,
+                modality_inputs=media,
+                modality_mask=media_mask,
             )
         if stage == "grpo":
             return _grpo_stage_loss(m, reference, batch, beta=beta, router_ref=router_ref)
         raise ValueError(f"unknown MLX stage: {stage}")
 
-    grad_fn = nn.value_and_grad(model, loss_fn)
+    eager_grad = nn.value_and_grad(model, loss_fn)
+    text_grad = None
+    if stage in {"pretrain", "sft"}:
+        # Text batches take the compiled micro step (``CHRONOS_MLX_COMPILE``,
+        # default auto); media batches and other stages stay eager.
+        from chronos.mlx.training.compiled import make_grad_fn
+        text_grad = make_grad_fn(model, lambda m, ids, labels: _ce_stage_loss(m, ids, labels),
+                                 mode=getattr(args, "mlx_compile", None) if args is not None else None,
+                                 log=print)
+
+    def grad_fn(m, batch):
+        if text_grad is not None:
+            ids, labels, media, _mask = batch_modalities(batch)
+            if not media:
+                return text_grad(m, _ids_to_mx(ids), _ids_to_mx(labels))
+        return eager_grad(m, batch)
+
     _emit({
         "event": "start",
         "stage": stage,
@@ -980,9 +1432,11 @@ def run_mlx_stage(
         was_training = model.training
         model.eval()
         try:
-            for ids, labels in validation_loader:
+            for vbatch in validation_loader:
+                ids, labels, media, media_mask = batch_modalities(vbatch)
                 labels = _ids_to_mx(labels)
-                logits, _, _ = model(_ids_to_mx(ids), logits_dtype=mx.float32)
+                logits, _, _ = model(_ids_to_mx(ids), logits_dtype=mx.float32,
+                                     modality_inputs=media, modality_mask=media_mask)
                 ce = _masked_lm_loss(logits, labels)
                 count = mx.sum(labels[:, 1:] != -100)
                 mx.eval(ce, count)
@@ -1004,6 +1458,7 @@ def run_mlx_stage(
         for batch in data_iter:
             if _should_stop():
                 break
+            _check_batch_ids(batch, int(model.config.vocab_size), stage)
             if router_ref is None and stage in {"sft", "dpo", "orpo", "distill"}:
                 router_ref = _capture_router_ref(model, batch, stage)
             train_batch = batch
@@ -1012,7 +1467,7 @@ def run_mlx_stage(
                     break
                 train_batch = _build_grpo_batch(
                     model,
-                    str(batch),
+                    batch if isinstance(batch, dict) else str(batch),
                     tokenizer,
                     reward_fn,
                     args,
@@ -1024,7 +1479,8 @@ def run_mlx_stage(
             # supervised-token count are materialised by one device sync.
             finite_check = _tree_finite_check((loss, grads))
             candidate = _add_grads(pending_grads, grads)
-            n_supervised = mx.sum(_ids_to_mx(train_batch[1])[:, 1:] != -100) if supervised else None
+            n_supervised = (mx.sum(_ids_to_mx(batch_modalities(train_batch)[1])[:, 1:] != -100)
+                            if supervised else None)
             mx.eval(loss, finite_check, candidate, *([n_supervised] if supervised else []))
             steps += 1
             finite = bool(finite_check.item())

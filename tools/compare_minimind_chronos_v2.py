@@ -31,7 +31,11 @@ _REPO = os.path.dirname(_HERE)
 if _REPO not in sys.path:
     sys.path.insert(0, _REPO)
 
-import chronos.deps  # noqa: E402
+from tools._minimind_baseline import require_minimind  # noqa: E402
+
+require_minimind()   # external baseline: --minimind-dir or CHRONOS_MINIMIND_DIR
+
+import chronos.deps  # noqa: E402  (tokenizer path)
 
 from transformers import AutoTokenizer  # noqa: E402
 

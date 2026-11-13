@@ -1,12 +1,9 @@
-import sys
-import chronos.deps  # ensure minimind on sys.path
-
-from model.model_minimind import MiniMindConfig
+from chronos.model.kernel import ChronosBaseConfig
 
 
-class ChronosConfig(MiniMindConfig):
+class ChronosConfig(ChronosBaseConfig):
     """
-    Extends MiniMindConfig with Project Chronos-specific fields:
+    Extends ChronosBaseConfig with Project Chronos-specific fields:
     - lookahead_steps: how many future token steps to predict expert routing for
     - num_shared_experts: experts always resident in VRAM as fallback
     - lambda_balance / lambda_temporal: loss coefficients
@@ -51,6 +48,14 @@ class ChronosConfig(MiniMindConfig):
         self.recurrent_dt_init: float = kwargs.pop("recurrent_dt_init", 0.25)
         self.recurrent_dt_min: float = kwargs.pop("recurrent_dt_min", 0.05)
         self.recurrent_dt_max: float = kwargs.pop("recurrent_dt_max", 1.0)
+        # Map the learned per-group raw parameter to dt in [dt_min, dt_max]:
+        # "clamp" (default) = clip(raw, dt_min, dt_max), the historical behaviour, exact for existing checkpoints,
+        #   but the gradient is 0 below dt_min and on both bounds (a collapsed dt cannot recover).
+        # "sigmoid" = dt_min + (dt_max - dt_min) * sigmoid(raw): gradient positive everywhere, so dt can move back.
+        #   The stored scalar is the logit; the init inverts the sigmoid so dt at step 0 equals recurrent_dt_init.
+        self.recurrent_dt_param: str = str(kwargs.pop("recurrent_dt_param", "clamp"))
+        if self.recurrent_dt_param not in ("clamp", "sigmoid"):
+            raise ValueError("recurrent_dt_param must be 'clamp' or 'sigmoid'")
         # v3 recurrent attention contract (see config_schema.resolve_*):
         # shared_first | per_iteration | first_only.  An explicit legacy
         # ``recurrent_latent_refinement`` without a mode keeps v2 meaning.
@@ -66,6 +71,30 @@ class ChronosConfig(MiniMindConfig):
         if mode not in ("shared_first", "per_iteration", "first_only"):
             raise ValueError(f"unknown recurrent_attention_mode {mode!r}")
         self.recurrent_attention_mode: str = mode
+        # Loop order: ``layer`` repeats each recurrent layer ``depth`` times in a
+        # row (A A B B ...); ``block`` repeats the whole group of layers
+        # (A B A B ...), so iteration 0 is an ordinary depth-1 forward pass.
+        order = str(kwargs.pop("recurrent_order", "layer") or "layer").lower()
+        if order not in ("layer", "block"):
+            raise ValueError(f"unknown recurrent_order {order!r}")
+        self.recurrent_order: str = order
+        # Graded top-k: loop iterations after the first route to this many experts per token
+        # (0 = the full num_experts_per_tok); the shared expert always runs.  Iteration 0 keeps the full top-k.
+        later = int(kwargs.pop("recurrent_later_topk", 0) or 0)
+        if later < 0:
+            raise ValueError(f"recurrent_later_topk must be >= 0, got {later}")
+        self.recurrent_later_topk: int = later
+        # Prefix blocks: in block order, loop iterations after the first run only the first N recurrent layers of
+        # the block (0 = all).  Cost scales with the number of layer calls, so this cuts time and expert pages.
+        # Needs a depth-independent cache (shared_first / first_only): a skipped layer has no later KV slot.
+        later_groups = int(kwargs.pop("recurrent_later_groups", 0) or 0)
+        if later_groups < 0:
+            raise ValueError(f"recurrent_later_groups must be >= 0, got {later_groups}")
+        if later_groups and order != "block":
+            raise ValueError("recurrent_later_groups needs recurrent_order='block'")
+        if later_groups and mode == "per_iteration":
+            raise ValueError("recurrent_later_groups needs recurrent_attention_mode shared_first or first_only")
+        self.recurrent_later_groups: int = later_groups
         # Keep the legacy flag coherent for estimator/export consumers.
         self.recurrent_latent_refinement = mode == "first_only"
         # Execution/training policy for shared recurrent blocks.  ``fixed``
@@ -94,6 +123,58 @@ class ChronosConfig(MiniMindConfig):
         self.optimizer_page_dir: str = kwargs.pop("optimizer_page_dir", "./optimizer_pages")
         self.page_size_mb: int = kwargs.pop("page_size_mb", 64)
         self.activation_checkpointing: bool = kwargs.pop("activation_checkpointing", False)
+        # Long-context training (0.3.2a1).  ce_chunk_size > 0 computes the LM
+        # loss in row chunks from the final hidden state, never building the
+        # [B, S, V] logits (0 = full logits, the historical path).
+        self.ce_chunk_size: int = int(kwargs.pop("ce_chunk_size", 0) or 0)
+        # attention_block_size > 0 runs MLX attention over long multi-row
+        # queries in blocks that read only their visible keys (no [S, T] mask;
+        # SWA costs O(S * window)).  Exact; 0 = one fused call (historical).
+        self.attention_block_size: int = int(kwargs.pop("attention_block_size", 0) or 0)
+        # Packed rows: when True, the temporal / router-locality / lookahead
+        # regularizers drop token pairs that straddle a document separator,
+        # so no routing penalty links two unrelated documents.
+        self.reset_router_at_documents: bool = bool(kwargs.pop("reset_router_at_documents", False))
+        # Packed rows: attention stays inside each document (separator-delimited).
+        self.document_masking: bool = bool(kwargs.pop("document_masking", False))
+        # Which blocks are recomputed when activation_checkpointing is on:
+        # "all", "mla" (global-attention blocks), "swa", "alternate" (every second
+        # block).  Selective policies trade some memory for less recompute time.
+        self.recompute_policy: str = str(kwargs.pop("recompute_policy", "all") or "all").lower()
+        if self.recompute_policy not in ("all", "mla", "swa", "alternate"):
+            raise ValueError(f"unknown recompute_policy {self.recompute_policy!r}")
+        # What activation_checkpointing recomputes: "block" (a whole block) or "mlp" (only the
+        # MoE/FFN of each block: most saved activations, none of the quadratic attention).
+        # MLX only; recompute_policy applies to scope=block.
+        self.recompute_scope: str = str(kwargs.pop("recompute_scope", "block") or "block").lower()
+        if self.recompute_scope not in ("block", "mlp"):
+            raise ValueError(f"unknown recompute_scope {self.recompute_scope!r}")
+        # MLA training with attention_block_size: keep only the latent c_kv and rebuild K and V
+        # per attention block, in both passes (no [B, T, nKV, d] K/V tensors).  Exact.
+        self.mla_upproj_recompute: bool = bool(kwargs.pop("mla_upproj_recompute", False))
+        # MoE sparse dispatch in chunks of this many tokens, each recomputed in the
+        # backward pass, so [N*K, I] expert activations never exist for a whole row
+        # (0 = one dispatch, the historical path).
+        self.moe_chunk_tokens: int = int(kwargs.pop("moe_chunk_tokens", 0) or 0)
+        # Lookahead supervision's own document rule: None follows
+        # reset_router_at_documents; True/False decouples it from the temporal and
+        # router-locality terms.
+        _lrd = kwargs.pop("reset_lookahead_at_documents", None)
+        if isinstance(_lrd, str):      # web UI tri-state: "" follows the router switch
+            _lrd = None if _lrd.strip() == "" else _lrd.strip().lower() in ("1", "true", "yes", "on")
+        self.reset_lookahead_at_documents = None if _lrd is None else bool(_lrd)
+        # Two-stage lookahead decoupling.  True: the LookaheadRouter reads a stop-gradient copy of
+        # the hidden state, so its losses train only the router and add no gradient path
+        # through the backbone (fine-tune the router on a frozen trunk).
+        self.lookahead_input_detach: bool = bool(kwargs.pop("lookahead_input_detach", False))
+        # > 0: the temporal / locality terms keep gradient only for the newer token of a pair
+        # every this-many positions (blocks of that length, the older side is detached), so
+        # no gradient chain crosses a whole row.  0 = full chain (historical).
+        self.temporal_grad_span: int = int(kwargs.pop("temporal_grad_span", 0) or 0)
+        # Long-context RoPE for training: {"type": "yarn"|"linear"|"ntk", "factor": f,
+        # "original_max_position_embeddings": n, ...}; applied after the base init.
+        _rts = kwargs.pop("rope_train_scaling", None)
+        self.rope_train_scaling = dict(_rts) if _rts else None
 
         # Multimodal encoders are native kernel inputs, but are instantiated
         # only for modalities discovered/enabled by the data pipeline.
@@ -195,6 +276,34 @@ class ChronosConfig(MiniMindConfig):
         self.lambda_lookahead_topk: float = kwargs.pop("lambda_lookahead_topk", 0.15)
         self.lambda_lookahead_union: float = kwargs.pop("lambda_lookahead_union", 0.05)
         self.lambda_router_locality: float = kwargs.pop("lambda_router_locality", 0.02)
+        # Cluster-locality constraint: within each ``cluster_locality_window``
+        # tokens (0 = whole sequence) and each virtual layer (every loop
+        # iteration), push routing mass into few expert clusters.  The
+        # partition is ``chronos.expert_clusters.training_clusters`` and is the
+        # one lazy inference pages by (``inference_clusters``: automatic when
+        # λ > 0).  The class default stays 0 so a stored recipe or checkpoint
+        # that predates the field keeps its training objective; every entry
+        # point that creates a new training config (planner, presets, CLI,
+        # task extensions) turns it on at the measured
+        # ``chronos.expert_clusters.DEFAULT_LAMBDA``.
+        self.lambda_cluster_locality: float = kwargs.pop("lambda_cluster_locality", 0.0)
+        self.cluster_locality_clusters: int = kwargs.pop("cluster_locality_clusters", 0)
+        self.cluster_locality_window: int = kwargs.pop("cluster_locality_window", 32)
+        # Unit of the constraint: "window" (fixed windows above) or "segment"
+        # (the batch's documents, read from the tokens' own separators; a
+        # document longer than the window is cut into window-sized parts).
+        # Neither consults labels or task tokens.
+        self.cluster_locality_mode: str = str(kwargs.pop("cluster_locality_mode", "window") or "window")
+        # Iteration-axis cluster locality (0 = off): weight on the total variation between the cluster
+        # distribution of each loop iteration of a token and the mean over its iterations, so every iteration
+        # of a recurrent layer reads the same expert clusters.  Experts inside a cluster stay free to differ.
+        self.lambda_iteration_cluster: float = float(kwargs.pop("lambda_iteration_cluster", 0.0) or 0.0)
+        # Lookahead teacher: routing of loop iteration 0 only ("first") or averaged over every iteration of the
+        # layer ("iterations"), so prefetch predicts the experts the deeper iterations need as well.
+        scope = str(kwargs.pop("lookahead_teacher_scope", "first") or "first").lower()
+        if scope not in ("first", "iterations"):
+            raise ValueError(f"unknown lookahead_teacher_scope {scope!r}")
+        self.lookahead_teacher_scope: str = scope
         # M4: weight on the router KL anchor (alignment stages only).
         # Prevents SFT/DPO/ORPO/GRPO gradients from drifting routing away
         # from the pretrained distribution that the cluster layout was
@@ -213,13 +322,15 @@ class ChronosConfig(MiniMindConfig):
         self.offload_miss_policy_default: str = kwargs.pop("offload_miss_policy_default", "on_demand")
         self.recommended_resident_experts: int | None = kwargs.pop("recommended_resident_experts", None)
         self.offload_working_set_experts: int | None = kwargs.pop("offload_working_set_experts", None)
-        # M7: regularization defaults. MiniMindConfig defaults dropout=0.0
+        # M7: regularization defaults. ChronosBaseConfig defaults dropout=0.0
         # and weight_decay isn't even a config field — both major causes
         # of overfitting on small corpora. Override here.
         kwargs.setdefault("dropout", 0.1)
         # Force MoE on
         kwargs.setdefault("use_moe", True)
         super().__init__(**kwargs)
+        if self.rope_train_scaling is not None:
+            self.rope_scaling = dict(self.rope_train_scaling)
 
         from chronos.config_schema import normalize_model_dimensions
         resolved = normalize_model_dimensions(vars(self))

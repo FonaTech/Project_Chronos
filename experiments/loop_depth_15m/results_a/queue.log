@@ -1,0 +1,9 @@
+[exp] s2_d1 start 01:25:34 load 2.48 3.07 2.95
+{"label": "s2_d1", "depth": 1, "steps": 3265, "wall_s": 1801.2, "valid_ce": 4.387514263391495, "peak_gb": 5.67}
+[exp] r22_d1 start 01:55:50 load 4.13 3.22 3.08
+{"label": "r22_d1", "depth": 1, "steps": 2900, "wall_s": 1801.9, "valid_ce": 4.262730807065964, "peak_gb": 6.15}
+[exp] r30_d1 start 02:26:10 load 2.88 3.27 3.31
+{"label": "r30_d1", "depth": 1, "steps": 2140, "wall_s": 1804.6, "valid_ce": 4.279697630554438, "peak_gb": 6.37}
+[exp] d4dt start 02:56:34 load 3.05 3.41 3.48
+{"label": "d4dt", "depth": 4, "steps": 1280, "wall_s": 1803.5, "valid_ce": 4.877133719623089, "peak_gb": 7.49}
+[exp] QUEUE A DONE

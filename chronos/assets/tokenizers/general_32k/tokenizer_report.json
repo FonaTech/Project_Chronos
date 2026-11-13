@@ -1,0 +1,174 @@
+{
+  "trainer": {
+    "vocab_size": 32768,
+    "char_coverage": 0.9999,
+    "max_alphabet_fraction": 0.4,
+    "min_pair_frequency": 2,
+    "language_temperature": 0.5,
+    "max_token_chars": 16,
+    "min_bucket_share": 0.01,
+    "max_bucket_weight": 4.0
+  },
+  "train_stats": {
+    "bucket_weights": {
+      "latin": 0.823191228144042,
+      "zh": 1.7399979096984903,
+      "other": 4.0
+    },
+    "unique_pretokens": 4924919,
+    "alphabet_size": 8458,
+    "merges": 23990,
+    "final_vocab": 32768
+  },
+  "heldout_eval": {
+    "latin": {
+      "texts": 3731,
+      "bytes_per_token": 3.981,
+      "chars_per_token": 3.956,
+      "tokens_per_word": 1.606,
+      "tokens_per_han": 263.008,
+      "byte_fallback_rate": 0.00017,
+      "roundtrip_failures": 0
+    },
+    "zh": {
+      "texts": 939,
+      "bytes_per_token": 4.347,
+      "chars_per_token": 1.589,
+      "tokens_per_word": 35.946,
+      "tokens_per_han": 0.772,
+      "byte_fallback_rate": 0.00373,
+      "roundtrip_failures": 0
+    },
+    "ko": {
+      "texts": 1,
+      "bytes_per_token": 1.665,
+      "chars_per_token": 0.829,
+      "tokens_per_word": 5.663,
+      "tokens_per_han": 8.731,
+      "byte_fallback_rate": 0.37386,
+      "roundtrip_failures": 0
+    },
+    "cyrillic": {
+      "texts": 1,
+      "bytes_per_token": 2.512,
+      "chars_per_token": 1.268,
+      "tokens_per_word": 9.897,
+      "tokens_per_han": 3.12,
+      "byte_fallback_rate": 0.0,
+      "roundtrip_failures": 0
+    },
+    "ja": {
+      "texts": 1,
+      "bytes_per_token": 2.671,
+      "chars_per_token": 1.333,
+      "tokens_per_word": 10.074,
+      "tokens_per_han": 2.666,
+      "byte_fallback_rate": 0.01567,
+      "roundtrip_failures": 0
+    },
+    "other": {
+      "texts": 1,
+      "bytes_per_token": 1.514,
+      "chars_per_token": 1.478,
+      "tokens_per_word": 2.391,
+      "tokens_per_han": null,
+      "byte_fallback_rate": 0.0,
+      "roundtrip_failures": 0
+    },
+    "vocab_utilization": 0.9042
+  },
+  "sources": {
+    "tokenizer sample: 233,619 chunks (<= 2000 chars) from FineWeb-Edu, Fineweb-Edu-Chinese V2.1, Cosmopedia v2, Wikipedia en, Wikipedia zh": {
+      "files": 1,
+      "records": 233619,
+      "texts_seen": 233619,
+      "sampled": 233619,
+      "buckets": {
+        "latin": 186575,
+        "zh": 46977,
+        "ko": 1,
+        "cyrillic": 40,
+        "ja": 20,
+        "other": 6
+      }
+    }
+  },
+  "elapsed_s": 443.9,
+  "vocab_size": 32768,
+  "fingerprint": "6d4b3b524922f6cd34d674cf10605488d99c4dc97a58699d59466eb4ba396171",
+  "special_tokens": [
+    "<|endoftext|>",
+    "<|im_start|>",
+    "<|im_end|>",
+    "<|pad|>",
+    "<|reserved_0|>",
+    "<|reserved_1|>",
+    "<|reserved_2|>",
+    "<|reserved_3|>",
+    "<|reserved_4|>",
+    "<|reserved_5|>",
+    "<|reserved_6|>",
+    "<|reserved_7|>",
+    "<|reserved_8|>",
+    "<|reserved_9|>",
+    "<|reserved_10|>",
+    "<|reserved_11|>",
+    "<|reserved_12|>",
+    "<|reserved_13|>",
+    "<|reserved_14|>",
+    "<|reserved_15|>",
+    "<|reserved_16|>",
+    "<|reserved_17|>",
+    "<|reserved_18|>",
+    "<|reserved_19|>",
+    "<|reserved_20|>",
+    "<|reserved_21|>",
+    "<|reserved_22|>",
+    "<|reserved_23|>",
+    "<|reserved_24|>",
+    "<|reserved_25|>",
+    "<|reserved_26|>",
+    "<|reserved_27|>",
+    "<|reserved_28|>",
+    "<|reserved_29|>",
+    "<|reserved_30|>",
+    "<|reserved_31|>",
+    "<|reserved_32|>",
+    "<|reserved_33|>",
+    "<|reserved_34|>",
+    "<|reserved_35|>",
+    "<|reserved_36|>",
+    "<|reserved_37|>",
+    "<|reserved_38|>",
+    "<|reserved_39|>",
+    "<|reserved_40|>",
+    "<|reserved_41|>",
+    "<|reserved_42|>",
+    "<|reserved_43|>",
+    "<|reserved_44|>",
+    "<|reserved_45|>",
+    "<|reserved_46|>",
+    "<|reserved_47|>",
+    "<|reserved_48|>",
+    "<|reserved_49|>",
+    "<|reserved_50|>",
+    "<|reserved_51|>",
+    "<|reserved_52|>",
+    "<|reserved_53|>",
+    "<|reserved_54|>",
+    "<|reserved_55|>",
+    "<|reserved_56|>",
+    "<|reserved_57|>",
+    "<|reserved_58|>",
+    "<|reserved_59|>"
+  ],
+  "algorithm": "chronos-bpe-v1",
+  "derived_from": {
+    "fingerprint": "169668b1be29a517fb20f44060cb4a2955cf16dc56f484ceb5376ff2f9a9f37a",
+    "relabelled_ids": [
+      3,
+      63
+    ],
+    "rule": "control ids 3-63 relabelled to the task-neutral layout special_tokens_with(slots=64); ordinary tokens, merges and ids unchanged"
+  }
+}

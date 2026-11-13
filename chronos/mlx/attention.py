@@ -9,7 +9,8 @@ Design notes vs. the PyTorch version:
   boolean mask built here; softmax is FP32 inside the kernel, so the
   low-precision chain has no score/probability casts.
 - SlidingWindow: slice oldest tokens with array indexing, not assignment.
-- mx.compile()-friendly: no Python branches on runtime tensor shapes.
+- RoPE rotation is one shapeless-compiled kernel; the attention path itself
+  is compiled as part of the training step (chronos/mlx/training/compiled.py).
 """
 import math
 from functools import partial
@@ -17,7 +18,10 @@ from functools import partial
 import mlx.core as mx
 import mlx.nn as nn
 
+from chronos.mlx.checkpointing import Dropout as TapeDropout   # replayed under recomputation
+
 from chronos.mlx.kv_quant import kv_read, kv_store
+from chronos.mlx.blockwise_attention import blockwise_attention, blockwise_mla_attention, use_blockwise
 
 
 def _rope_freqs(
@@ -26,15 +30,22 @@ def _rope_freqs(
     base: float = 1_000_000.0,
     rope_scaling: dict | None = None,
 ) -> mx.array:
-    """Precompute MiniMind/PyTorch-compatible RoPE tables [max_len, dim].
+    """Precompute RoPE tables [max_len, dim] matching ``chronos.model.kernel.precompute_freqs_cis``.
 
     The PyTorch path uses duplicated cos/sin columns and rotate-half over the
     whole last dimension. MLX must mirror that exactly for checkpoint parity.
     """
     half = max(dim // 2, 1)
+    kind = str((rope_scaling or {}).get("type", "yarn")).lower()
+    if rope_scaling is not None and kind == "ntk":
+        # NTK-aware: stretch the base so the lowest frequency spans the longer window.
+        base = base * float(rope_scaling.get("factor", 1.0)) ** (dim / max(dim - 2, 1))
     theta = 1.0 / (base ** (mx.arange(0, dim, 2, dtype=mx.float32)[:half] / dim))
     attn_factor = 1.0
-    if rope_scaling is not None:
+    if rope_scaling is not None and kind == "linear":
+        theta = theta / float(rope_scaling.get("factor", 1.0))
+        attn_factor = float(rope_scaling.get("attention_factor", 1.0))
+    elif rope_scaling is not None and kind == "yarn":
         orig_max = float(rope_scaling.get("original_max_position_embeddings", 2048))
         factor = float(rope_scaling.get("factor", 16))
         beta_fast = float(rope_scaling.get("beta_fast", 32.0))
@@ -117,6 +128,15 @@ def _merge_mask(allowed: mx.array | None, mask: mx.array | None, S: int, T: int)
         m = mx.pad(m, [(0, 0)] * (m.ndim - 1) + [(T - m.shape[-1], 0)], constant_values=True)
     m = m[..., -S:, -T:] if m.ndim >= 2 else m
     return m if allowed is None else (allowed & m)
+
+
+def _segment_mask(allowed, segments, S: int, T: int):
+    """AND a document mask (``segments`` ``[B, T]`` ids, queries = last S) into ``allowed``."""
+    if segments is None:
+        return allowed
+    seg = segments[:, -T:]
+    same = seg[:, None, -S:, None] == seg[:, None, None, :]
+    return same if allowed is None else (allowed & same)
 
 
 class _RopeCacheMixin:
@@ -210,11 +230,12 @@ class MLAAttentionMLX(_RopeCacheMixin, nn.Module):
         self.k_rope_proj  = nn.Linear(self.kv_latent_dim, self.n_kv_heads * self.rope_dim, bias=False)
         self.v_proj       = nn.Linear(self.kv_latent_dim, self.n_kv_heads * self.head_dim, bias=False)
         self.o_proj       = nn.Linear(self.n_heads * self.head_dim, H, bias=False)
-        self.attn_dropout = nn.Dropout(config.dropout)
-        self.resid_dropout = nn.Dropout(config.dropout)
+        self.attn_dropout = TapeDropout(config.dropout)
+        self.resid_dropout = TapeDropout(config.dropout)
         self.dropout_p = float(config.dropout)
 
         self._init_rope_cache(config, self.head_dim, rotated_dim=self.rope_dim)
+        object.__setattr__(self, "_block_cfg", config)
         # Inference cache/decode policy (no parameters; see ChronosConfig).
         object.__setattr__(self, "mla_decode", str(getattr(config, "mla_decode", "expanded") or "expanded").lower())
         object.__setattr__(self, "cache_rope", bool(getattr(config, "mla_cache_rope", False)))
@@ -283,14 +304,26 @@ class MLAAttentionMLX(_RopeCacheMixin, nn.Module):
         q_rope = _apply_rope(q_rope, self._cos[past_len:past_len + S], self._sin[past_len:past_len + S])
         scale = 1.0 / math.sqrt(self.head_dim)
         allowed = _merge_mask(_causal_allowed(S, T_full), mask, S, T_full)
+        allowed = _segment_mask(allowed, getattr(self, "_segments", None), S, T_full)
         if self._use_absorbed(S, T_full):
             out = self._absorbed(q_nope, q_rope, c_kv_full, k_rope, scale, allowed)
         else:
-            k_nope = self.k_nope_proj(c_kv_full).reshape(B, T_full, self.n_kv_heads, self.nope_dim)
-            v = self.v_proj(c_kv_full).reshape(B, T_full, self.n_kv_heads, self.head_dim)
+            blk = use_blockwise(self._block_cfg, S, T_full, self.training) if mask is None else 0
+            seg = getattr(self, "_segments", None)
             q = mx.concatenate([q_nope, q_rope], axis=-1).transpose(0, 2, 1, 3)   # [B, nH, S, d]
-            k = mx.concatenate([k_nope, k_rope], axis=-1).transpose(0, 2, 1, 3)   # [B, nKV, T, d]
-            out = self._attend(q, k, v.transpose(0, 2, 1, 3), scale, allowed)
+            if blk and self.training and getattr(self._block_cfg, "mla_upproj_recompute", False):
+                # Keep c_kv only: K and V are rebuilt per block (forward and backward).
+                out = blockwise_mla_attention(q, c_kv_full, k_rope, self.k_nope_proj.weight, self.v_proj.weight,
+                  scale=scale, block=blk, segments=seg, past=T_full - S)
+            else:
+                k_nope = self.k_nope_proj(c_kv_full).reshape(B, T_full, self.n_kv_heads, self.nope_dim)
+                v = self.v_proj(c_kv_full).reshape(B, T_full, self.n_kv_heads, self.head_dim)
+                k = mx.concatenate([k_nope, k_rope], axis=-1).transpose(0, 2, 1, 3)   # [B, nKV, T, d]
+                if blk:
+                    out = blockwise_attention(q, k, v.transpose(0, 2, 1, 3), scale=scale, window=None, block=blk,
+                         segments=seg, past=T_full - S)
+                else:
+                    out = self._attend(q, k, v.transpose(0, 2, 1, 3), scale, allowed)
             out = out.transpose(0, 2, 1, 3)
         out = self.resid_dropout(self.o_proj(out.reshape(B, S, -1)))
         if return_shared_kv:
@@ -338,11 +371,12 @@ class SlidingWindowAttentionMLX(_RopeCacheMixin, nn.Module):
         self.o_proj = nn.Linear(self.n_heads * self.head_dim, H, bias=False)
         self.q_norm = nn.RMSNorm(self.head_dim, eps=config.rms_norm_eps)
         self.k_norm = nn.RMSNorm(self.head_dim, eps=config.rms_norm_eps)
-        self.attn_dropout = nn.Dropout(config.dropout)
-        self.resid_dropout = nn.Dropout(config.dropout)
+        self.attn_dropout = TapeDropout(config.dropout)
+        self.resid_dropout = TapeDropout(config.dropout)
         self.dropout_p = float(config.dropout)
 
         self._init_rope_cache(config, self.head_dim)
+        object.__setattr__(self, "_block_cfg", config)
         object.__setattr__(self, "kv_int8", str(getattr(config, "kv_cache_dtype", "auto") or "auto").lower() == "int8")
         object.__setattr__(self, "kv_group", int(getattr(config, "kv_quant_group_size", 32) or 32))
         # Extra retained entries so self-speculative decoding can roll back up
@@ -388,23 +422,32 @@ class SlidingWindowAttentionMLX(_RopeCacheMixin, nn.Module):
         # attention leaks future tokens into early queries during long prefill.
         q_positions = mx.arange(S)[:, None] + cached_len
         k_positions = mx.arange(T_full)[None, :]
-        allowed = (k_positions <= q_positions) & (k_positions > q_positions-self.window_size)
+        allowed = k_positions <= q_positions
+        if self.window_size is not None:              # None: dense (use_hybrid_attention=False)
+            allowed = allowed & (k_positions > q_positions - self.window_size)
+        allowed = _segment_mask(allowed, getattr(self, "_segments", None), S, T_full)
 
         scale = 1.0 / math.sqrt(self.head_dim)
-        out = self._attend(q.transpose(0, 2, 1, 3), k.transpose(0, 2, 1, 3), v.transpose(0, 2, 1, 3),
-                           scale, _merge_mask(allowed, mask, S, T_full))
+        blk = use_blockwise(self._block_cfg, S, T_full, self.training) if mask is None else 0
+        if blk:
+            out = blockwise_attention(q.transpose(0, 2, 1, 3), k.transpose(0, 2, 1, 3), v.transpose(0, 2, 1, 3),
+                                     scale=scale, window=self.window_size, block=blk,
+                                     segments=getattr(self, "_segments", None), past=cached_len)
+        else:
+            out = self._attend(q.transpose(0, 2, 1, 3), k.transpose(0, 2, 1, 3), v.transpose(0, 2, 1, 3),
+                               scale, _merge_mask(allowed, mask, S, T_full))
         out = out.transpose(0, 2, 1, 3).reshape(B, S, -1)
 
         # Cache stores [B, T, nKV, d] (pre-repeat, pre-transpose)
-        keep = self.window_size + int(self.cache_slack)
+        keep = None if self.window_size is None else self.window_size + int(self.cache_slack)
         if self.kv_int8 and kv_override is None:
             # Quantize only the new tokens (each token once), then evict.
             qk = kv_store(k_new, cache[0] if cache is not None else None, self.kv_group)
             qv = kv_store(v_new, cache[1] if cache is not None else None, self.kv_group)
-            start = max(0, qk.shape[1] - keep)
+            start = 0 if keep is None else max(0, qk.shape[1] - keep)
             new_cache = (qk[:, start:], qv[:, start:], past_len + S)
         else:
-            new_cache = (k[:, -keep:], v[:, -keep:], past_len + S)
+            new_cache = (k, v, past_len + S) if keep is None else (k[:, -keep:], v[:, -keep:], past_len + S)
         if return_shared_kv:
             return self.resid_dropout(self.o_proj(out)), new_cache, (k, v, past_len + S)
         return self.resid_dropout(self.o_proj(out)), new_cache

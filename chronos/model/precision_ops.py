@@ -30,8 +30,8 @@ SDPA_NATIVE_GQA = _TORCH_VERSION >= (2, 5)
 class RMSNorm(nn.Module):
     """RMSNorm with FP32 statistics and a single rounding to the input dtype.
 
-    Parameter name (``weight``) and class-name suffix match minimind's
-    RMSNorm, so checkpoints and the no-decay optimizer grouping are unchanged.
+    Parameter name (``weight``) and the ``RMSNorm`` class-name suffix are the
+    checkpoint and no-decay optimizer-grouping contract.
     """
 
     def __init__(self, dim: int, eps: float = 1e-5):
@@ -48,11 +48,9 @@ class RMSNorm(nn.Module):
 
 
 def rope_tables(dim: int, length: int, base: float, scaling, device) -> tuple[torch.Tensor, torch.Tensor]:
-    """FP32 duplicated cos/sin tables [length, dim] (minimind layout)."""
-    import chronos.deps  # noqa: F401  (minimind on sys.path)
-    from model.model_minimind import precompute_freqs_cis
-    cos, sin = precompute_freqs_cis(dim=int(dim), end=int(length), rope_base=base, rope_scaling=scaling)
-    return cos.to(device=device, dtype=torch.float32), sin.to(device=device, dtype=torch.float32)
+    """FP32 duplicated cos/sin tables [>=length, dim], shared by every layer."""
+    from chronos.model.kernel import rope_tables as _shared
+    return _shared(dim, length, base, scaling, device)
 
 
 def _rotate_half(x: torch.Tensor) -> torch.Tensor:

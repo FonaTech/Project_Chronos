@@ -9,7 +9,6 @@ _repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _repo_root not in sys.path:
     sys.path.insert(0, _repo_root)
 
-import chronos.deps  # auto-bootstrap minimind on sys.path
 
 import torch
 from torch.utils.data import DataLoader, TensorDataset
@@ -597,7 +596,7 @@ def test_train_backend_choice_helpers():
         _train_backend_dropdown_choices,
     )
 
-    with mock.patch("ui.tabs.train_tab.training_available", return_value=["mlx", "mps", "cpu"]):
+    with mock.patch("chronos.workbench.training.training_available", return_value=["mlx", "mps", "cpu"]):
         assert _available_train_backend_choices() == ["auto", "mlx", "mps", "cpu"]
         choices = _train_backend_dropdown_choices("en")
         assert choices[0][1] == "auto"
@@ -891,8 +890,9 @@ def test_torch_inference_loads_base_only_before_lazy_setup():
         def __init__(self, _model, _cfg, ssd_dir=None):
             pass
 
-        def setup_from_state_dict(self, state, warm_expert_ids=None):
+        def setup_from_state_dict(self, state, warm_expert_ids=None, clusters=None):
             captured["setup_keys"] = sorted(state.keys())
+            captured["clusters"] = clusters
 
         def setup(self, warm_expert_ids=None):
             captured["setup_called"] = True
@@ -930,6 +930,8 @@ def test_torch_inference_loads_base_only_before_lazy_setup():
     assert captured["strict"] is False
     assert captured["loaded_keys"] == ["model.embed_tokens.weight"]
     assert any(".mlp.experts." in key for key in captured["setup_keys"])
+    assert captured["clusters"] is None                     # trained without cluster locality: per-expert pages
+    assert stats["paging_resolved"] == "expert"
     assert captured["teardown"] is True
 
 
@@ -1739,6 +1741,55 @@ def test_mlx_training_save_interval(tmp_path):
     assert any(e.get("event") == "save" and e.get("reason") == "final" for e in events)
 
 
+def test_mlx_compiled_step_nan_rolls_back(tmp_path, monkeypatch):
+    """The default (compiled) step: a NaN that comes from the data, not from
+    a swapped Python function, still trips the rollback, and the run keeps
+    compiling afterwards."""
+    if not _mlx_available():
+        return
+    import mlx.core as mx
+    from chronos.model.config import ChronosConfig
+    import chronos.mlx.training.trainer as trainer_mod
+    from chronos.mlx.training import run_mlx_stage
+
+    monkeypatch.delenv("CHRONOS_MLX_COMPILE", raising=False)
+    cfg = ChronosConfig(hidden_size=32, num_hidden_layers=1, num_experts=2,
+                        num_experts_per_tok=1, num_shared_experts=1,
+                        num_attention_heads=2, num_key_value_heads=2,
+                        kv_latent_dim=8, rope_dim=4, max_seq_len=16,
+                        vocab_size=64, use_moe=True,
+                        lambda_balance=0.0, lambda_temporal=0.0,
+                        lambda_lookahead=0.0, lambda_lookahead_topk=0.0)
+    ids = torch.randint(1, cfg.vocab_size, (3, 8), dtype=torch.long)
+    ids[1, 0] = 0                                  # token 0 marks the poisoned batch
+    loader = DataLoader(TensorDataset(ids, ids.clone()), batch_size=1)
+    original_loss = trainer_mod._ce_stage_loss
+
+    def poisoned_loss(model, input_ids, labels):  # traced once; NaN decided by the data
+        loss = original_loss(model, input_ids, labels)
+        return mx.where(mx.any(input_ids == 0), mx.array(float("nan"), dtype=loss.dtype), loss)
+
+    class Args:
+        learning_rate = 1e-4
+        weight_decay = 0.0
+        steps = 3
+        epochs = 1
+        max_seq_len = 8
+        log_interval = 1
+        save_interval = 100
+        accumulation_steps = 1
+        grad_clip = 1.0
+        mlx_rollback_limit = 3
+        mlx_compile = "on"
+
+    monkeypatch.setattr(trainer_mod, "_ce_stage_loss", poisoned_loss)
+    events = []
+    result = run_mlx_stage(stage="pretrain", config=cfg, checkpoint_path=None, save_dir=str(tmp_path),
+                           loader=loader, args=Args(), progress_callback=lambda event: events.append(dict(event)))
+    assert result.rollbacks == 1 and result.checkpoint_saved is True
+    assert any(e.get("event") == "rollback" for e in events)
+
+
 def test_mlx_training_nan_rollback_saves_last_finite(tmp_path, monkeypatch):
     if not _mlx_available():
         return
@@ -1772,6 +1823,7 @@ def test_mlx_training_nan_rollback_saves_last_finite(tmp_path, monkeypatch):
         steps = 3
         epochs = 1
         max_seq_len = 8
+        mlx_compile = "off"   # the NaN is injected by swapping the Python loss, which a compiled graph calls only while tracing
         log_interval = 1
         save_interval = 100
         accumulation_steps = 1
@@ -1953,8 +2005,8 @@ def test_ui_train_session_mlx_topology_mismatch_starts_fresh(tmp_path, monkeypat
         return Result()
 
     monkeypatch.setattr("chronos.mlx.training.run_mlx_stage", fake_run_mlx_stage)
-    monkeypatch.setattr("ui.tabs.train_tab.resolve_training_device", lambda _requested: ("mlx", "mlx"))
-    monkeypatch.setattr("ui.tabs.train_tab._verify_checkpoint_warn", lambda *args, **kwargs: None)
+    monkeypatch.setattr("chronos.workbench.training.resolve_training_device", lambda _requested: ("mlx", "mlx"))
+    monkeypatch.setattr("chronos.workbench.training._verify_checkpoint_warn", lambda *args, **kwargs: None)
 
     session = TrainSession()
     messages = []
@@ -2049,7 +2101,7 @@ def test_train_cleanup_removes_only_gradio_temp_dataset(monkeypatch, tmp_path):
 def test_train_start_merge_preserves_config_weight_decay(monkeypatch, tmp_path):
     from ui.tabs import train_tab
 
-    monkeypatch.setattr(train_tab, "resolve_training_device", lambda requested: ("cpu", "cpu"))
+    monkeypatch.setattr("chronos.workbench.training.resolve_training_device", lambda requested: ("cpu", "cpu"))
     cfg, effective = train_tab._prepare_training_run_config(
         {"weight_decay": 0.123, "cpu_threads": "auto"},
         "pretrain",
@@ -2072,7 +2124,7 @@ def test_train_start_prefers_latest_uploaded_dataset(monkeypatch, tmp_path):
     from types import SimpleNamespace
     from ui.tabs import train_tab
 
-    monkeypatch.setattr(train_tab, "resolve_training_device", lambda requested: ("cpu", "cpu"))
+    monkeypatch.setattr("chronos.workbench.training.resolve_training_device", lambda requested: ("cpu", "cpu"))
     gradio_root = tmp_path / "gradio"
     upload_dir = gradio_root / "upload_hash"
     upload_dir.mkdir(parents=True)
@@ -2129,7 +2181,7 @@ def test_config_input_order_matches_autotune_mapping():
 def test_config_schema_includes_unlimited_max_steps_default():
     from ui.presets import CONFIG_INPUT_ORDER, get_preset, values_in_input_order
 
-    cfg = get_preset("MiniMind-MoE (default)")
+    cfg = get_preset("Chronos-v2 legacy (768H, 6400 vocab)")
     assert cfg["max_steps"] == 0
     idx = CONFIG_INPUT_ORDER.index("max_steps")
     assert values_in_input_order(cfg)[idx] == 0
@@ -2181,7 +2233,7 @@ def test_mlx_training_six_stage_loss_paths(tmp_path):
                         num_experts_per_tok=1, num_shared_experts=1,
                         num_attention_heads=2, num_key_value_heads=2,
                         kv_latent_dim=8, rope_dim=4, max_seq_len=16,
-                        vocab_size=64, use_moe=True,
+                        vocab_size=6400, use_moe=True,
                         lambda_balance=5e-4, lambda_temporal=1e-3,
                         lambda_lookahead=0.1, lambda_lookahead_topk=0.05)
 
@@ -2537,7 +2589,7 @@ def test_generate_api_returns_plain_json_with_chart_records():
         "decode_diagnostics": {"lazy_offload": {"generated_token_ids": [2], "warning": "empty clean decode"}},
         "chart": [{"metric": "Decode speed", "mode": "lazy_offload", "value": 1.0, "unit": "tokens/s"}],
     }
-    with mock.patch("ui.tabs.inference_tab._run_inference_modes", return_value=fake_raw):
+    with mock.patch("chronos.workbench.inference._run_inference_modes", return_value=fake_raw):
         out = mod.generate_api({}, "cpu", "offload", "", "hello", 1, 0.1, False, "1.00", False)
 
     assert isinstance(out, dict)

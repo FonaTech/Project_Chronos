@@ -5,14 +5,16 @@ running GPU job keeps its throughput), then reports:
 
 * held-out CE / perplexity on the phase's fixed validation windows;
 * routing balance and recurrent-depth statistics on those windows;
-* greedy en→zh / zh→en continuations on FLORES+ dev with BLEU / chrF;
+* optional task probes: ``inspect_run(..., probes={"name": fn})`` stores
+  ``fn(spec, model, phase_name, samples)`` under ``report[name]`` (a task
+  extension supplies them; the kernel has none);
 
 and optionally exports a serveable ``.pth`` + ``.config.json`` (with the
 run's own tokenizer recorded) for ``chronos serve``.  The report is written to
 ``<run>/inspections/<phase>_s<step>.json`` so the monitor can show it.
 
-    python -m chronos.mlx.training.inspect_checkpoint --run-dir runs/enzh_50m_v1 \
-        --export serve_models/chronos_enzh_pretrain_s300.pth
+    python -m chronos.mlx.training.inspect_checkpoint --run-dir runs/my_run \
+        --export serve_models/my_run_pretrain.pth
 """
 from __future__ import annotations
 
@@ -53,11 +55,13 @@ def _phase(spec: dict, state: dict) -> dict:
 
 
 def held_out(spec, config, model, phase, n_batches: int = 8) -> dict:
-    from chronos.mlx.training.longrun import PretrainSource, SFTSource, recurrent_metrics, routing_metrics
+    from chronos.mlx.training.longrun import (PretrainSource, RoutingCounts, SFTSource, recurrent_metrics,
+                                              token_mask_for)
     from chronos.mlx.training.trainer import _collect_router_probs
     source = (PretrainSource(spec["shards_dir"], phase["seq_len"], spec["seed"]) if phase["name"] == "pretrain"
               else SFTSource(spec["shards_dir"], spec["seed"]))
     total, count, extra = 0.0, 0, {}
+    routes, top_k = RoutingCounts(), int(config.num_experts_per_tok)
     for i, (ids, labels) in enumerate(source.valid_batches(n_batches, phase["micro_tokens"])):
         logits, _, _ = model(mx.array(ids, dtype=mx.int32), logits_dtype=mx.float32)
         lb = mx.array(labels, dtype=mx.int32).reshape(-1)
@@ -67,11 +71,12 @@ def held_out(spec, config, model, phase, n_batches: int = 8) -> dict:
         s, n = (ce * mask).sum(), mask.sum()
         mx.eval(s, n)
         total, count = total + float(s.item()), count + int(n.item())
+        routes.add(_collect_router_probs(model), top_k, token_mask_for(labels))   # real tokens, every batch
         if i == 0:
-            extra = {**routing_metrics(_collect_router_probs(model), int(config.num_experts_per_tok)),
-                     **recurrent_metrics(getattr(model, "last_recurrent_state", None))}
+            extra = recurrent_metrics(getattr(model, "last_recurrent_state", None))
     ce = total / max(count, 1)
-    return {"valid_ce": round(ce, 4), "valid_ppl": round(math.exp(min(ce, 30)), 2), "valid_tokens": count, **extra}
+    return {"valid_ce": round(ce, 4), "valid_ppl": round(math.exp(min(ce, 30)), 2), "valid_tokens": count,
+            **routes.summary(top_k), **extra}
 
 
 def greedy(model, tok, prompt_ids: list[int], stop_ids: set[int], limit: int) -> list[int]:
@@ -83,47 +88,6 @@ def greedy(model, tok, prompt_ids: list[int], stop_ids: set[int], limit: int) ->
             break
         out.append(nxt)
         logits, _, cache = model(mx.array([[nxt]], dtype=mx.int32), cache=cache)
-    return out
-
-
-def translation_probe(spec, model, phase_name: str, n: int) -> dict:
-    """Pretrain checkpoints are probed with the ``<|en|>…<|zh|>`` format they
-    were trained on; SFT checkpoints with the chat prompt."""
-    import sacrebleu
-    from tokenizers import Tokenizer
-    from chronos.data.corpus.evalsets import load_eval_sets
-    from chronos.data.corpus.shards import SFT_PROMPT_EN_ZH
-    tok = Tokenizer.from_file(os.path.join(spec["tokenizer_dir"], "tokenizer.json"))
-    tid = tok.token_to_id
-    stop = {tid(t) for t in ("<|endoftext|>", "<|im_end|>", "<|en|>", "<|zh|>")}
-    raw = (spec.get("extra") or {}).get("raw_root")
-    pairs = load_eval_sets(raw, ["flores_dev"]).get("flores_dev", [])[:n] if raw else []
-    if not pairs:
-        return {"probe": "skipped: FLORES+ dev not found"}
-    out, t0 = {}, time.monotonic()
-    directions = [("en_zh", 0, 1)] + ([("zh_en", 1, 0)] if phase_name == "pretrain" else [])
-    for name, si, ti in directions:
-        hyps, samples = [], []
-        for pair in pairs:
-            src, ref = pair[si], pair[ti]
-            if phase_name == "pretrain":
-                tags = ("<|en|>", "<|zh|>") if name == "en_zh" else ("<|zh|>", "<|en|>")
-                prompt = [tid(tags[0])] + tok.encode(src, add_special_tokens=False).ids + [tid(tags[1])]
-            else:
-                text = f"<|im_start|>user\n{SFT_PROMPT_EN_ZH}{src}<|im_end|>\n<|im_start|>assistant\n"
-                prompt = tok.encode(text, add_special_tokens=False).ids
-            src_len = len(tok.encode(src, add_special_tokens=False).ids)
-            hyp = tok.decode(greedy(model, tok, prompt, stop, int(1.6 * src_len) + 16), skip_special_tokens=True)
-            hyps.append(hyp)
-            if len(samples) < 6:
-                samples.append({"src": src, "ref": ref, "hyp": hyp})
-        refs = [p[ti] for p in pairs]
-        bleu = sacrebleu.corpus_bleu(hyps, [refs], tokenize="zh" if ti == 1 else "13a")
-        chrf = sacrebleu.corpus_chrf(hyps, [refs])
-        out[name] = {"n": len(pairs), "bleu": round(bleu.score, 2), "chrf": round(chrf.score, 2),
-                     "samples": samples}
-    out["probe_s"] = round(time.monotonic() - t0, 1)
-    out["probe_set"] = "flores_dev"
     return out
 
 
@@ -140,7 +104,7 @@ def export(model, config, spec, out_path: str, stage: str) -> str:
 
 
 def inspect_run(run_dir: str, *, samples: int = 24, n_batches: int = 8, export_path: str | None = None,
-                device: str = "cpu") -> dict:
+                device: str = "cpu", probes: dict | None = None) -> dict:
     t0 = time.monotonic()
     spec, config, model, state = load_run_model(run_dir, device=device)
     phase = _phase(spec, state)
@@ -150,8 +114,9 @@ def inspect_run(run_dir: str, *, samples: int = 24, n_batches: int = 8, export_p
               "precision": model._chronos_precision.as_dict(),
               "train_dtype": spec.get("dtype"), "load_s": round(time.monotonic() - t0, 1)}
     report["held_out"] = held_out(spec, config, model, phase, n_batches)
-    if samples:
-        report["translation"] = translation_probe(spec, model, phase["name"], samples)
+    for name, probe in (probes or {}).items():
+        if samples:
+            report[name] = probe(spec, model, phase["name"], samples)
     if export_path:
         report["exported"] = export(model, config, spec, export_path, phase["name"])
     report["elapsed_s"] = round(time.monotonic() - t0, 1)
@@ -165,7 +130,7 @@ def inspect_run(run_dir: str, *, samples: int = 24, n_batches: int = 8, export_p
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--run-dir", required=True)
-    p.add_argument("--samples", type=int, default=24, help="FLORES+ dev sentences per direction (0 = skip)")
+    p.add_argument("--samples", type=int, default=24, help="samples per task probe (0 = skip; no probes here)")
     p.add_argument("--batches", type=int, default=8, help="validation micro-batches")
     p.add_argument("--export", default=None, help="write a serveable .pth here")
     p.add_argument("--device", default="cpu", choices=("cpu", "gpu"))

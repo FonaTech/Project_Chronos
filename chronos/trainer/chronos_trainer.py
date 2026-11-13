@@ -1,6 +1,3 @@
-import sys
-import chronos.deps  # ensure minimind on sys.path
-
 import os
 import time
 import torch
@@ -8,10 +5,7 @@ import torch.nn.functional as F
 from torch import optim
 from torch.utils.data import DataLoader
 
-from model.model_minimind import MiniMindConfig
-from trainer.trainer_utils import (
-    Logger, is_main_process, lm_checkpoint, setup_seed,
-)
+from chronos.model.kernel import Logger, is_main_process, save_resume_state, setup_seed
 from chronos.trainer.optim_utils import get_lr  # warmup→cosine override
 from chronos.data.flexible_dataset import (
     FlexibleDataset as PretrainDataset,
@@ -39,7 +33,7 @@ class ChronosTrainer:
     """
     Training orchestrator for Project Chronos.
 
-    Wraps minimind's training loop and injects:
+    Pretraining loop (native kernel utilities) that injects:
     - temporal_locality_loss via λ2 * ||E_t - E_{t-1}||^2
     - load_balance_loss via λ1 (already computed inside ChronosMOEFeedForward)
     - LookaheadRouter accuracy logging
@@ -107,7 +101,7 @@ class ChronosTrainer:
 
             loss = chronos_loss_term(
                 self.model, ce_loss, lookahead_probs, self.config,
-                aux_loss=aux_loss,
+                aux_loss=aux_loss, input_ids=input_ids, labels=labels,
             )
 
             # Standalone lookahead loss value for logging
@@ -191,10 +185,11 @@ class ChronosTrainer:
             self.config,
             stage="chronos",
         )
-        lm_checkpoint(
-            self.config, weight='chronos', model=self.model,
-            optimizer=self.optimizer, scaler=self.scaler,
-            epoch=epoch, step=step, wandb=wandb,
-            save_dir=self.args.save_dir,
+        # Resume state only; the release checkpoint above keeps its dtype
+        # policy (BF16 stays BF16) and is not rewritten here.
+        save_resume_state(
+            f'{self.args.save_dir}/chronos_{self.config.hidden_size}_moe_resume.pth',
+            model=self.model, optimizer=self.optimizer, epoch=epoch, step=step,
+            scaler=self.scaler, wandb_id=getattr(wandb, 'id', None) if wandb else None,
         )
         self.model.train()

@@ -62,7 +62,8 @@ def encode(tokenizer, text: str, fmt: str) -> list[int]:
 
 
 # ---- runners: each returns (decode(prompt, limit, speculative) -> (tokens, seconds, stats), info) ----------
-def mlx_runner(cfg, ckpt, *, lazy: bool, ratio: float, device: str, workdir: str, dtype: str = "auto"):
+def mlx_runner(cfg, ckpt, *, lazy: bool, ratio: float, device: str, workdir: str, dtype: str = "auto",
+    paging: str = "expert"):
     import mlx.core as mx
     from ui.tabs import inference_tab as it
     from chronos.model.checkpoint import load_checkpoint_state_dict, load_state_dict_controlled
@@ -88,7 +89,11 @@ def mlx_runner(cfg, ckpt, *, lazy: bool, ratio: float, device: str, workdir: str
         cache_dir = os.path.join(workdir, "mlx_expert_cache")
         engine = ChronosMLXInferenceEngine(model, cfg, ssd_dir=cache_dir)
         if not engine.store.attach_cluster_manifest(cache_dir):
-            it._rebuild_mlx_lazy_cache(engine.store, cache_dir, None, weights)
+            # Page layout: "expert" (one page per expert, the historical benchmark layout), or "cluster" / "auto"
+            # (the training partition, what the inference engine uses for cluster-trained checkpoints).
+            from chronos.expert_clusters import inference_clusters
+            clusters = None if paging == "expert" else inference_clusters(cfg, paging)
+            it._rebuild_mlx_lazy_cache(engine.store, cache_dir, None, weights, clusters=clusters)
         warm = int(budget["effective_vram_expert_budget"])
         engine.store.warm_up(list(range(min(int(cfg.num_experts), warm))))
     else:
@@ -212,7 +217,7 @@ def main(argv=None) -> int:
     ap.add_argument("--checkpoint", required=True)
     ap.add_argument("--prompts", required=True, help="jsonl (use --field) or one prompt per line")
     ap.add_argument("--field", default="en")
-    ap.add_argument("--format", default="tags:<|en|>,<|zh|>", help="raw | tags:<a>,<b>")
+    ap.add_argument("--format", default="raw", help="raw | tags:<a>,<b> (wrap each prompt in two control tokens)")
     ap.add_argument("--eos", default="<|endoftext|>")
     ap.add_argument("--n", type=int, default=24)
     ap.add_argument("--max-new", type=int, default=128)

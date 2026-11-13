@@ -10,7 +10,9 @@ class RecurrentControllerMLX(nn.Module):
         h, depth, groups = config.hidden_size, config.recurrent_depth, config.recurrent_groups
         self.loop_embeddings = mx.zeros((depth, h))
         self.group_embeddings = mx.zeros((groups, h))
-        self.step_sizes = mx.full((groups,), config.recurrent_dt_init)
+        from chronos.model.recurrent import _dt_raw_init   # same raw->dt init as Torch (inverts sigmoid)
+        self.step_sizes = mx.full((groups,), _dt_raw_init(str(getattr(config, "recurrent_dt_param", "clamp")),
+            config.recurrent_dt_init, config.recurrent_dt_min, config.recurrent_dt_max))
         self.halting_norm = nn.RMSNorm(h, eps=config.rms_norm_eps)
         self.halting_head = nn.Linear(h, 1)
         self.halting_head.weight = mx.zeros((1, h))
@@ -31,6 +33,12 @@ class RecurrentControllerMLX(nn.Module):
                 or self.training_progress >= cfg.depth_schedule_warmup_fraction)
 
     def execution_depth(self, cfg, training):
+        pinned = getattr(self, "_pinned_depth", None)
+        if pinned is not None and training:
+            return pinned          # sampled once per step by a compiled training step
+        step_depth = getattr(self, "_step_depth", None)
+        if step_depth is not None and training:
+            return step_depth      # one depth per optimizer step; all micro-batches of the step share it
         ceiling = cfg.recurrent_depth if training else cfg.max_inference_depth
         if not training or cfg.recurrent_strategy == "fixed" or cfg.recurrent_depth_jitter == 0:
             return ceiling
@@ -44,7 +52,15 @@ class RecurrentControllerMLX(nn.Module):
         return x + self.loop_embeddings[min(step, self.loop_embeddings.shape[0]-1)][None, None, :] + self.group_embeddings[group][None, None, :]
 
     def contract(self, before, after, group, cfg):
-        dt = mx.clip(self.step_sizes[group], cfg.recurrent_dt_min, cfg.recurrent_dt_max).astype(after.dtype)
+        raw = self.step_sizes[group]
+        lo, hi = cfg.recurrent_dt_min, cfg.recurrent_dt_max
+        if str(getattr(cfg, "recurrent_dt_param", "clamp")) == "sigmoid":
+            # dt = lo + (hi-lo)*sigmoid(raw); gradient positive everywhere, no dead zone (matches Torch).
+            dt = (lo + (hi - lo) * mx.sigmoid(raw)).astype(after.dtype)
+        else:
+            # Value of mx.clip, but gradient 1 on the bounds too (torch.clamp does; mx.clip gives 0 at x == lo or hi).
+            inside = (raw >= lo) & (raw <= hi)
+            dt = mx.where(inside, raw, mx.stop_gradient(mx.clip(raw, lo, hi))).astype(after.dtype)
         return before + dt*(after-before)
 
     def halt_probability(self, x):

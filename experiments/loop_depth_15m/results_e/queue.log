@@ -1,0 +1,5 @@
+[exp] b4dt1g2 start 12:47:42 load 2.90 3.06 3.09 src /tmp/chronos_src_E
+{"label": "b4dt1g2", "depth": 4, "steps": 2450, "wall_s": 1802.8, "valid_ce": 4.455811843276024, "peak_gb": 6.57}
+[exp] b8dt1g2 start 13:18:06 load 3.34 3.13 3.03 src /tmp/chronos_src_E
+{"label": "b8dt1g2", "depth": 8, "steps": 1825, "wall_s": 1801.7, "valid_ce": 4.585830681025982, "peak_gb": 7.74}
+[exp] QUEUE E DONE

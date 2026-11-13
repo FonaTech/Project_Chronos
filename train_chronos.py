@@ -12,13 +12,12 @@ Usage:
         --device cuda:0
 """
 import sys
-import chronos.deps  # ensure minimind on sys.path
 
 import argparse
 from torch.utils.data import DataLoader
 
 from chronos.backend import resolve_training_device
-from trainer.trainer_utils import setup_seed, Logger
+from chronos.model.kernel import Logger, setup_seed
 from chronos.data.flexible_dataset import (
     FlexibleDataset as PretrainDataset,
     MultimodalStreamingDataset,
@@ -56,6 +55,12 @@ def parse_args():
     p.add_argument("--lambda_lookahead_topk", type=float, default=0.15)
     p.add_argument("--lambda_lookahead_union", type=float, default=0.05)
     p.add_argument("--lambda_router_locality", type=float, default=0.02)
+    p.add_argument("--lambda_cluster_locality", type=float, default=0.3,
+                   help="cluster-locality constraint weight (default 0.3, measured; 0 = off)")
+    p.add_argument("--cluster_locality_clusters", type=int, default=0,
+                   help="expert clusters for the constraint (0 = ceil(E / 2k))")
+    p.add_argument("--cluster_locality_window", type=int, default=32,
+                   help="tokens per locality window (0 = whole sequence)")
     p.add_argument("--fallback_mask_prob", type=float, default=0.08,
                    help="Randomly mask routed experts during training to teach the shared offload fallback.")
     # VRAM budget

@@ -36,7 +36,6 @@ _BOOT_CPU_THREADS = configure_cpu_thread_env(
 from ui.gradio_compat import gr
 from ui.event_contract import UIEventContract, event_contract_app_kwargs
 
-import chronos.deps  # auto-bootstrap minimind
 from ui.i18n import (
     LANGUAGE_CHOICES, DEFAULT_LANGUAGE,
     t, set_current_lang, build_language_update, get_registered_components,
@@ -78,7 +77,7 @@ def _hero_html() -> str:
         "<span class='app-meta-chip'>Apache-2.0</span>"
         "<span class='app-meta-chip'>Python 3.10+</span>"
         "<span class='app-meta-chip'>PyTorch 2.1+</span>"
-        "<span class='app-meta-chip'><a href='https://github.com/jingyaogong/minimind' target='_blank'>MoE kernel: minimind</a></span>"
+        "<span class='app-meta-chip'>Kernel: Chronos native</span>"
         "</div>"
         "</div>"
     )

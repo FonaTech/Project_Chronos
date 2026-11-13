@@ -31,8 +31,7 @@ import torch.nn.functional as F
 from torch import optim
 from torch.utils.data import DataLoader
 
-import chronos.deps  # noqa
-from trainer.trainer_utils import Logger  # type: ignore
+from chronos.model.kernel import Logger
 
 from chronos.model.config import ChronosConfig
 from chronos.model.model_chronos import ChronosForCausalLM
@@ -315,3 +314,28 @@ def load_grpo_prompts(data_path: str, max_prompts: int = None) -> List[str]:
             if max_prompts and len(prompts) >= max_prompts:
                 break
     return prompts
+
+
+def load_grpo_prompt_records(data_path: str, max_prompts: int = None) -> list:
+    """Like ``load_grpo_prompts``, but a record that carries image/audio
+    (``image``/``audio``/``*_embeds`` or a ``modalities`` dict) is returned as
+    ``{"prompt": str, "record": dict}`` so the trainer can resolve its media
+    lazily, once per step; text-only records stay plain strings."""
+    import json
+    from chronos.data.flexible_dataset import detect_modalities
+    out = []
+    with open(data_path, encoding="utf-8") as f:
+        for line in f:
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            msgs = row.get("conversations") or row.get("messages") or []
+            prompt = next((m.get("content") for m in msgs if m.get("role") == "user"), None)
+            if prompt is None and isinstance(row.get("prompt"), str):
+                prompt = row["prompt"]
+            if prompt is None:
+                continue
+            out.append({"prompt": prompt, "record": row} if detect_modalities(row) else prompt)
+            if max_prompts and len(out) >= max_prompts:
+                break
+    return out

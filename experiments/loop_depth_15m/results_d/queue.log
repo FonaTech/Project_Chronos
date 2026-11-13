@@ -1,0 +1,9 @@
+[exp] b4dt1ic start 10:45:05 load 14.53 21.46 17.88 src /tmp/chronos_src_C
+{"label": "b4dt1ic", "depth": 4, "steps": 1875, "wall_s": 1802.8, "valid_ce": 4.545797437429428, "peak_gb": 7.43}
+[exp] d4dt1 start 11:15:38 load 2.97 3.18 5.32 src /tmp/chronos_src_C
+{"label": "d4dt1", "depth": 4, "steps": 1905, "wall_s": 1800.1, "valid_ce": 4.540810704231262, "peak_gb": 7.49}
+[exp] b4dtf start 11:46:23 load 3.95 3.60 3.66 src /tmp/chronos_src_C
+{"label": "b4dtf", "depth": 4, "steps": 1940, "wall_s": 1803.2, "valid_ce": 4.54314561933279, "peak_gb": 7.43}
+[exp] b8dt1 start 12:16:52 load 3.18 3.41 3.51 src /tmp/chronos_src_C
+{"label": "b8dt1", "depth": 8, "steps": 1255, "wall_s": 1801.1, "valid_ce": 4.8213412538170815, "peak_gb": 10.37}
+[exp] QUEUE D DONE
