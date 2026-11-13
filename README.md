@@ -8,6 +8,35 @@
 
 [中文文档](README_zh.md)
 
+![Chronos forward stack: embedding, prelude, recurrent region and coda, with separate input and output lanes](docs/assets/arch/chronos_forward_stack.png)
+
+*Chronos forward stack. The embedding lookup feeds a prelude of $P$ blocks, a recurrent region of $G$ blocks run $R$ times with conditioning, and a coda of $C$ blocks, then a tied LM head. Prefetch, lookahead and expert residency hang off the recurrent region.*
+
+---
+
+## Documentation
+
+**Start here:** [docs/README.md](docs/README.md) is the full index with reading routes and figures.
+
+| Area | Chapter | What it answers |
+|---|---|---|
+| Entry point | [OVERVIEW.md](docs/OVERVIEW.md) | How do computation, routing and residency connect? |
+| Entry point | [KERNEL_ARCHITECTURE.md](docs/KERNEL_ARCHITECTURE.md) | What is the implementation-exact end-to-end graph? |
+| Reference | [SYMBOLS.md](docs/SYMBOLS.md) | Axes, units and configuration fields. |
+| Reference | [THEORY.md](docs/THEORY.md) | Stability, information and resource derivations with assumptions. |
+| Model | [ATTENTION.md](docs/ATTENTION.md) | MLA/SWA projection, caching, reconstruction and masking. |
+| Model | [MOE_ROUTING.md](docs/MOE_ROUTING.md) | Dispatch, shared averaging, fallback and regularizers. |
+| Model | [CLUSTER_LOCALITY.md](docs/CLUSTER_LOCALITY.md) | Fixed-partition mutual-information objective. |
+| Model | [LOOKAHEAD.md](docs/LOOKAHEAD.md) | Future-token expert-distribution prediction and training. |
+| Model | [LOOP_DEPTH.md](docs/LOOP_DEPTH.md) | Matched-step and matched-time recurrent-depth experiments. |
+| Runtime | [LAZY_EXPERTS.md](docs/LAZY_EXPERTS.md) | Expert-page loading, admission and materialization. |
+| Runtime | [RESIDENCY.md](docs/RESIDENCY.md) | Eviction policies and residency counters. |
+| Runtime | [SPEC_DECODE.md](docs/SPEC_DECODE.md) | Draft/verify sampling correctness and cost. |
+| Runtime | [LONG_CONTEXT.md](docs/LONG_CONTEXT.md) | Chunked loss, blockwise attention and recomputation. |
+| Evidence | [REPRODUCIBILITY.md](docs/REPRODUCIBILITY.md) | Evidence and controls required for a claim. |
+| Serving | [vllm_integration.md](docs/vllm_integration.md) | Serving interfaces and integration scaffold. |
+| 中文 | [READING_GUIDE_ZH.md](docs/READING_GUIDE_ZH.md) | 中文阅读路线、核心机制与符号导引。 |
+
 ---
 
 ## Why reactive MoE offload breaks down
