@@ -1,0 +1,14 @@
+[exp] depth 1 start 22:00:51
+[exp] load: 3.30 3.40 3.25
+{"depth": 1, "steps": 3170, "wall_s": 1802.6, "valid_ce": 4.3785764798521996, "peak_gb": 5.67}
+[exp] depth 1 end 22:31:09
+[exp] depth 8 start 22:31:09
+[exp] load: 4.02 3.96 3.72
+{"depth": 8, "steps": 1175, "wall_s": 1803.8, "valid_ce": 4.824604205787182, "peak_gb": 10.16}
+[exp] depth 8 end 23:01:52
+[exp] depth 4 start 23:01:52
+[exp] load: 3.43 3.55 3.61
+{"depth": 4, "steps": 1855, "wall_s": 1804.6, "valid_ce": 4.586233034729958, "peak_gb": 7.49}
+[exp] depth 4 end 23:32:24
+[exp] depth 6 start 23:32:24
+[exp] load: 5.25 4.23 3.83

@@ -1,0 +1,7 @@
+[exp] b4sig start 22:29:34 load 2.44 2.64 2.80 src /tmp/chronos_release_dev
+{"label": "b4sig", "depth": 4, "steps": 1830, "wall_s": 1803.0, "valid_ce": 4.542033322155476, "peak_gb": 7.43}
+[exp] b8sig start 23:00:04 load 2.79 2.86 2.79 src /tmp/chronos_release_dev
+{"label": "b8sig", "depth": 8, "steps": 1185, "wall_s": 1803.9, "valid_ce": 5.148922510445118, "peak_gb": 10.35}
+[exp] b4plc start 23:30:43 load 3.39 3.49 3.25 src /tmp/chronos_release_dev
+{"label": "b4plc", "depth": 4, "steps": 1600, "wall_s": 1800.3, "valid_ce": 4.68518104404211, "peak_gb": 7.43}
+[exp] QUEUE K DONE

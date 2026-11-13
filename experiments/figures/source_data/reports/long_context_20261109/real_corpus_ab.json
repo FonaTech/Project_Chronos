@@ -1,0 +1,150 @@
+{
+ "date": "2026-11-09",
+ "machine": "Apple M5 Max, 128 GB, MLX 0.32.4, bfloat16",
+ "method": "real en-zh shards (Translation Training Data/shards_v1), production 50M model_config, random init, same seed and data order per arm, 3-6 optimizer steps, valid CE on 6 fixed validation windows. long = attention_block_size 1024 + ce_chunk_size 1024 + moe_chunk_tokens 8192. Few steps: the CE column shows equal quality between arms, not final model quality.",
+ "real_corpus": [
+  {
+   "arm": "base",
+   "seq": 8192,
+   "tok_per_s": 8884,
+   "peak_gb": 40.64,
+   "valid_ce": 8.4561
+  },
+  {
+   "arm": "long",
+   "seq": 8192,
+   "tok_per_s": 19466,
+   "peak_gb": 7.51,
+   "valid_ce": 8.4585
+  },
+  {
+   "arm": "base",
+   "seq": 16384,
+   "tok_per_s": 1877,
+   "peak_gb": 141.5,
+   "valid_ce": 8.7118
+  },
+  {
+   "arm": "long",
+   "seq": 16384,
+   "tok_per_s": 15226,
+   "peak_gb": 13.81,
+   "valid_ce": 8.7121
+  },
+  {
+   "arm": "long",
+   "seq": 32768,
+   "tok_per_s": 8792,
+   "peak_gb": 27.01,
+   "valid_ce": 8.8754
+  },
+  {
+   "arm": "long+recompute_block",
+   "seq": 32768,
+   "tok_per_s": 7158,
+   "peak_gb": 20.16,
+   "valid_ce": 8.8757
+  },
+  {
+   "arm": "long+recompute_mlp",
+   "seq": 32768,
+   "tok_per_s": 7794,
+   "peak_gb": 25.64,
+   "valid_ce": 8.8756
+  },
+  {
+   "arm": "long",
+   "seq": 65536,
+   "tok_per_s": 3690,
+   "peak_gb": 54.64,
+   "valid_ce": 9.0575
+  },
+  {
+   "arm": "long+recompute_block",
+   "seq": 65536,
+   "tok_per_s": 3512,
+   "peak_gb": 46.85,
+   "valid_ce": 9.0575
+  }
+ ],
+ "lookahead_decoupling_real_corpus": [
+  {
+   "arm": "reset_router_at_documents",
+   "seq": 16384,
+   "tok_per_s": 17231,
+   "valid_ce": 8.3937
+  },
+  {
+   "arm": "+temporal_grad_span=1024",
+   "seq": 16384,
+   "tok_per_s": 17267,
+   "valid_ce": 8.3946
+  },
+  {
+   "arm": "+lookahead_input_detach",
+   "seq": 16384,
+   "tok_per_s": 17018,
+   "valid_ce": 8.3938
+  }
+ ],
+ "synthetic_batch1_h512": {
+  "block_size_full_model_64k": {
+   "1024": [
+    9.909,
+    24.47
+   ],
+   "2048": [
+    10.979,
+    27.83
+   ],
+   "4096": [
+    12.799,
+    35.93
+   ],
+   "8192": [
+    16.602,
+    56.71
+   ]
+  },
+  "mla_layer_64k_block_sweep_s_and_MiB": {
+   "512": [
+    0.713,
+    3108
+   ],
+   "1024": [
+    0.62,
+    2511
+   ],
+   "2048": [
+    0.565,
+    2197
+   ],
+   "4096": [
+    0.535,
+    1987
+   ],
+   "8192": [
+    0.527,
+    1865
+   ]
+  },
+  "mla_upproj_recompute_full_model_64k": {
+   "off": [
+    9.598,
+    24.47
+   ],
+   "on": [
+    10.242,
+    24.29
+   ]
+  }
+ },
+ "conclusions": [
+  "long vs base: 2.2x faster at 8k, 8.1x at 16k, with 5.4x and 10.2x less peak memory; base at 16k used 141.5 GB of the 128 GB machine.",
+  "valid CE differs by at most 3e-3 between arms: the options do not change what the model learns.",
+  "recompute_scope=mlp at 32k: saves 1.4 GB (5%) and loses 11% speed; whole-block recompute saves 6.9 GB (25%) and loses 19% speed. The memory saved per speed lost is better for whole-block, so mlp is only worth it when a little more memory is enough.",
+  "mla_upproj_recompute: no memory benefit (24.47 -> 24.29 GiB), 6.7% slower; ships off.",
+  "larger attention blocks help one MLA layer but hurt the full model (sliding-window layers); 1024 stays.",
+  "temporal_grad_span and lookahead_input_detach: neutral on this data (valid CE within 1e-3); ship off."
+ ]
+}

@@ -1,0 +1,3 @@
+[exp] b4dtf2 start 15:25:55 load 3.13 3.02 2.95 src /tmp/chronos_src_E
+{"label": "b4dtf2", "depth": 4, "steps": 1965, "wall_s": 1800.1, "valid_ce": 4.512468874454498, "peak_gb": 7.43}
+[exp] QUEUE H DONE

@@ -1,0 +1,1249 @@
+[run] MLX cache limit: 16 GiB (previous 121.6 GiB; default min(RAM/8, 16 GiB))
+[arm b4plc] step 0 wall 0s valid_ce 10.5758 dt [0.5, 0.5, 0.5, 0.5]
+[pretrain] 1/1600 loss=11.9355 ce=10.5673 gn=0.74 lr=1.50e-03 64,746 tok/s depth=1.00
+[pretrain] 2/1600 loss=11.7856 ce=10.4043 gn=1.05 lr=1.50e-03 120,846 tok/s depth=1.00
+[pretrain] 3/1600 loss=11.5195 ce=10.1323 gn=0.77 lr=1.50e-03 128,014 tok/s depth=1.00
+[pretrain] 5/1600 loss=11.1474 ce=9.7618 gn=0.71 lr=1.50e-03 130,147 tok/s depth=1.00
+[pretrain] 10/1600 loss=10.3185 ce=8.9345 gn=0.60 lr=1.50e-03 119,606 tok/s depth=1.00
+[pretrain] 15/1600 loss=9.6489 ce=8.2540 gn=0.55 lr=1.50e-03 113,946 tok/s depth=1.00
+[pretrain] 20/1600 loss=9.2378 ce=7.9222 gn=0.41 lr=1.50e-03 118,554 tok/s depth=1.00
+[pretrain] 25/1600 loss=8.7924 ce=7.6655 gn=0.39 lr=1.50e-03 116,579 tok/s depth=1.00
+[arm b4plc] step 25 wall 14s valid_ce 7.8751 dt [0.5117, 0.4902, 0.5117, 0.5]
+[pretrain] 30/1600 loss=8.7120 ce=7.4997 gn=0.36 lr=1.50e-03 116,378 tok/s depth=1.00
+[pretrain] 35/1600 loss=8.6694 ce=7.3459 gn=0.42 lr=1.50e-03 119,372 tok/s depth=1.00
+[pretrain] 40/1600 loss=8.4564 ce=7.5477 gn=0.28 lr=1.50e-03 114,559 tok/s depth=1.00
+[pretrain] 45/1600 loss=8.4181 ce=7.2849 gn=0.24 lr=1.50e-03 117,234 tok/s depth=1.00
+[pretrain] 50/1600 loss=8.3308 ce=7.4102 gn=0.30 lr=1.50e-03 115,568 tok/s depth=1.00
+[arm b4plc] step 50 wall 28s valid_ce 7.5399 dt [0.5156, 0.4902, 0.5117, 0.498]
+[pretrain] 55/1600 loss=8.1238 ce=7.0955 gn=0.29 lr=1.50e-03 120,387 tok/s depth=1.00
+[pretrain] 60/1600 loss=7.9957 ce=7.1545 gn=0.35 lr=1.50e-03 114,841 tok/s depth=1.00
+[pretrain] 65/1600 loss=7.9521 ce=6.9698 gn=0.37 lr=1.50e-03 117,143 tok/s depth=1.00
+[pretrain] 70/1600 loss=7.9900 ce=7.0026 gn=0.34 lr=1.50e-03 114,092 tok/s depth=1.00
+[pretrain] 75/1600 loss=7.7826 ce=7.0983 gn=0.37 lr=1.50e-03 114,055 tok/s depth=1.00
+[arm b4plc] step 75 wall 43s valid_ce 7.4390 dt [0.5156, 0.4902, 0.5156, 0.4961]
+[pretrain] 80/1600 loss=7.8756 ce=6.9714 gn=0.28 lr=1.50e-03 121,100 tok/s depth=1.00
+[pretrain] 85/1600 loss=7.7335 ce=6.8451 gn=0.36 lr=1.50e-03 113,769 tok/s depth=1.00
+[pretrain] 90/1600 loss=7.6853 ce=6.9687 gn=0.33 lr=1.50e-03 119,122 tok/s depth=1.00
+[pretrain] 95/1600 loss=7.6176 ce=6.9347 gn=0.29 lr=1.50e-03 114,120 tok/s depth=1.00
+[pretrain] 100/1600 loss=7.5589 ce=6.7821 gn=0.39 lr=1.50e-03 120,538 tok/s depth=1.00
+[arm b4plc] step 100 wall 57s valid_ce 7.3846 dt [0.5156, 0.4902, 0.5156, 0.4961]
+[pretrain] 105/1600 loss=7.5602 ce=6.7540 gn=0.32 lr=1.50e-03 117,312 tok/s depth=1.00
+[pretrain] 110/1600 loss=7.5576 ce=6.9026 gn=0.34 lr=1.50e-03 115,109 tok/s depth=1.00
+[pretrain] 115/1600 loss=7.4108 ce=6.8573 gn=0.36 lr=1.50e-03 118,557 tok/s depth=1.00
+[pretrain] 120/1600 loss=7.4639 ce=6.7855 gn=0.40 lr=1.50e-03 113,590 tok/s depth=1.00
+[pretrain] 125/1600 loss=7.4078 ce=6.4827 gn=0.44 lr=1.50e-03 120,020 tok/s depth=1.00
+[pretrain] 130/1600 loss=7.3203 ce=6.7155 gn=0.38 lr=1.50e-03 111,856 tok/s depth=1.00
+[pretrain] 135/1600 loss=7.2931 ce=6.7618 gn=0.57 lr=1.50e-03 120,609 tok/s depth=1.00
+[pretrain] 140/1600 loss=7.2649 ce=6.6817 gn=0.34 lr=1.50e-03 113,060 tok/s depth=1.00
+[pretrain] 145/1600 loss=7.3670 ce=6.5944 gn=0.44 lr=1.50e-03 119,370 tok/s depth=1.00
+[pretrain] 150/1600 loss=7.2397 ce=6.2893 gn=0.65 lr=1.50e-03 112,882 tok/s depth=1.00
+[arm b4plc] step 150 wall 85s valid_ce 7.2253 dt [0.5156, 0.4902, 0.5156, 0.4961]
+[pretrain] 155/1600 loss=7.4335 ce=6.7597 gn=0.57 lr=1.50e-03 116,948 tok/s depth=1.00
+[pretrain] 160/1600 loss=7.3214 ce=6.5775 gn=0.59 lr=1.50e-03 117,374 tok/s depth=1.00
+[pretrain] 165/1600 loss=7.2848 ce=6.7690 gn=0.38 lr=1.50e-03 113,311 tok/s depth=1.00
+[pretrain] 170/1600 loss=7.2323 ce=6.5804 gn=0.51 lr=1.50e-03 117,279 tok/s depth=1.00
+[pretrain] 175/1600 loss=7.1423 ce=6.5096 gn=0.44 lr=1.50e-03 113,570 tok/s depth=1.00
+[pretrain] 180/1600 loss=7.1096 ce=6.5495 gn=0.43 lr=1.50e-03 118,611 tok/s depth=1.00
+[pretrain] 185/1600 loss=7.1103 ce=6.6386 gn=0.39 lr=1.50e-03 114,155 tok/s depth=1.00
+[pretrain] 190/1600 loss=7.1099 ce=6.5162 gn=0.37 lr=1.50e-03 118,339 tok/s depth=1.00
+[pretrain] 195/1600 loss=7.0852 ce=6.4846 gn=0.38 lr=1.50e-03 114,323 tok/s depth=1.00
+[pretrain] 200/1600 loss=7.0120 ce=6.4826 gn=0.42 lr=1.50e-03 117,272 tok/s depth=1.00
+[arm b4plc] step 200 wall 113s valid_ce 6.8858 dt [0.5156, 0.4902, 0.5156, 0.4961]
+[pretrain] 205/1600 loss=7.0339 ce=6.5216 gn=0.32 lr=1.50e-03 118,466 tok/s depth=1.00
+[pretrain] 210/1600 loss=6.9643 ce=6.4500 gn=0.36 lr=1.50e-03 114,603 tok/s depth=1.00
+[pretrain] 215/1600 loss=6.9800 ce=6.4216 gn=0.35 lr=1.50e-03 117,753 tok/s depth=1.00
+[pretrain] 220/1600 loss=6.9222 ce=6.4583 gn=0.34 lr=1.50e-03 113,064 tok/s depth=1.00
+[pretrain] 225/1600 loss=6.8161 ce=6.2934 gn=0.36 lr=1.50e-03 119,538 tok/s depth=1.00
+[pretrain] 230/1600 loss=6.8289 ce=6.3495 gn=0.36 lr=1.50e-03 112,755 tok/s depth=1.00
+[pretrain] 235/1600 loss=6.7560 ce=6.1651 gn=0.35 lr=1.50e-03 119,425 tok/s depth=1.00
+[pretrain] 240/1600 loss=6.8919 ce=6.3901 gn=0.37 lr=1.50e-03 113,459 tok/s depth=1.00
+[pretrain] 245/1600 loss=6.8357 ce=6.1180 gn=0.32 lr=1.50e-03 119,580 tok/s depth=1.00
+[pretrain] 250/1600 loss=6.7567 ce=6.2730 gn=0.36 lr=1.50e-03 112,807 tok/s depth=1.00
+[pretrain] 255/1600 loss=6.6734 ce=6.1571 gn=0.39 lr=1.50e-03 117,923 tok/s depth=1.00
+[pretrain] 260/1600 loss=6.7983 ce=6.1018 gn=0.44 lr=1.50e-03 113,269 tok/s depth=1.00
+[pretrain] 265/1600 loss=6.7430 ce=6.0107 gn=0.36 lr=1.50e-03 118,274 tok/s depth=1.00
+[pretrain] 270/1600 loss=6.8771 ce=6.0396 gn=0.52 lr=1.50e-03 100,304 tok/s depth=2.00
+[pretrain] 275/1600 loss=6.9208 ce=6.3509 gn=0.46 lr=1.50e-03 92,120 tok/s depth=2.00
+[pretrain] 280/1600 loss=6.7874 ce=6.1372 gn=0.41 lr=1.50e-03 97,064 tok/s depth=2.00
+[pretrain] 285/1600 loss=6.8636 ce=6.2902 gn=0.32 lr=1.50e-03 93,996 tok/s depth=2.00
+[pretrain] 290/1600 loss=6.7665 ce=6.2100 gn=0.31 lr=1.50e-03 92,862 tok/s depth=2.00
+[pretrain] 295/1600 loss=6.5588 ce=5.7743 gn=0.41 lr=1.50e-03 96,879 tok/s depth=2.00
+[pretrain] 300/1600 loss=6.6769 ce=6.1381 gn=0.34 lr=1.50e-03 93,265 tok/s depth=2.00
+[arm b4plc] step 300 wall 174s valid_ce 6.3275 dt [0.5156, 0.4902, 0.5156, 0.4961]
+[pretrain] 305/1600 loss=6.6168 ce=6.2740 gn=0.33 lr=1.50e-03 89,844 tok/s depth=2.00
+[pretrain] 310/1600 loss=6.7743 ce=6.3662 gn=0.38 lr=1.50e-03 79,429 tok/s depth=2.00
+[pretrain] 315/1600 loss=6.5793 ce=5.9173 gn=0.42 lr=1.50e-03 92,339 tok/s depth=2.00
+[pretrain] 320/1600 loss=6.6746 ce=5.9809 gn=0.41 lr=1.50e-03 94,500 tok/s depth=2.00
+[pretrain] 325/1600 loss=6.7428 ce=6.2063 gn=0.39 lr=1.50e-03 92,773 tok/s depth=2.00
+[pretrain] 330/1600 loss=6.6562 ce=6.1221 gn=0.34 lr=1.50e-03 95,565 tok/s depth=2.00
+[pretrain] 335/1600 loss=6.6481 ce=6.1277 gn=0.38 lr=1.50e-03 92,758 tok/s depth=2.00
+[pretrain] 340/1600 loss=6.6357 ce=5.8222 gn=0.35 lr=1.50e-03 92,745 tok/s depth=2.00
+[pretrain] 345/1600 loss=6.5855 ce=6.2454 gn=0.35 lr=1.50e-03 95,838 tok/s depth=2.00
+[pretrain] 350/1600 loss=6.5663 ce=6.0255 gn=0.42 lr=1.50e-03 92,781 tok/s depth=2.00
+[pretrain] 355/1600 loss=6.5489 ce=6.0779 gn=0.43 lr=1.50e-03 93,993 tok/s depth=2.00
+[pretrain] 360/1600 loss=6.5676 ce=5.8648 gn=0.38 lr=1.50e-03 93,432 tok/s depth=2.00
+[pretrain] 365/1600 loss=6.7595 ce=5.8711 gn=0.43 lr=1.50e-03 92,604 tok/s depth=2.00
+[pretrain] 370/1600 loss=6.4787 ce=6.1569 gn=0.43 lr=1.50e-03 93,549 tok/s depth=2.00
+[pretrain] 375/1600 loss=6.4865 ce=5.7791 gn=0.40 lr=1.50e-03 93,933 tok/s depth=2.00
+[pretrain] 380/1600 loss=6.4944 ce=5.8100 gn=0.41 lr=1.50e-03 91,363 tok/s depth=2.00
+[pretrain] 385/1600 loss=6.5264 ce=5.9899 gn=0.40 lr=1.50e-03 92,976 tok/s depth=2.00
+[pretrain] 390/1600 loss=6.5969 ce=5.9866 gn=0.38 lr=1.50e-03 93,933 tok/s depth=2.00
+[pretrain] 395/1600 loss=6.5017 ce=5.9729 gn=0.39 lr=1.50e-03 91,701 tok/s depth=2.00
+[pretrain] 400/1600 loss=6.5418 ce=6.0066 gn=0.44 lr=1.50e-03 92,699 tok/s depth=2.00
+[arm b4plc] step 400 wall 245s valid_ce 6.1187 dt [0.5156, 0.4902, 0.5156, 0.4961]
+[pretrain] 405/1600 loss=6.5080 ce=6.2100 gn=0.39 lr=1.50e-03 95,713 tok/s depth=2.00
+[pretrain] 410/1600 loss=6.4185 ce=5.9655 gn=0.35 lr=1.50e-03 92,445 tok/s depth=2.00
+[pretrain] 415/1600 loss=6.3515 ce=5.7268 gn=0.39 lr=1.50e-03 90,637 tok/s depth=2.00
+[pretrain] 420/1600 loss=6.4856 ce=5.9810 gn=0.46 lr=1.50e-03 94,913 tok/s depth=2.00
+[pretrain] 425/1600 loss=6.4594 ce=5.8446 gn=0.42 lr=1.50e-03 91,628 tok/s depth=2.00
+[pretrain] 430/1600 loss=6.4004 ce=5.8811 gn=0.38 lr=1.50e-03 90,576 tok/s depth=2.00
+[pretrain] 435/1600 loss=6.4137 ce=5.8456 gn=0.39 lr=1.50e-03 95,093 tok/s depth=2.00
+[pretrain] 440/1600 loss=6.5167 ce=5.9761 gn=0.39 lr=1.50e-03 90,472 tok/s depth=2.00
+[pretrain] 445/1600 loss=6.3555 ce=6.0387 gn=0.41 lr=1.50e-03 90,922 tok/s depth=2.00
+[pretrain] 450/1600 loss=6.4350 ce=5.8122 gn=0.38 lr=1.50e-03 93,990 tok/s depth=2.00
+[pretrain] 455/1600 loss=6.4275 ce=5.8654 gn=0.38 lr=1.50e-03 92,317 tok/s depth=2.00
+[pretrain] 460/1600 loss=6.2564 ce=5.7819 gn=0.38 lr=1.50e-03 90,083 tok/s depth=2.00
+[pretrain] 465/1600 loss=6.3696 ce=5.5470 gn=0.37 lr=1.50e-03 93,813 tok/s depth=2.00
+[pretrain] 470/1600 loss=6.3117 ce=5.5781 gn=0.38 lr=1.50e-03 91,773 tok/s depth=2.00
+[pretrain] 475/1600 loss=6.3860 ce=5.8148 gn=0.39 lr=1.50e-03 89,016 tok/s depth=2.00
+[pretrain] 480/1600 loss=6.3686 ce=5.8329 gn=0.41 lr=1.50e-03 93,023 tok/s depth=2.00
+[arm b4plc] step 480 wall 302s valid_ce 5.9844 dt [0.5156, 0.4902, 0.5156, 0.4961]
+[pretrain] 485/1600 loss=6.4438 ce=5.7968 gn=0.41 lr=1.50e-03 94,079 tok/s depth=2.00
+[pretrain] 490/1600 loss=6.2393 ce=5.5758 gn=0.40 lr=1.50e-03 89,282 tok/s depth=2.00
+[pretrain] 495/1600 loss=6.1596 ce=5.5440 gn=0.50 lr=1.50e-03 89,112 tok/s depth=2.00
+[pretrain] 500/1600 loss=6.2881 ce=5.5488 gn=0.45 lr=1.50e-03 93,814 tok/s depth=2.00
+[arm b4plc] step 500 wall 317s valid_ce 5.9290 dt [0.5156, 0.4902, 0.5156, 0.4961]
+[pretrain] 505/1600 loss=6.2614 ce=5.3697 gn=0.37 lr=1.50e-03 91,449 tok/s depth=2.00
+[pretrain] 510/1600 loss=6.2091 ce=5.8156 gn=0.40 lr=1.50e-03 89,840 tok/s depth=2.00
+[pretrain] 515/1600 loss=6.2548 ce=5.6624 gn=0.48 lr=1.50e-03 91,595 tok/s depth=2.00
+[pretrain] 520/1600 loss=6.2115 ce=5.6567 gn=0.45 lr=1.50e-03 89,439 tok/s depth=2.00
+[pretrain] 525/1600 loss=6.2607 ce=5.7094 gn=0.39 lr=1.50e-03 89,513 tok/s depth=2.00
+[pretrain] 530/1600 loss=6.2986 ce=5.6496 gn=0.43 lr=1.50e-03 88,003 tok/s depth=2.00
+[pretrain] 535/1600 loss=6.2130 ce=5.9324 gn=0.42 lr=1.50e-03 93,267 tok/s depth=2.00
+[pretrain] 540/1600 loss=6.2530 ce=5.8468 gn=0.45 lr=1.50e-03 89,218 tok/s depth=2.00
+[pretrain] 545/1600 loss=6.1324 ce=5.3999 gn=0.47 lr=1.50e-03 87,550 tok/s depth=2.00
+[pretrain] 550/1600 loss=6.1919 ce=5.7528 gn=0.51 lr=1.50e-03 92,770 tok/s depth=2.00
+[pretrain] 555/1600 loss=6.1791 ce=5.7270 gn=0.41 lr=1.50e-03 89,862 tok/s depth=2.00
+[pretrain] 560/1600 loss=6.1317 ce=5.5411 gn=0.38 lr=1.50e-03 88,217 tok/s depth=2.00
+[pretrain] 565/1600 loss=6.1599 ce=5.5899 gn=0.45 lr=1.50e-03 89,592 tok/s depth=2.00
+[pretrain] 570/1600 loss=6.1080 ce=5.4721 gn=0.47 lr=1.50e-03 91,644 tok/s depth=2.00
+[pretrain] 575/1600 loss=6.2298 ce=5.6997 gn=0.44 lr=1.50e-03 88,074 tok/s depth=2.00
+[pretrain] 580/1600 loss=6.0803 ce=5.5345 gn=0.42 lr=1.50e-03 91,838 tok/s depth=2.00
+[pretrain] 585/1600 loss=6.1560 ce=5.6206 gn=0.38 lr=1.50e-03 89,843 tok/s depth=2.00
+[pretrain] 590/1600 loss=6.0205 ce=5.2692 gn=0.45 lr=1.50e-03 89,551 tok/s depth=2.00
+[pretrain] 595/1600 loss=6.2925 ce=5.3370 gn=0.39 lr=1.50e-03 90,174 tok/s depth=2.00
+[pretrain] 600/1600 loss=6.1743 ce=5.4794 gn=0.40 lr=1.50e-03 90,521 tok/s depth=2.00
+[arm b4plc] step 600 wall 390s valid_ce 5.8035 dt [0.5156, 0.4902, 0.5156, 0.4961]
+[pretrain] 605/1600 loss=6.1092 ce=5.5505 gn=0.46 lr=1.50e-03 89,189 tok/s depth=2.00
+[pretrain] 610/1600 loss=6.1560 ce=5.3836 gn=0.44 lr=1.50e-03 87,486 tok/s depth=2.00
+[pretrain] 615/1600 loss=6.1807 ce=5.5979 gn=0.56 lr=1.50e-03 90,102 tok/s depth=2.00
+[pretrain] 620/1600 loss=6.1692 ce=5.6871 gn=0.50 lr=1.50e-03 89,631 tok/s depth=2.00
+[pretrain] 625/1600 loss=6.1158 ce=5.5672 gn=0.49 lr=1.50e-03 88,462 tok/s depth=2.00
+[pretrain] 630/1600 loss=6.1851 ce=5.6799 gn=0.48 lr=1.50e-03 89,144 tok/s depth=2.00
+[pretrain] 635/1600 loss=6.0591 ce=5.6998 gn=0.58 lr=1.50e-03 91,074 tok/s depth=2.00
+[pretrain] 640/1600 loss=5.9468 ce=5.4790 gn=0.49 lr=1.50e-03 88,379 tok/s depth=2.00
+[pretrain] 645/1600 loss=6.0442 ce=5.6154 gn=0.46 lr=1.50e-03 88,145 tok/s depth=2.00
+[pretrain] 650/1600 loss=6.1504 ce=5.7357 gn=0.40 lr=1.50e-03 91,759 tok/s depth=2.00
+[pretrain] 655/1600 loss=5.9758 ce=5.3015 gn=0.41 lr=1.50e-03 88,387 tok/s depth=2.00
+[pretrain] 660/1600 loss=6.0652 ce=5.5269 gn=0.42 lr=1.50e-03 86,900 tok/s depth=2.00
+[pretrain] 665/1600 loss=5.9693 ce=5.3783 gn=0.42 lr=1.50e-03 91,880 tok/s depth=2.00
+[pretrain] 670/1600 loss=6.0915 ce=5.6741 gn=0.52 lr=1.50e-03 88,540 tok/s depth=2.00
+[pretrain] 675/1600 loss=6.0866 ce=5.4090 gn=0.46 lr=1.50e-03 87,087 tok/s depth=2.00
+[pretrain] 680/1600 loss=6.0920 ce=5.3003 gn=0.42 lr=1.50e-03 90,500 tok/s depth=2.00
+[pretrain] 685/1600 loss=6.0258 ce=5.2817 gn=0.47 lr=1.50e-03 87,136 tok/s depth=2.00
+[pretrain] 690/1600 loss=5.9852 ce=5.3917 gn=0.45 lr=1.50e-03 87,132 tok/s depth=2.00
+[pretrain] 695/1600 loss=6.0894 ce=5.7739 gn=0.49 lr=1.50e-03 88,168 tok/s depth=2.00
+[pretrain] 700/1600 loss=6.0333 ce=5.4947 gn=0.48 lr=1.50e-03 90,885 tok/s depth=2.00
+[pretrain] 705/1600 loss=6.0785 ce=5.5704 gn=0.46 lr=1.50e-03 88,370 tok/s depth=2.00
+[pretrain] 710/1600 loss=6.0087 ce=5.3625 gn=0.49 lr=1.50e-03 86,573 tok/s depth=2.00
+[pretrain] 715/1600 loss=5.9548 ce=5.1099 gn=0.40 lr=1.50e-03 92,443 tok/s depth=2.00
+[pretrain] 720/1600 loss=6.0047 ce=5.4093 gn=0.45 lr=1.50e-03 87,847 tok/s depth=2.00
+[pretrain] 725/1600 loss=6.1264 ce=5.5574 gn=0.44 lr=1.50e-03 87,450 tok/s depth=2.00
+[pretrain] 730/1600 loss=5.9701 ce=5.4372 gn=0.46 lr=1.50e-03 89,195 tok/s depth=2.00
+[pretrain] 735/1600 loss=6.0222 ce=5.3265 gn=0.46 lr=1.50e-03 89,792 tok/s depth=2.00
+[pretrain] 740/1600 loss=6.1045 ce=5.3509 gn=0.47 lr=1.50e-03 87,174 tok/s depth=2.00
+[pretrain] 745/1600 loss=5.9297 ce=5.4145 gn=0.45 lr=1.50e-03 88,955 tok/s depth=2.00
+[pretrain] 750/1600 loss=5.9251 ce=5.4725 gn=0.48 lr=1.50e-03 90,264 tok/s depth=2.00
+[pretrain] 755/1600 loss=6.0172 ce=5.4138 gn=0.44 lr=1.50e-03 88,229 tok/s depth=2.00
+[pretrain] 760/1600 loss=6.0334 ce=5.5293 gn=0.45 lr=1.50e-03 86,805 tok/s depth=2.00
+[pretrain] 765/1600 loss=5.9457 ce=5.5133 gn=0.50 lr=1.50e-03 89,870 tok/s depth=2.00
+[pretrain] 770/1600 loss=5.7361 ce=5.1668 gn=0.51 lr=1.50e-03 87,560 tok/s depth=2.00
+[pretrain] 775/1600 loss=5.9982 ce=5.3531 gn=0.52 lr=1.50e-03 87,786 tok/s depth=2.00
+[pretrain] 780/1600 loss=5.8834 ce=5.3328 gn=0.54 lr=1.50e-03 90,765 tok/s depth=2.00
+[pretrain] 785/1600 loss=5.9038 ce=5.0485 gn=0.47 lr=1.50e-03 88,012 tok/s depth=2.00
+[pretrain] 790/1600 loss=5.9503 ce=5.3949 gn=0.45 lr=1.50e-03 86,631 tok/s depth=2.00
+[pretrain] 795/1600 loss=6.1276 ce=5.7030 gn=0.44 lr=1.50e-03 89,023 tok/s depth=2.00
+[pretrain] 800/1600 loss=5.8670 ce=5.2327 gn=0.52 lr=1.50e-03 89,286 tok/s depth=2.00
+[arm b4plc] step 800 wall 538s valid_ce 5.5956 dt [0.5156, 0.4902, 0.5156, 0.4961]
+[pretrain] 805/1600 loss=5.8285 ce=5.2250 gn=0.46 lr=1.50e-03 74,958 tok/s depth=3.00
+[pretrain] 810/1600 loss=5.8818 ce=5.2431 gn=0.43 lr=1.50e-03 73,060 tok/s depth=3.00
+[pretrain] 815/1600 loss=5.9457 ce=5.4850 gn=0.47 lr=1.50e-03 73,267 tok/s depth=3.00
+[pretrain] 820/1600 loss=5.8774 ce=5.2879 gn=0.54 lr=1.50e-03 73,689 tok/s depth=3.00
+[pretrain] 825/1600 loss=5.9028 ce=5.3340 gn=0.51 lr=1.50e-03 73,650 tok/s depth=3.00
+[pretrain] 830/1600 loss=5.9248 ce=5.2564 gn=0.44 lr=1.50e-03 75,916 tok/s depth=3.00
+[pretrain] 835/1600 loss=5.8302 ce=5.3863 gn=0.39 lr=1.50e-03 74,255 tok/s depth=3.00
+[pretrain] 840/1600 loss=5.8580 ce=5.1734 gn=0.46 lr=1.50e-03 73,498 tok/s depth=3.00
+[pretrain] 845/1600 loss=5.7972 ce=5.0005 gn=0.51 lr=1.50e-03 73,859 tok/s depth=3.00
+[pretrain] 850/1600 loss=5.7514 ce=5.1954 gn=0.47 lr=1.50e-03 73,650 tok/s depth=3.00
+[pretrain] 855/1600 loss=5.8447 ce=5.3337 gn=0.49 lr=1.50e-03 73,279 tok/s depth=3.00
+[pretrain] 860/1600 loss=5.8972 ce=5.2497 gn=0.56 lr=1.50e-03 75,812 tok/s depth=3.00
+[pretrain] 865/1600 loss=5.8487 ce=5.2614 gn=0.55 lr=1.50e-03 73,785 tok/s depth=3.00
+[pretrain] 870/1600 loss=5.9189 ce=5.3436 gn=0.51 lr=1.50e-03 73,729 tok/s depth=3.00
+[pretrain] 875/1600 loss=5.9802 ce=5.4751 gn=0.69 lr=1.50e-03 73,409 tok/s depth=3.00
+[arm b4plc] step 875 wall 604s valid_ce 5.3534 dt [0.5156, 0.4902, 0.5156, 0.4961]
+[pretrain] 880/1600 loss=5.8271 ce=5.1770 gn=0.53 lr=1.50e-03 74,460 tok/s depth=3.00
+[pretrain] 885/1600 loss=5.8288 ce=4.9902 gn=0.45 lr=1.50e-03 72,949 tok/s depth=3.00
+[pretrain] 890/1600 loss=5.8838 ce=5.2886 gn=0.52 lr=1.50e-03 73,838 tok/s depth=3.00
+[pretrain] 895/1600 loss=5.7866 ce=5.2669 gn=0.48 lr=1.50e-03 75,958 tok/s depth=3.00
+[pretrain] 900/1600 loss=5.9229 ce=5.2669 gn=0.53 lr=1.50e-03 73,620 tok/s depth=3.00
+[pretrain] 905/1600 loss=5.6912 ce=5.1568 gn=0.51 lr=1.50e-03 73,660 tok/s depth=3.00
+[pretrain] 910/1600 loss=5.7553 ce=5.1936 gn=0.49 lr=1.50e-03 73,422 tok/s depth=3.00
+[pretrain] 915/1600 loss=5.7764 ce=5.1380 gn=0.58 lr=1.50e-03 73,194 tok/s depth=3.00
+[pretrain] 920/1600 loss=5.6630 ce=5.0224 gn=0.52 lr=1.50e-03 72,243 tok/s depth=3.00
+[pretrain] 925/1600 loss=5.8251 ce=5.1093 gn=0.53 lr=1.50e-03 75,248 tok/s depth=3.00
+[pretrain] 930/1600 loss=5.8178 ce=5.1144 gn=0.53 lr=1.50e-03 74,247 tok/s depth=3.00
+[pretrain] 935/1600 loss=5.7668 ce=4.9519 gn=0.52 lr=1.50e-03 73,950 tok/s depth=3.00
+[pretrain] 940/1600 loss=5.7842 ce=4.8962 gn=0.55 lr=1.50e-03 73,361 tok/s depth=3.00
+[pretrain] 945/1600 loss=5.7213 ce=4.9616 gn=0.51 lr=1.50e-03 72,942 tok/s depth=3.00
+[pretrain] 950/1600 loss=5.8822 ce=5.4159 gn=0.49 lr=1.50e-03 73,884 tok/s depth=3.00
+[pretrain] 955/1600 loss=5.6540 ce=5.1930 gn=0.55 lr=1.50e-03 74,988 tok/s depth=3.00
+[pretrain] 960/1600 loss=5.6689 ce=4.9207 gn=0.50 lr=1.50e-03 74,280 tok/s depth=3.00
+[pretrain] 965/1600 loss=5.7343 ce=4.9679 gn=0.57 lr=1.50e-03 74,076 tok/s depth=3.00
+[pretrain] 970/1600 loss=5.6705 ce=5.2708 gn=0.59 lr=1.50e-03 73,067 tok/s depth=3.00
+[pretrain] 975/1600 loss=5.5482 ce=4.9391 gn=0.55 lr=1.50e-03 72,834 tok/s depth=3.00
+[pretrain] 980/1600 loss=5.5685 ce=4.9216 gn=0.56 lr=1.50e-03 73,426 tok/s depth=3.00
+[pretrain] 985/1600 loss=5.5771 ce=5.1477 gn=0.51 lr=1.50e-03 74,149 tok/s depth=3.00
+[pretrain] 990/1600 loss=5.7722 ce=4.9969 gn=0.56 lr=1.50e-03 73,192 tok/s depth=3.00
+[pretrain] 995/1600 loss=5.6010 ce=4.8988 gn=0.55 lr=1.50e-03 73,188 tok/s depth=3.00
+[pretrain] 1000/1600 loss=5.7257 ce=5.2217 gn=0.61 lr=1.50e-03 72,939 tok/s depth=3.00
+[arm b4plc] step 1000 wall 716s valid_ce 5.1679 dt [0.5156, 0.4902, 0.5156, 0.4961]
+[pretrain] 1005/1600 loss=5.7204 ce=5.2306 gn=0.54 lr=1.50e-03 72,985 tok/s depth=3.00
+[pretrain] 1010/1600 loss=5.6490 ce=4.8318 gn=0.53 lr=1.50e-03 71,833 tok/s depth=3.00
+[pretrain] 1015/1600 loss=5.6184 ce=5.1227 gn=0.60 lr=1.50e-03 73,063 tok/s depth=3.00
+[pretrain] 1020/1600 loss=5.5731 ce=5.2351 gn=0.57 lr=1.50e-03 73,005 tok/s depth=3.00
+[pretrain] 1025/1600 loss=5.6110 ce=4.9669 gn=0.51 lr=1.50e-03 73,520 tok/s depth=3.00
+[pretrain] 1030/1600 loss=5.6590 ce=4.9886 gn=0.50 lr=1.50e-03 73,668 tok/s depth=3.00
+[pretrain] 1035/1600 loss=5.5918 ce=4.8892 gn=0.51 lr=1.50e-03 72,518 tok/s depth=3.00
+[pretrain] 1040/1600 loss=5.6482 ce=4.9115 gn=0.63 lr=1.50e-03 72,672 tok/s depth=3.00
+[pretrain] 1045/1600 loss=5.6226 ce=4.9675 gn=0.56 lr=1.50e-03 72,242 tok/s depth=3.00
+[pretrain] 1050/1600 loss=5.6075 ce=4.8923 gn=0.64 lr=1.50e-03 72,613 tok/s depth=3.00
+[pretrain] 1055/1600 loss=5.6402 ce=4.9588 gn=0.61 lr=1.50e-03 72,421 tok/s depth=3.00
+[pretrain] 1060/1600 loss=5.4934 ce=4.7941 gn=0.54 lr=1.50e-03 74,769 tok/s depth=3.00
+[pretrain] 1065/1600 loss=5.4588 ce=4.7238 gn=0.59 lr=1.50e-03 72,331 tok/s depth=3.00
+[pretrain] 1070/1600 loss=5.6662 ce=4.9650 gn=0.56 lr=1.50e-03 72,698 tok/s depth=3.00
+[pretrain] 1075/1600 loss=5.5130 ce=4.8273 gn=0.58 lr=1.50e-03 72,785 tok/s depth=3.00
+[pretrain] 1080/1600 loss=5.6148 ce=4.8030 gn=0.54 lr=1.50e-03 71,565 tok/s depth=3.00
+[pretrain] 1085/1600 loss=5.5530 ce=5.1352 gn=0.57 lr=1.50e-03 71,649 tok/s depth=3.00
+[pretrain] 1090/1600 loss=5.5858 ce=5.1069 gn=0.73 lr=1.50e-03 73,876 tok/s depth=3.00
+[pretrain] 1095/1600 loss=5.3958 ce=4.7437 gn=0.62 lr=1.50e-03 73,908 tok/s depth=3.00
+[pretrain] 1100/1600 loss=5.5661 ce=4.8110 gn=0.61 lr=1.50e-03 72,142 tok/s depth=3.00
+[pretrain] 1105/1600 loss=5.4483 ce=4.8893 gn=0.62 lr=1.50e-03 72,445 tok/s depth=3.00
+[pretrain] 1110/1600 loss=5.6479 ce=5.0017 gn=1.06 lr=1.50e-03 71,545 tok/s depth=3.00
+[pretrain] 1115/1600 loss=5.5016 ce=4.7647 gn=0.64 lr=1.50e-03 72,168 tok/s depth=3.00
+[pretrain] 1120/1600 loss=5.5402 ce=5.0107 gn=0.51 lr=1.50e-03 72,098 tok/s depth=3.00
+[pretrain] 1125/1600 loss=5.5098 ce=4.8339 gn=0.59 lr=1.50e-03 72,853 tok/s depth=3.00
+[pretrain] 1130/1600 loss=5.4404 ce=5.0418 gn=0.61 lr=1.50e-03 74,595 tok/s depth=3.00
+[pretrain] 1135/1600 loss=5.3955 ce=4.6924 gn=0.61 lr=1.50e-03 72,270 tok/s depth=3.00
+[pretrain] 1140/1600 loss=5.5166 ce=4.9583 gn=0.56 lr=1.50e-03 72,311 tok/s depth=3.00
+[pretrain] 1145/1600 loss=5.4941 ce=4.8628 gn=0.62 lr=1.50e-03 71,421 tok/s depth=3.00
+[pretrain] 1150/1600 loss=5.4649 ce=4.9122 gn=0.63 lr=1.50e-03 71,732 tok/s depth=3.00
+[pretrain] 1155/1600 loss=5.3387 ce=4.5582 gn=0.55 lr=1.50e-03 71,854 tok/s depth=3.00
+[pretrain] 1160/1600 loss=5.4309 ce=4.6282 gn=0.61 lr=1.50e-03 73,572 tok/s depth=3.00
+[pretrain] 1165/1600 loss=5.4913 ce=4.7529 gn=0.63 lr=1.50e-03 72,448 tok/s depth=3.00
+[pretrain] 1170/1600 loss=5.5229 ce=4.9610 gn=0.62 lr=1.50e-03 71,658 tok/s depth=3.00
+[pretrain] 1175/1600 loss=5.4616 ce=4.8207 gn=0.59 lr=1.50e-03 71,672 tok/s depth=3.00
+[pretrain] 1180/1600 loss=5.4722 ce=4.8898 gn=0.56 lr=1.50e-03 71,272 tok/s depth=3.00
+[pretrain] 1185/1600 loss=5.4069 ce=4.7837 gn=0.67 lr=1.50e-03 70,678 tok/s depth=3.00
+[pretrain] 1190/1600 loss=5.4647 ce=4.7262 gn=0.63 lr=1.50e-03 71,699 tok/s depth=3.00
+[pretrain] 1195/1600 loss=5.4343 ce=4.7570 gn=0.66 lr=1.50e-03 72,645 tok/s depth=3.00
+[pretrain] 1200/1600 loss=5.3694 ce=4.8029 gn=0.63 lr=1.50e-03 73,423 tok/s depth=3.00
+[pretrain] 1205/1600 loss=5.5375 ce=4.8424 gn=0.55 lr=1.50e-03 71,114 tok/s depth=3.00
+[arm b4plc] step 1205 wall 902s valid_ce 4.9363 dt [0.5156, 0.4902, 0.5156, 0.4961]
+[pretrain] 1210/1600 loss=5.4344 ce=4.8562 gn=0.59 lr=1.50e-03 71,528 tok/s depth=3.00
+[pretrain] 1215/1600 loss=5.4210 ce=4.9755 gn=0.59 lr=1.50e-03 71,584 tok/s depth=3.00
+[pretrain] 1220/1600 loss=5.5040 ce=4.8038 gn=0.62 lr=1.50e-03 69,700 tok/s depth=3.00
+[pretrain] 1225/1600 loss=5.4732 ce=4.7555 gn=0.62 lr=1.50e-03 71,880 tok/s depth=3.00
+[pretrain] 1230/1600 loss=5.4317 ce=4.7767 gn=0.57 lr=1.50e-03 71,040 tok/s depth=3.00
+[pretrain] 1235/1600 loss=5.3872 ce=4.7487 gn=0.55 lr=1.50e-03 71,422 tok/s depth=3.00
+[pretrain] 1240/1600 loss=5.3874 ce=4.7091 gn=0.60 lr=1.50e-03 72,802 tok/s depth=3.00
+[pretrain] 1245/1600 loss=5.4246 ce=4.7105 gn=0.60 lr=1.50e-03 72,343 tok/s depth=3.00
+[pretrain] 1250/1600 loss=5.3463 ce=4.5998 gn=0.57 lr=1.50e-03 70,947 tok/s depth=3.00
+[arm b4plc] step 1250 wall 943s valid_ce 4.8895 dt [0.5156, 0.4902, 0.5156, 0.4961]
+[pretrain] 1255/1600 loss=5.5360 ce=4.6820 gn=0.63 lr=1.50e-03 72,383 tok/s depth=3.00
+[pretrain] 1260/1600 loss=5.2859 ce=4.5802 gn=0.63 lr=1.50e-03 71,426 tok/s depth=3.00
+[pretrain] 1265/1600 loss=5.3422 ce=4.8215 gn=0.57 lr=1.50e-03 69,630 tok/s depth=3.00
+[pretrain] 1270/1600 loss=5.2212 ce=4.4771 gn=0.60 lr=1.50e-03 69,389 tok/s depth=3.00
+[pretrain] 1275/1600 loss=5.2610 ce=4.4943 gn=0.52 lr=1.50e-03 68,373 tok/s depth=3.00
+[pretrain] 1280/1600 loss=5.3307 ce=4.8558 gn=0.51 lr=1.50e-03 73,153 tok/s depth=3.00
+[pretrain] 1285/1600 loss=5.2836 ce=4.6538 gn=0.54 lr=1.50e-03 72,757 tok/s depth=3.00
+[pretrain] 1290/1600 loss=5.4168 ce=4.5633 gn=0.60 lr=1.50e-03 72,094 tok/s depth=3.00
+[pretrain] 1295/1600 loss=5.2146 ce=4.9834 gn=0.56 lr=1.50e-03 70,811 tok/s depth=3.00
+[pretrain] 1300/1600 loss=5.2112 ce=4.6574 gn=0.57 lr=1.50e-03 71,003 tok/s depth=3.00
+[pretrain] 1305/1600 loss=5.3694 ce=4.8228 gn=0.59 lr=1.50e-03 70,677 tok/s depth=3.00
+[pretrain] 1310/1600 loss=5.3742 ce=4.9436 gn=0.64 lr=1.50e-03 70,567 tok/s depth=3.00
+[pretrain] 1315/1600 loss=5.3484 ce=4.5809 gn=0.59 lr=1.50e-03 70,571 tok/s depth=3.00
+[pretrain] 1320/1600 loss=5.2475 ce=4.7193 gn=0.65 lr=1.50e-03 71,934 tok/s depth=3.00
+[pretrain] 1325/1600 loss=5.2015 ce=4.8757 gn=0.62 lr=1.50e-03 72,670 tok/s depth=3.00
+[pretrain] 1330/1600 loss=5.2847 ce=4.5168 gn=0.61 lr=1.50e-03 70,942 tok/s depth=3.00
+[pretrain] 1335/1600 loss=5.3796 ce=4.7468 gn=0.71 lr=1.50e-03 68,060 tok/s depth=4.00
+[pretrain] 1340/1600 loss=5.4001 ce=4.7469 gn=0.67 lr=1.50e-03 60,921 tok/s depth=4.00
+[pretrain] 1345/1600 loss=5.2561 ce=4.5271 gn=0.58 lr=1.50e-03 60,669 tok/s depth=4.00
+[pretrain] 1350/1600 loss=5.3544 ce=4.7760 gn=0.61 lr=1.50e-03 61,441 tok/s depth=4.00
+[pretrain] 1355/1600 loss=5.5105 ce=4.7572 gn=0.68 lr=1.50e-03 61,123 tok/s depth=4.00
+[pretrain] 1360/1600 loss=5.4644 ce=4.6364 gn=0.62 lr=1.50e-03 61,397 tok/s depth=4.00
+[pretrain] 1365/1600 loss=5.3792 ce=4.7038 gn=0.55 lr=1.50e-03 60,770 tok/s depth=4.00
+[pretrain] 1370/1600 loss=5.2478 ce=4.7412 gn=0.60 lr=1.50e-03 60,821 tok/s depth=4.00
+[pretrain] 1375/1600 loss=5.2896 ce=4.7758 gn=0.61 lr=1.50e-03 59,866 tok/s depth=4.00
+[pretrain] 1380/1600 loss=5.3604 ce=4.5574 gn=0.64 lr=1.50e-03 60,963 tok/s depth=4.00
+[pretrain] 1385/1600 loss=5.3502 ce=4.8370 gn=0.60 lr=1.50e-03 60,697 tok/s depth=4.00
+[pretrain] 1390/1600 loss=5.2739 ce=4.7650 gn=0.61 lr=1.50e-03 61,028 tok/s depth=4.00
+[pretrain] 1395/1600 loss=5.3447 ce=4.4786 gn=0.57 lr=1.50e-03 60,835 tok/s depth=4.00
+[pretrain] 1400/1600 loss=5.3467 ce=4.8322 gn=0.66 lr=1.50e-03 61,411 tok/s depth=4.00
+[pretrain] 1405/1600 loss=5.3942 ce=4.6565 gn=0.56 lr=1.50e-03 61,217 tok/s depth=4.00
+[pretrain] 1410/1600 loss=5.3770 ce=4.7016 gn=0.52 lr=1.50e-03 61,235 tok/s depth=4.00
+[pretrain] 1415/1600 loss=5.3346 ce=4.7941 gn=0.57 lr=1.50e-03 60,880 tok/s depth=4.00
+[pretrain] 1420/1600 loss=5.3110 ce=4.4243 gn=0.59 lr=1.50e-03 61,149 tok/s depth=4.00
+[pretrain] 1425/1600 loss=5.4213 ce=4.4439 gn=0.61 lr=1.50e-03 61,373 tok/s depth=4.00
+[pretrain] 1430/1600 loss=5.3683 ce=4.6334 gn=0.63 lr=1.50e-03 60,810 tok/s depth=4.00
+[pretrain] 1435/1600 loss=5.3158 ce=4.5821 gn=0.64 lr=1.50e-03 61,353 tok/s depth=4.00
+[pretrain] 1440/1600 loss=5.4760 ce=4.8437 gn=0.60 lr=1.50e-03 61,523 tok/s depth=4.00
+[pretrain] 1445/1600 loss=5.2614 ce=4.7126 gn=0.57 lr=1.50e-03 61,171 tok/s depth=4.00
+[pretrain] 1450/1600 loss=5.3464 ce=4.4503 gn=0.55 lr=1.50e-03 61,109 tok/s depth=4.00
+[pretrain] 1455/1600 loss=5.4379 ce=4.6622 gn=0.55 lr=1.50e-03 61,213 tok/s depth=4.00
+[pretrain] 1460/1600 loss=5.2642 ce=4.4146 gn=0.59 lr=1.50e-03 61,075 tok/s depth=4.00
+[pretrain] 1465/1600 loss=5.2483 ce=4.6004 gn=0.50 lr=1.50e-03 61,786 tok/s depth=4.00
+[pretrain] 1470/1600 loss=5.2425 ce=4.3970 gn=0.48 lr=1.50e-03 61,390 tok/s depth=4.00
+[pretrain] 1475/1600 loss=5.3189 ce=4.4914 gn=0.55 lr=1.50e-03 61,687 tok/s depth=4.00
+[pretrain] 1480/1600 loss=5.2899 ce=4.7016 gn=0.59 lr=1.50e-03 62,024 tok/s depth=4.00
+[pretrain] 1485/1600 loss=5.1987 ce=4.4319 gn=0.60 lr=1.50e-03 61,470 tok/s depth=4.00
+[pretrain] 1490/1600 loss=5.2546 ce=4.6162 gn=0.56 lr=1.50e-03 61,864 tok/s depth=4.00
+[pretrain] 1495/1600 loss=5.3840 ce=4.5796 gn=0.61 lr=1.50e-03 62,277 tok/s depth=4.00
+[pretrain] 1500/1600 loss=5.3374 ce=4.8881 gn=0.60 lr=1.50e-03 62,187 tok/s depth=4.00
+[arm b4plc] step 1500 wall 1199s valid_ce 4.7009 dt [0.5156, 0.4902, 0.5156, 0.4961]
+[pretrain] 1505/1600 loss=5.2867 ce=4.8406 gn=0.58 lr=1.50e-03 61,711 tok/s depth=4.00
+[arm b4plc] step 1505 wall 1204s valid_ce 4.7015 dt [0.5156, 0.4902, 0.5156, 0.4961]
+[pretrain] 1510/1600 loss=5.1766 ce=4.4867 gn=0.59 lr=1.50e-03 62,164 tok/s depth=4.00
+[pretrain] 1515/1600 loss=5.2904 ce=4.5888 gn=0.58 lr=1.50e-03 62,318 tok/s depth=4.00
+[pretrain] 1520/1600 loss=5.2165 ce=4.5434 gn=0.57 lr=1.50e-03 62,104 tok/s depth=4.00
+[pretrain] 1525/1600 loss=5.2429 ce=4.5113 gn=0.61 lr=1.50e-03 62,361 tok/s depth=4.00
+[pretrain] 1530/1600 loss=5.2538 ce=4.4672 gn=0.58 lr=1.50e-03 62,167 tok/s depth=4.00
+[pretrain] 1535/1600 loss=5.1752 ce=4.5062 gn=0.64 lr=1.50e-03 62,749 tok/s depth=4.00
+[pretrain] 1540/1600 loss=5.2407 ce=4.4842 gn=0.66 lr=1.50e-03 62,315 tok/s depth=4.00
+[pretrain] 1545/1600 loss=5.1537 ce=4.4916 gn=0.60 lr=1.50e-03 62,885 tok/s depth=4.00
+[pretrain] 1550/1600 loss=5.1123 ce=4.6582 gn=0.55 lr=1.50e-03 62,920 tok/s depth=4.00
+[pretrain] 1555/1600 loss=5.3709 ce=4.7727 gn=0.56 lr=1.50e-03 62,962 tok/s depth=4.00
+[pretrain] 1560/1600 loss=5.2158 ce=4.4593 gn=0.53 lr=1.50e-03 62,118 tok/s depth=4.00
+[pretrain] 1565/1600 loss=5.1813 ce=4.8688 gn=0.67 lr=1.50e-03 62,922 tok/s depth=4.00
+[pretrain] 1570/1600 loss=5.2408 ce=4.2333 gn=0.56 lr=1.50e-03 63,200 tok/s depth=4.00
+[pretrain] 1575/1600 loss=5.3711 ce=4.7173 gn=0.63 lr=1.50e-03 62,999 tok/s depth=4.00
+[pretrain] 1580/1600 loss=5.2936 ce=4.5562 gn=0.61 lr=1.50e-03 63,304 tok/s depth=4.00
+[pretrain] 1585/1600 loss=5.2050 ce=4.5336 gn=0.53 lr=1.50e-03 63,323 tok/s depth=4.00
+[pretrain] 1590/1600 loss=5.1462 ce=4.6968 gn=0.48 lr=1.50e-03 63,381 tok/s depth=4.00
+[pretrain] 1595/1600 loss=5.2335 ce=4.6199 gn=0.58 lr=1.50e-03 63,525 tok/s depth=4.00
+[pretrain] 1600/1600 loss=5.3760 ce=4.7615 gn=0.65 lr=1.50e-03 64,162 tok/s depth=4.00
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[arm b4plc] step 1600 wall 1500s valid_ce 4.6604 dt [0.5156, 0.4902, 0.5156, 0.4961]
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[eval] {"phase": "pretrain", "step": 1600, "event": "validation", "valid_ce": 4.606035888195038, "valid_ppl": 100.08660770352574}
+[arm b4plc] step 1600 wall 1800s valid_ce 4.6604 dt [0.5156, 0.4902, 0.5156, 0.4961]
+[arm b4plc] step 1600 wall 1800s valid_ce 4.6852 dt [0.5156, 0.4902, 0.5156, 0.4961]

@@ -1,0 +1,18 @@
+{
+  "model_name": "Chronos v3",
+  "hidden_size": "d",
+  "prelude_layers": "P",
+  "recurrent_groups": "G",
+  "coda_layers": "C",
+  "recurrent_depth": "R",
+  "num_experts": "E",
+  "num_experts_per_tok": "k",
+  "num_shared_experts": "S",
+  "sliding_window_size": "W",
+  "intermediate_size": "d_{\\mathrm{ff}}",
+  "moe_intermediate_size": "d_{\\mathrm{e}}",
+  "lookahead_steps": "K",
+  "tie_word_embeddings": null,
+  "use_moe": null,
+  "recurrent_order": null
+}

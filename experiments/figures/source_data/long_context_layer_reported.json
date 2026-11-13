@@ -1,0 +1,36 @@
+{
+  "sequence_tokens": [
+    16384,
+    32768,
+    65536
+  ],
+  "swa_full_GiB": [
+    10.4,
+    40.5,
+    null
+  ],
+  "swa_blockwise_GiB": [
+    0.8,
+    1.2,
+    2.7
+  ],
+  "mla_full_GiB": [
+    10.3,
+    39.5,
+    148.6
+  ],
+  "mla_blockwise_GiB": [
+    0.96,
+    1.41,
+    2.49
+  ],
+  "evidence": "reported-unverified for SWA; reported table for MLA",
+  "scope": "one layer, bf16, GPU as described by original drawing script; raw measurement file not supplied",
+  "source": "make_figures_original.py",
+  "source_lines": [
+    484,
+    514
+  ],
+  "mla_table_source": "docs/ATTENTION.md:62-65",
+  "missing_swa_64k": "Original script states OOM; no precise lower bound is supported"
+}

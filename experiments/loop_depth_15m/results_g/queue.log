@@ -1,0 +1,13 @@
+[exp] b4dt1j start 14:19:41 load 3.49 3.13 3.08 src /tmp/chronos_src_E
+Traceback (most recent call last):
+  File "/Users/Fona/Downloads/Project_Chronos/experiments/loop_depth_15m/run_arm.py", line 157, in <module>
+    main()
+  File "/Users/Fona/Downloads/Project_Chronos/experiments/loop_depth_15m/run_arm.py", line 131, in main
+    run.run_phase(0, t0 + 1e7, max_steps=n)
+  File "/tmp/chronos_src_E/chronos/mlx/training/longrun.py", line 584, in run_phase
+    routes.add(_collect_router_probs(self.model), top_k, token_mask_for(labels))
+  File "/tmp/chronos_src_E/chronos/mlx/training/longrun.py", line 196, in add
+    self.load, self.importance, self.entropy = self.load + load, self.importance + imp, self.entropy + ent
+                                               ~~~~~~~~~~^~~~~~
+ValueError: [broadcast_shapes] Shapes (14,24) and (10,24) cannot be broadcast.
+[exp] QUEUE G DONE

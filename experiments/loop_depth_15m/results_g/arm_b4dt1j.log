@@ -1,0 +1,109 @@
+[run] MLX cache limit: 16 GiB (previous 121.6 GiB; default min(RAM/8, 16 GiB))
+[arm b4dt1j] step 0 wall 0s valid_ce 10.5751 dt [1.0, 1.0, 1.0, 1.0]
+[pretrain] 1/1900 loss=11.9923 ce=10.5498 gn=0.86 lr=1.50e-03 34,272 tok/s depth=2.00
+[pretrain] 2/1900 loss=11.8513 ce=10.3803 gn=1.09 lr=1.50e-03 99,717 tok/s depth=2.00
+[pretrain] 3/1900 loss=11.6690 ce=10.1243 gn=1.04 lr=1.50e-03 103,386 tok/s depth=2.00
+[pretrain] 5/1900 loss=11.3103 ce=9.7775 gn=0.80 lr=1.50e-03 101,445 tok/s depth=2.00
+[pretrain] 10/1900 loss=10.4603 ce=8.9718 gn=0.68 lr=1.50e-03 100,857 tok/s depth=2.00
+[pretrain] 15/1900 loss=9.8213 ce=8.3322 gn=0.76 lr=1.50e-03 102,680 tok/s depth=2.00
+[pretrain] 20/1900 loss=9.4361 ce=7.9970 gn=0.72 lr=1.50e-03 100,089 tok/s depth=2.00
+[pretrain] 25/1900 loss=9.0391 ce=7.7631 gn=2.05 lr=1.50e-03 103,158 tok/s depth=2.00
+[arm b4dt1j] step 25 wall 18s valid_ce 7.8393 dt [1.0, 1.0, 1.0, 1.0]
+[pretrain] 30/1900 loss=8.9203 ce=7.5435 gn=0.43 lr=1.50e-03 101,656 tok/s depth=2.00
+[pretrain] 35/1900 loss=8.8177 ce=7.3621 gn=0.40 lr=1.50e-03 101,284 tok/s depth=2.00
+[pretrain] 40/1900 loss=8.6150 ce=7.5543 gn=0.39 lr=1.50e-03 102,880 tok/s depth=2.00
+[pretrain] 45/1900 loss=8.5907 ce=7.2999 gn=0.38 lr=1.50e-03 100,917 tok/s depth=2.00
+[pretrain] 50/1900 loss=8.4684 ce=7.4023 gn=0.31 lr=1.50e-03 101,834 tok/s depth=2.00
+[arm b4dt1j] step 50 wall 34s valid_ce 7.4044 dt [1.0, 1.0, 1.0, 1.0]
+[pretrain] 55/1900 loss=8.2567 ce=7.0857 gn=0.33 lr=1.50e-03 103,929 tok/s depth=2.00
+[pretrain] 60/1900 loss=8.1518 ce=7.1472 gn=0.47 lr=1.50e-03 100,433 tok/s depth=2.00
+[pretrain] 65/1900 loss=8.0697 ce=6.9619 gn=0.40 lr=1.50e-03 102,677 tok/s depth=2.00
+[pretrain] 70/1900 loss=8.1025 ce=6.9668 gn=0.34 lr=1.50e-03 103,307 tok/s depth=2.00
+[pretrain] 75/1900 loss=7.8794 ce=7.0754 gn=0.48 lr=1.50e-03 101,949 tok/s depth=2.00
+[arm b4dt1j] step 75 wall 50s valid_ce 7.1652 dt [1.0, 1.0, 1.0, 1.0]
+[pretrain] 80/1900 loss=7.9909 ce=6.9439 gn=0.35 lr=1.50e-03 102,321 tok/s depth=2.00
+[pretrain] 85/1900 loss=7.8379 ce=6.7957 gn=0.36 lr=1.50e-03 102,925 tok/s depth=2.00
+[pretrain] 90/1900 loss=7.8071 ce=6.9134 gn=0.45 lr=1.50e-03 101,350 tok/s depth=2.00
+[pretrain] 95/1900 loss=7.7352 ce=6.8775 gn=0.39 lr=1.50e-03 103,839 tok/s depth=2.00
+[pretrain] 100/1900 loss=7.6635 ce=6.7262 gn=0.48 lr=1.50e-03 101,241 tok/s depth=2.00
+[arm b4dt1j] step 100 wall 66s valid_ce 6.9678 dt [1.0, 1.0, 1.0, 1.0]
+[pretrain] 105/1900 loss=7.6508 ce=6.6901 gn=0.35 lr=1.50e-03 102,138 tok/s depth=2.00
+[pretrain] 110/1900 loss=7.6466 ce=6.8571 gn=0.40 lr=1.50e-03 103,831 tok/s depth=2.00
+[pretrain] 115/1900 loss=7.5101 ce=6.7867 gn=0.55 lr=1.50e-03 99,819 tok/s depth=2.00
+[pretrain] 120/1900 loss=7.5264 ce=6.6988 gn=0.37 lr=1.50e-03 100,776 tok/s depth=2.00
+[pretrain] 125/1900 loss=7.4906 ce=6.4117 gn=0.40 lr=1.50e-03 103,140 tok/s depth=2.00
+[pretrain] 130/1900 loss=7.3914 ce=6.6437 gn=0.42 lr=1.50e-03 100,811 tok/s depth=2.00
+[pretrain] 135/1900 loss=7.3503 ce=6.6757 gn=0.51 lr=1.50e-03 103,681 tok/s depth=2.00
+[pretrain] 140/1900 loss=7.3372 ce=6.5917 gn=0.47 lr=1.50e-03 102,143 tok/s depth=2.00
+[pretrain] 145/1900 loss=7.3886 ce=6.5025 gn=0.42 lr=1.50e-03 101,737 tok/s depth=2.00
+[pretrain] 150/1900 loss=7.2280 ce=6.1843 gn=0.50 lr=1.50e-03 102,909 tok/s depth=2.00
+[arm b4dt1j] step 150 wall 98s valid_ce 6.7088 dt [1.0, 1.0, 1.0, 1.0]
+[pretrain] 155/1900 loss=7.3812 ce=6.6293 gn=0.50 lr=1.50e-03 101,888 tok/s depth=2.00
+[pretrain] 160/1900 loss=7.2538 ce=6.4524 gn=0.46 lr=1.50e-03 101,598 tok/s depth=2.00
+[pretrain] 165/1900 loss=7.2516 ce=6.6403 gn=0.52 lr=1.50e-03 102,653 tok/s depth=2.00
+[pretrain] 170/1900 loss=7.1874 ce=6.4645 gn=0.45 lr=1.50e-03 101,536 tok/s depth=2.00
+[pretrain] 175/1900 loss=7.1169 ce=6.3509 gn=0.45 lr=1.50e-03 102,718 tok/s depth=2.00
+[pretrain] 180/1900 loss=7.0611 ce=6.4042 gn=0.39 lr=1.50e-03 101,555 tok/s depth=2.00
+[pretrain] 185/1900 loss=7.0642 ce=6.5129 gn=0.38 lr=1.50e-03 101,552 tok/s depth=2.00
+[pretrain] 190/1900 loss=7.0792 ce=6.3792 gn=0.42 lr=1.50e-03 102,637 tok/s depth=2.00
+[pretrain] 195/1900 loss=7.0559 ce=6.3497 gn=0.41 lr=1.50e-03 99,744 tok/s depth=2.00
+[pretrain] 200/1900 loss=6.9666 ce=6.3472 gn=0.52 lr=1.50e-03 101,712 tok/s depth=2.00
+[arm b4dt1j] step 200 wall 130s valid_ce 6.5170 dt [1.0, 1.0, 1.0, 1.0]
+[pretrain] 205/1900 loss=7.0010 ce=6.3858 gn=0.50 lr=1.50e-03 101,302 tok/s depth=2.00
+[pretrain] 210/1900 loss=6.9626 ce=6.3055 gn=0.38 lr=1.50e-03 99,741 tok/s depth=2.00
+[pretrain] 215/1900 loss=6.9599 ce=6.2924 gn=0.36 lr=1.50e-03 100,744 tok/s depth=2.00
+[pretrain] 220/1900 loss=6.8942 ce=6.3342 gn=0.39 lr=1.50e-03 99,193 tok/s depth=2.00
+[pretrain] 225/1900 loss=6.8107 ce=6.1470 gn=0.50 lr=1.50e-03 100,646 tok/s depth=2.00
+[pretrain] 230/1900 loss=6.8164 ce=6.2243 gn=0.43 lr=1.50e-03 101,910 tok/s depth=2.00
+[pretrain] 235/1900 loss=6.7631 ce=6.0231 gn=0.41 lr=1.50e-03 100,480 tok/s depth=2.00
+[pretrain] 240/1900 loss=6.8735 ce=6.2443 gn=0.49 lr=1.50e-03 102,389 tok/s depth=2.00
+[pretrain] 245/1900 loss=6.8406 ce=5.9831 gn=0.46 lr=1.50e-03 99,811 tok/s depth=2.00
+[pretrain] 250/1900 loss=6.7815 ce=6.1461 gn=0.45 lr=1.50e-03 100,252 tok/s depth=2.00
+[pretrain] 255/1900 loss=6.7038 ce=6.0327 gn=0.45 lr=1.50e-03 102,618 tok/s depth=2.00
+[pretrain] 260/1900 loss=6.8051 ce=5.9496 gn=0.37 lr=1.50e-03 98,998 tok/s depth=2.00
+[pretrain] 265/1900 loss=6.7532 ce=5.8790 gn=0.41 lr=1.50e-03 101,834 tok/s depth=2.00
+[pretrain] 270/1900 loss=6.7320 ce=5.8409 gn=0.49 lr=1.50e-03 100,611 tok/s depth=2.00
+[pretrain] 275/1900 loss=6.8232 ce=6.2105 gn=0.50 lr=1.50e-03 99,164 tok/s depth=2.00
+[pretrain] 280/1900 loss=6.6914 ce=6.0074 gn=0.49 lr=1.50e-03 102,269 tok/s depth=2.00
+[pretrain] 285/1900 loss=6.7838 ce=6.1618 gn=0.47 lr=1.50e-03 99,003 tok/s depth=2.00
+[pretrain] 290/1900 loss=6.7209 ce=6.1010 gn=0.46 lr=1.50e-03 100,521 tok/s depth=2.00
+[pretrain] 295/1900 loss=6.4947 ce=5.6400 gn=0.48 lr=1.50e-03 101,680 tok/s depth=2.00
+[pretrain] 300/1900 loss=6.6398 ce=6.0300 gn=0.42 lr=1.50e-03 98,687 tok/s depth=2.00
+[arm b4dt1j] step 300 wall 196s valid_ce 6.2216 dt [1.0, 1.0, 1.0, 1.0]
+[pretrain] 305/1900 loss=6.5545 ce=6.1521 gn=0.37 lr=1.50e-03 100,094 tok/s depth=2.00
+[pretrain] 310/1900 loss=6.7101 ce=6.2289 gn=0.43 lr=1.50e-03 100,557 tok/s depth=2.00
+[pretrain] 315/1900 loss=6.5080 ce=5.7817 gn=0.48 lr=1.50e-03 97,379 tok/s depth=2.00
+[pretrain] 320/1900 loss=6.5876 ce=5.8611 gn=0.46 lr=1.50e-03 100,452 tok/s depth=2.00
+[pretrain] 325/1900 loss=6.6835 ce=6.1075 gn=0.41 lr=1.50e-03 100,266 tok/s depth=2.00
+[pretrain] 330/1900 loss=6.5898 ce=6.0056 gn=0.44 lr=1.50e-03 98,036 tok/s depth=2.00
+[pretrain] 335/1900 loss=6.5694 ce=6.0045 gn=0.38 lr=1.50e-03 101,520 tok/s depth=2.00
+[pretrain] 340/1900 loss=6.5626 ce=5.6995 gn=0.39 lr=1.50e-03 98,219 tok/s depth=2.00
+[pretrain] 345/1900 loss=6.5470 ce=6.1409 gn=0.43 lr=1.50e-03 98,505 tok/s depth=2.00
+[pretrain] 350/1900 loss=6.4828 ce=5.9019 gn=0.43 lr=1.50e-03 98,131 tok/s depth=2.00
+[pretrain] 355/1900 loss=6.4872 ce=5.9668 gn=0.43 lr=1.50e-03 98,808 tok/s depth=2.00
+[pretrain] 360/1900 loss=6.5196 ce=5.7551 gn=0.39 lr=1.50e-03 99,881 tok/s depth=2.00
+[pretrain] 365/1900 loss=6.6937 ce=5.7893 gn=0.48 lr=1.50e-03 98,547 tok/s depth=2.00
+[pretrain] 370/1900 loss=6.4288 ce=6.0444 gn=0.41 lr=1.50e-03 98,176 tok/s depth=2.00
+[pretrain] 375/1900 loss=6.4136 ce=5.6791 gn=0.46 lr=1.50e-03 101,061 tok/s depth=2.00
+[pretrain] 380/1900 loss=6.4175 ce=5.7081 gn=0.44 lr=1.50e-03 98,889 tok/s depth=2.00
+[pretrain] 385/1900 loss=6.4639 ce=5.8683 gn=0.42 lr=1.50e-03 98,485 tok/s depth=2.00
+[pretrain] 390/1900 loss=6.5151 ce=5.8590 gn=0.46 lr=1.50e-03 98,188 tok/s depth=2.00
+[pretrain] 395/1900 loss=6.4653 ce=5.8670 gn=0.45 lr=1.50e-03 98,957 tok/s depth=2.00
+[pretrain] 400/1900 loss=6.4419 ce=5.8952 gn=0.41 lr=1.50e-03 99,375 tok/s depth=2.00
+[arm b4dt1j] step 400 wall 262s valid_ce 6.0361 dt [1.0, 1.0, 1.0, 1.0]
+[pretrain] 405/1900 loss=6.4305 ce=6.1045 gn=0.45 lr=1.50e-03 100,430 tok/s depth=2.00
+[pretrain] 410/1900 loss=6.3491 ce=5.8683 gn=0.40 lr=1.50e-03 98,185 tok/s depth=2.00
+[pretrain] 415/1900 loss=6.3022 ce=5.6291 gn=0.47 lr=1.50e-03 98,672 tok/s depth=2.00
+[pretrain] 420/1900 loss=6.4108 ce=5.8545 gn=0.48 lr=1.50e-03 97,753 tok/s depth=2.00
+[pretrain] 425/1900 loss=6.3768 ce=5.7434 gn=0.38 lr=1.50e-03 97,213 tok/s depth=2.00
+[pretrain] 430/1900 loss=6.3242 ce=5.7899 gn=0.42 lr=1.50e-03 100,055 tok/s depth=2.00
+[pretrain] 435/1900 loss=6.3444 ce=5.7402 gn=0.44 lr=1.50e-03 98,170 tok/s depth=2.00
+[pretrain] 440/1900 loss=6.4499 ce=5.8676 gn=0.41 lr=1.50e-03 97,649 tok/s depth=2.00
+[pretrain] 445/1900 loss=6.2670 ce=5.9526 gn=0.49 lr=1.50e-03 99,845 tok/s depth=2.00
+[pretrain] 450/1900 loss=6.3712 ce=5.7017 gn=0.44 lr=1.50e-03 97,794 tok/s depth=2.00
+[pretrain] 455/1900 loss=6.3221 ce=5.7436 gn=0.42 lr=1.50e-03 97,882 tok/s depth=2.00
+[pretrain] 460/1900 loss=6.1722 ce=5.6633 gn=0.41 lr=1.50e-03 100,029 tok/s depth=2.00
+[arm b4dt1j] step 460 wall 302s valid_ce 5.9546 dt [1.0, 1.0, 1.0, 1.0]
+[pretrain] 465/1900 loss=6.2680 ce=5.4432 gn=0.43 lr=1.50e-03 98,216 tok/s depth=2.00
+[pretrain] 470/1900 loss=6.2546 ce=5.4914 gn=0.43 lr=1.50e-03 96,709 tok/s depth=2.00
+[pretrain] 475/1900 loss=6.3146 ce=5.7222 gn=0.47 lr=1.50e-03 100,229 tok/s depth=2.00

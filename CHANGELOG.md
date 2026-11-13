@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.3.3] — 2026-11-14 (stable)
+
+Stable release. No kernel code changes beyond 0.3.3a1; this release bumps the version string and ships the final documentation set.
+
+### Added
+- Integrated kernel documentation. `docs/KERNEL_ARCHITECTURE.md` is the new top-level walk-through of the forward stack, block interior, cluster-locality objective, expert-residency mechanism, recurrence and self-speculative decoding. Four code-generated architecture figures under `docs/assets/arch/` carry the schematics, with a reproducible generator (`docs/assets/arch/make_arch.py`) and symbol table (`architecture_config.json`).
+- Per-component chapters: `MOE_ROUTING.md`, `CLUSTER_LOCALITY.md`, `RESIDENCY.md`, `LAZY_EXPERTS.md`, `LOOKAHEAD.md`, `LOOP_DEPTH.md`, `LONG_CONTEXT.md`, `SPEC_DECODE.md`, with source-code line refs, mermaid mechanism diagrams and measured numbers traced to recorded JSONs under `experiments/figures/source_data/`.
+- Data figures. 18 redesigned matplotlib panels replace the earlier exports under `docs/assets/`; each panel has a `_outlined.svg` with text converted to paths. Generator and snapshotted source data live under `experiments/figures/` with a `verify_values.py` numeric audit (87 checks, 880 numeric entries; exact except for a 1e-12 tolerance on the sigmoid inverse).
+- Evidence ledger (`docs/REPRODUCIBILITY.md`) and symbol table (`docs/SYMBOLS.md`); a Chinese reading guide (`docs/READING_GUIDE_ZH.md`).
+
+### Changed
+- `docs/README.md` rewritten with a reading-route diagram, a kernel-interior gallery, and an at-a-glance measured-evidence row.
+- `docs/OVERVIEW.md` and `docs/THEORY.md` redirect legacy `RECURRENCE.md`/`ROADMAP.md` references into the new kernel and loop-depth chapters.
+- `docs/KERNEL_ARCHITECTURE.md` corrects the block-order vs layer-order claim: the sign depends on the per-group step-size schedule (sigmoid `dt` → block-order wins by 0.03 nats; clamp `dt = 1` → layer-order wins by 0.29 nats on the 15 M depth-4 arms).
+
+### Fixed
+- Documentation cross-reference graph. Every `.md` link resolves, every asset path exists, every source-code line reference points at a real file in the tree.
+
+### Not changed
+- Kernel code, trainer, planner, auto-tune, Web UI, serving adapter. Existing configs and checkpoints behave as in 0.3.3a1.
+
 ## [0.3.3a1] — 2026-11-12 (beta)
 
 This release closes three gaps in 0.3.3a0. Every loop knob now has a planner recommendation and an auto-tune switch. The auto-tune probe now scores what it was meant to score. The en-zh model folder has left the repository root. Kernel defaults are unchanged, so existing configs and checkpoints behave as in 0.3.3a0.

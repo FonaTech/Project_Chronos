@@ -1,0 +1,2995 @@
+{
+  "repo": "/Users/Fona/Documents/Codex/2026-11-13/z-h/outputs/figure_redesign/source_data",
+  "dpi": 600,
+  "formats": [
+    "png",
+    "pdf",
+    "svg"
+  ],
+  "figures": [
+    {
+      "name": "loop_depth_efficiency",
+      "title": "Training cost across recurrent depths",
+      "scope": "15M backbone · context 512 · one seed per arm · ≈30 min training",
+      "evidence": "measured",
+      "note": "Logged values preserved; no smoothing or inferred error bars.",
+      "sources": {
+        "experiments/loop_depth_15m/results/arm_d1.json": "4de2fa7b7607de0961a6365fa09702fdeafe411f3a92a8313cefbeb520b13149",
+        "experiments/loop_depth_15m/results/arm_d4.json": "75b169056d1c217d6152db72b74ae6f330dd606f4b5c8dc8057181e5c1871587",
+        "experiments/loop_depth_15m/results/arm_d8.json": "4d1fbccb276d3222caf4afc55b55e5bf3d2a884ee869b375f1b80c2edb24b9b0"
+      },
+      "series": [
+        {
+          "label": "d1: Throughput",
+          "x": [
+            "d1"
+          ],
+          "y": [
+            105.51425718406746
+          ],
+          "source": "experiments/loop_depth_15m/results/arm_d1.json",
+          "json_fields": [
+            "final.step",
+            "final.train_wall_s",
+            "final.peak_gb",
+            "final.tokens"
+          ],
+          "transform": "step / (train_wall_s / 60)",
+          "evidence": "measured"
+        },
+        {
+          "label": "d4: Throughput",
+          "x": [
+            "d4"
+          ],
+          "y": [
+            61.67571761055082
+          ],
+          "source": "experiments/loop_depth_15m/results/arm_d4.json",
+          "json_fields": [
+            "final.step",
+            "final.train_wall_s",
+            "final.peak_gb",
+            "final.tokens"
+          ],
+          "transform": "step / (train_wall_s / 60)",
+          "evidence": "measured"
+        },
+        {
+          "label": "d8: Throughput",
+          "x": [
+            "d8"
+          ],
+          "y": [
+            39.08415567136046
+          ],
+          "source": "experiments/loop_depth_15m/results/arm_d8.json",
+          "json_fields": [
+            "final.step",
+            "final.train_wall_s",
+            "final.peak_gb",
+            "final.tokens"
+          ],
+          "transform": "step / (train_wall_s / 60)",
+          "evidence": "measured"
+        },
+        {
+          "label": "d1: Memory",
+          "x": [
+            "d1"
+          ],
+          "y": [
+            5.67
+          ],
+          "source": "experiments/loop_depth_15m/results/arm_d1.json",
+          "json_fields": [
+            "final.step",
+            "final.train_wall_s",
+            "final.peak_gb",
+            "final.tokens"
+          ],
+          "transform": "peak_gb",
+          "evidence": "measured"
+        },
+        {
+          "label": "d4: Memory",
+          "x": [
+            "d4"
+          ],
+          "y": [
+            7.49
+          ],
+          "source": "experiments/loop_depth_15m/results/arm_d4.json",
+          "json_fields": [
+            "final.step",
+            "final.train_wall_s",
+            "final.peak_gb",
+            "final.tokens"
+          ],
+          "transform": "peak_gb",
+          "evidence": "measured"
+        },
+        {
+          "label": "d8: Memory",
+          "x": [
+            "d8"
+          ],
+          "y": [
+            10.16
+          ],
+          "source": "experiments/loop_depth_15m/results/arm_d8.json",
+          "json_fields": [
+            "final.step",
+            "final.train_wall_s",
+            "final.peak_gb",
+            "final.tokens"
+          ],
+          "transform": "peak_gb",
+          "evidence": "measured"
+        },
+        {
+          "label": "d1: Tokens processed",
+          "x": [
+            "d1"
+          ],
+          "y": [
+            207.74912
+          ],
+          "source": "experiments/loop_depth_15m/results/arm_d1.json",
+          "json_fields": [
+            "final.step",
+            "final.train_wall_s",
+            "final.peak_gb",
+            "final.tokens"
+          ],
+          "transform": "tokens / 1e6",
+          "evidence": "measured"
+        },
+        {
+          "label": "d4: Tokens processed",
+          "x": [
+            "d4"
+          ],
+          "y": [
+            121.56928
+          ],
+          "source": "experiments/loop_depth_15m/results/arm_d4.json",
+          "json_fields": [
+            "final.step",
+            "final.train_wall_s",
+            "final.peak_gb",
+            "final.tokens"
+          ],
+          "transform": "tokens / 1e6",
+          "evidence": "measured"
+        },
+        {
+          "label": "d8: Tokens processed",
+          "x": [
+            "d8"
+          ],
+          "y": [
+            77.0048
+          ],
+          "source": "experiments/loop_depth_15m/results/arm_d8.json",
+          "json_fields": [
+            "final.step",
+            "final.train_wall_s",
+            "final.peak_gb",
+            "final.tokens"
+          ],
+          "transform": "tokens / 1e6",
+          "evidence": "measured"
+        }
+      ],
+      "layout": {
+        "min_font_pt": 6.4,
+        "issues": [],
+        "size_mm": [
+          180.0,
+          85.0
+        ]
+      },
+      "status": "rendered"
+    },
+    {
+      "name": "loop_depth_ce_curves",
+      "title": "Validation cross-entropy across loop configurations",
+      "scope": "15M backbone · one seed per arm · full trajectories and shared training windows",
+      "evidence": "measured",
+      "note": "Logged values preserved; no smoothing or inferred error bars.",
+      "sources": {
+        "experiments/loop_depth_15m/results/arm_d1.json": "4de2fa7b7607de0961a6365fa09702fdeafe411f3a92a8313cefbeb520b13149",
+        "experiments/loop_depth_15m/results/arm_d4.json": "75b169056d1c217d6152db72b74ae6f330dd606f4b5c8dc8057181e5c1871587",
+        "experiments/loop_depth_15m/results/arm_d8.json": "4d1fbccb276d3222caf4afc55b55e5bf3d2a884ee869b375f1b80c2edb24b9b0",
+        "experiments/loop_depth_15m/results_b/arm_b4.json": "cb2ce8774085d8cfe5f89700433754f534c948d6e63461114be93a4f019a3923",
+        "experiments/loop_depth_15m/results_b/arm_b8.json": "1728cb212ba4ea1622c04ed6bbc350645107d346a4e64624a1f082b97ee6192e"
+      },
+      "series": [
+        {
+          "label": "d1",
+          "x": [
+            0,
+            25,
+            50,
+            75,
+            100,
+            150,
+            200,
+            300,
+            400,
+            500,
+            520,
+            600,
+            800,
+            1000,
+            1025,
+            1250,
+            1500,
+            1550,
+            2000,
+            2085,
+            2500,
+            2630,
+            3000,
+            3170,
+            3170
+          ],
+          "y": [
+            10.57109785079956,
+            9.1861172914505,
+            7.744904458522797,
+            7.41456139087677,
+            7.171934068202972,
+            6.839791685342789,
+            6.612984240055084,
+            6.296387761831284,
+            6.075185686349869,
+            5.8766045570373535,
+            5.852139115333557,
+            5.721298307180405,
+            5.447747081518173,
+            5.130508571863174,
+            5.088093191385269,
+            4.863718569278717,
+            4.7240989208221436,
+            4.703584522008896,
+            4.541473835706711,
+            4.525050222873688,
+            4.4446861743927,
+            4.416867822408676,
+            4.3690939247608185,
+            4.355414569377899,
+            4.3785764798521996
+          ],
+          "source": "experiments/loop_depth_15m/results/arm_d1.json",
+          "json_fields": [
+            "evals[*].step",
+            "evals[*].valid_ce"
+          ],
+          "transform": "identity",
+          "evidence": "measured",
+          "train_minutes": [
+            0.0,
+            0.22666666666666666,
+            0.44333333333333336,
+            0.6649999999999999,
+            0.8933333333333333,
+            1.375,
+            1.85,
+            2.7916666666666665,
+            3.795,
+            4.83,
+            5.036666666666666,
+            5.8516666666666675,
+            7.843333333333334,
+            9.795,
+            10.033333333333333,
+            12.198333333333332,
+            14.568333333333333,
+            15.036666666666667,
+            19.23166666666667,
+            20.016666666666666,
+            23.826666666666664,
+            25.02,
+            28.446666666666665,
+            30.043333333333333,
+            30.043333333333333
+          ]
+        },
+        {
+          "label": "d4",
+          "x": [
+            0,
+            25,
+            50,
+            75,
+            100,
+            150,
+            200,
+            300,
+            310,
+            400,
+            500,
+            600,
+            620,
+            800,
+            915,
+            1000,
+            1215,
+            1250,
+            1500,
+            1535,
+            1855,
+            1855
+          ],
+          "y": [
+            10.570690870285034,
+            9.187909424304962,
+            7.707067489624023,
+            7.3162519335746765,
+            7.044637501239777,
+            6.722981959581375,
+            6.524762392044067,
+            6.231628924608231,
+            6.204071879386902,
+            6.018022119998932,
+            5.87040451169014,
+            5.688298046588898,
+            5.662899613380432,
+            5.451222091913223,
+            5.302253216505051,
+            5.18149396777153,
+            4.892616778612137,
+            4.8574574291706085,
+            4.69429624080658,
+            4.6829851269721985,
+            4.559163868427277,
+            4.586233034729958
+          ],
+          "source": "experiments/loop_depth_15m/results/arm_d4.json",
+          "json_fields": [
+            "evals[*].step",
+            "evals[*].valid_ce"
+          ],
+          "transform": "identity",
+          "evidence": "measured",
+          "train_minutes": [
+            0.0,
+            0.415,
+            0.825,
+            1.2333333333333334,
+            1.6416666666666666,
+            2.455,
+            3.2666666666666666,
+            4.881666666666666,
+            5.043333333333334,
+            6.491666666666666,
+            8.101666666666667,
+            9.708333333333334,
+            10.033333333333333,
+            13.05,
+            15.018333333333334,
+            16.456666666666667,
+            20.008333333333333,
+            20.571666666666665,
+            24.521666666666665,
+            25.07,
+            30.076666666666664,
+            30.076666666666664
+          ]
+        },
+        {
+          "label": "d8",
+          "x": [
+            0,
+            25,
+            50,
+            75,
+            100,
+            150,
+            200,
+            300,
+            395,
+            400,
+            500,
+            595,
+            600,
+            790,
+            800,
+            985,
+            1000,
+            1175,
+            1175
+          ],
+          "y": [
+            10.570535063743591,
+            9.211689293384552,
+            7.728060871362686,
+            7.357338160276413,
+            7.086179852485657,
+            6.727196246385574,
+            6.478830069303513,
+            6.176195472478867,
+            5.961611479520798,
+            5.961201757192612,
+            5.758355915546417,
+            5.619464576244354,
+            5.605817049741745,
+            5.301355093717575,
+            5.279505342245102,
+            4.973255038261414,
+            4.953923434019089,
+            4.792382538318634,
+            4.824604205787182
+          ],
+          "source": "experiments/loop_depth_15m/results/arm_d8.json",
+          "json_fields": [
+            "evals[*].step",
+            "evals[*].valid_ce"
+          ],
+          "transform": "identity",
+          "evidence": "measured",
+          "train_minutes": [
+            0.0,
+            0.6483333333333333,
+            1.2883333333333333,
+            1.93,
+            2.5733333333333333,
+            3.8449999999999998,
+            5.116666666666666,
+            7.6433333333333335,
+            10.046666666666665,
+            10.173333333333334,
+            12.705,
+            15.104999999999999,
+            15.231666666666666,
+            20.053333333333335,
+            20.31,
+            25.03166666666667,
+            25.415000000000003,
+            30.063333333333333,
+            30.063333333333333
+          ]
+        },
+        {
+          "label": "b4",
+          "x": [
+            0,
+            25,
+            50,
+            75,
+            100,
+            150,
+            200,
+            210,
+            300,
+            400,
+            410,
+            500,
+            600,
+            610,
+            800,
+            810,
+            1000,
+            1015,
+            1225,
+            1225
+          ],
+          "y": [
+            10.573656558990479,
+            9.212062954902649,
+            7.647359192371368,
+            7.264325141906738,
+            7.023693650960922,
+            6.694006830453873,
+            6.486877113580704,
+            6.449027955532074,
+            6.177785903215408,
+            5.951929271221161,
+            5.932233393192291,
+            5.76526266336441,
+            5.613759815692902,
+            5.595552235841751,
+            5.3939327001571655,
+            5.376541018486023,
+            5.157259672880173,
+            5.125705301761627,
+            4.845867872238159,
+            4.878100201487541
+          ],
+          "source": "experiments/loop_depth_15m/results_b/arm_b4.json",
+          "json_fields": [
+            "evals[*].step",
+            "evals[*].valid_ce"
+          ],
+          "transform": "identity",
+          "evidence": "measured",
+          "train_minutes": [
+            0.0,
+            0.55,
+            1.1516666666666666,
+            1.7616666666666667,
+            2.378333333333333,
+            3.605,
+            4.84,
+            5.088333333333334,
+            7.316666666666666,
+            9.81,
+            10.061666666666667,
+            12.316666666666666,
+            14.823333333333332,
+            15.075,
+            19.828333333333333,
+            20.073333333333334,
+            24.696666666666665,
+            25.058333333333334,
+            30.016666666666666,
+            30.016666666666666
+          ]
+        },
+        {
+          "label": "b8",
+          "x": [
+            0,
+            25,
+            50,
+            75,
+            100,
+            150,
+            155,
+            200,
+            300,
+            305,
+            400,
+            440,
+            500,
+            570,
+            600,
+            700,
+            800,
+            830,
+            830
+          ],
+          "y": [
+            10.577463984489441,
+            9.256003320217133,
+            7.650470703840256,
+            7.250379770994186,
+            6.996816962957382,
+            6.6479023694992065,
+            6.623564958572388,
+            6.420314431190491,
+            6.090827405452728,
+            6.076596170663834,
+            5.86882609128952,
+            5.783494055271149,
+            5.6734397411346436,
+            5.568959951400757,
+            5.519253194332123,
+            5.370889782905579,
+            5.22491317987442,
+            5.1563756465911865,
+            5.186852492392063
+          ],
+          "source": "experiments/loop_depth_15m/results_b/arm_b8.json",
+          "json_fields": [
+            "evals[*].step",
+            "evals[*].valid_ce"
+          ],
+          "transform": "identity",
+          "evidence": "measured",
+          "train_minutes": [
+            0.0,
+            0.9116666666666667,
+            1.8066666666666669,
+            2.7016666666666667,
+            3.4583333333333335,
+            4.9366666666666665,
+            5.105,
+            6.489999999999999,
+            9.971666666666666,
+            10.148333333333333,
+            13.561666666666667,
+            15.036666666666667,
+            17.31,
+            20.003333333333334,
+            21.16166666666667,
+            25.041666666666668,
+            28.904999999999998,
+            30.063333333333333,
+            30.063333333333333
+          ]
+        }
+      ],
+      "layout": {
+        "min_font_pt": 6.4,
+        "issues": [],
+        "size_mm": [
+          180.0,
+          151.0
+        ]
+      },
+      "status": "rendered"
+    },
+    {
+      "name": "per_source_ce",
+      "title": "Final validation CE by corpus",
+      "scope": "≈30 min per arm · one seed · row labels include completed optimizer steps",
+      "evidence": "measured",
+      "note": "Logged values preserved; no smoothing or inferred error bars.",
+      "sources": {
+        "experiments/loop_depth_15m/results/arm_d1.json": "4de2fa7b7607de0961a6365fa09702fdeafe411f3a92a8313cefbeb520b13149",
+        "experiments/loop_depth_15m/results/arm_d4.json": "75b169056d1c217d6152db72b74ae6f330dd606f4b5c8dc8057181e5c1871587",
+        "experiments/loop_depth_15m/results_b/arm_b4.json": "cb2ce8774085d8cfe5f89700433754f534c948d6e63461114be93a4f019a3923",
+        "experiments/loop_depth_15m/results/arm_d8.json": "4d1fbccb276d3222caf4afc55b55e5bf3d2a884ee869b375f1b80c2edb24b9b0",
+        "experiments/loop_depth_15m/results_b/arm_b8.json": "1728cb212ba4ea1622c04ed6bbc350645107d346a4e64624a1f082b97ee6192e"
+      },
+      "series": [
+        {
+          "label": "d1",
+          "x": [
+            "fw_edu",
+            "edu_zh",
+            "cosmo",
+            "wiki_en",
+            "wiki_zh"
+          ],
+          "y": [
+            4.28364372253418,
+            5.07377690076828,
+            3.9552265107631683,
+            3.9099943339824677,
+            4.12457799911499
+          ],
+          "source": "experiments/loop_depth_15m/results/arm_d1.json",
+          "json_fields": [
+            "final.per_source_ce",
+            "final.step"
+          ],
+          "transform": "identity",
+          "evidence": "measured"
+        },
+        {
+          "label": "d4",
+          "x": [
+            "fw_edu",
+            "edu_zh",
+            "cosmo",
+            "wiki_en",
+            "wiki_zh"
+          ],
+          "y": [
+            4.47017639875412,
+            5.324063062667847,
+            4.1866614818573,
+            4.109514832496643,
+            4.297240316867828
+          ],
+          "source": "experiments/loop_depth_15m/results/arm_d4.json",
+          "json_fields": [
+            "final.per_source_ce",
+            "final.step"
+          ],
+          "transform": "identity",
+          "evidence": "measured"
+        },
+        {
+          "label": "b4",
+          "x": [
+            "fw_edu",
+            "edu_zh",
+            "cosmo",
+            "wiki_en",
+            "wiki_zh"
+          ],
+          "y": [
+            4.6474438309669495,
+            5.761958301067352,
+            4.406327724456787,
+            4.316299736499786,
+            4.695241570472717
+          ],
+          "source": "experiments/loop_depth_15m/results_b/arm_b4.json",
+          "json_fields": [
+            "final.per_source_ce",
+            "final.step"
+          ],
+          "transform": "identity",
+          "evidence": "measured"
+        },
+        {
+          "label": "d8",
+          "x": [
+            "fw_edu",
+            "edu_zh",
+            "cosmo",
+            "wiki_en",
+            "wiki_zh"
+          ],
+          "y": [
+            4.626337289810181,
+            5.6716548800468445,
+            4.454922616481781,
+            4.254149794578552,
+            4.552869737148285
+          ],
+          "source": "experiments/loop_depth_15m/results/arm_d8.json",
+          "json_fields": [
+            "final.per_source_ce",
+            "final.step"
+          ],
+          "transform": "identity",
+          "evidence": "measured"
+        },
+        {
+          "label": "b8",
+          "x": [
+            "fw_edu",
+            "edu_zh",
+            "cosmo",
+            "wiki_en",
+            "wiki_zh"
+          ],
+          "y": [
+            4.892167687416077,
+            6.1120715737342834,
+            4.700792372226715,
+            4.586375296115875,
+            5.095304250717163
+          ],
+          "source": "experiments/loop_depth_15m/results_b/arm_b8.json",
+          "json_fields": [
+            "final.per_source_ce",
+            "final.step"
+          ],
+          "transform": "identity",
+          "evidence": "measured"
+        }
+      ],
+      "layout": {
+        "min_font_pt": 6.4,
+        "issues": [],
+        "size_mm": [
+          180.0,
+          104.0
+        ]
+      },
+      "status": "rendered"
+    },
+    {
+      "name": "per_source_ce_eq_step",
+      "title": "Validation CE at matched optimizer steps",
+      "scope": "15M backbone · nearest observed evaluation to step 800 · lower is better",
+      "evidence": "measured",
+      "note": "Logged values preserved; no smoothing or inferred error bars.",
+      "sources": {
+        "experiments/loop_depth_15m/results/arm_d1.json": "4de2fa7b7607de0961a6365fa09702fdeafe411f3a92a8313cefbeb520b13149",
+        "experiments/loop_depth_15m/results/arm_d4.json": "75b169056d1c217d6152db72b74ae6f330dd606f4b5c8dc8057181e5c1871587",
+        "experiments/loop_depth_15m/results_b/arm_b4.json": "cb2ce8774085d8cfe5f89700433754f534c948d6e63461114be93a4f019a3923",
+        "experiments/loop_depth_15m/results/arm_d8.json": "4d1fbccb276d3222caf4afc55b55e5bf3d2a884ee869b375f1b80c2edb24b9b0",
+        "experiments/loop_depth_15m/results_b/arm_b8.json": "1728cb212ba4ea1622c04ed6bbc350645107d346a4e64624a1f082b97ee6192e"
+      },
+      "series": [
+        {
+          "label": "d1",
+          "x": [
+            800
+          ],
+          "y": [
+            5.447747081518173
+          ],
+          "source": "experiments/loop_depth_15m/results/arm_d1.json",
+          "json_fields": [
+            "evals[*].step",
+            "evals[*].valid_ce"
+          ],
+          "transform": "nearest observed evaluation to optimizer step 800",
+          "evidence": "measured"
+        },
+        {
+          "label": "d4",
+          "x": [
+            800
+          ],
+          "y": [
+            5.451222091913223
+          ],
+          "source": "experiments/loop_depth_15m/results/arm_d4.json",
+          "json_fields": [
+            "evals[*].step",
+            "evals[*].valid_ce"
+          ],
+          "transform": "nearest observed evaluation to optimizer step 800",
+          "evidence": "measured"
+        },
+        {
+          "label": "b4",
+          "x": [
+            800
+          ],
+          "y": [
+            5.3939327001571655
+          ],
+          "source": "experiments/loop_depth_15m/results_b/arm_b4.json",
+          "json_fields": [
+            "evals[*].step",
+            "evals[*].valid_ce"
+          ],
+          "transform": "nearest observed evaluation to optimizer step 800",
+          "evidence": "measured"
+        },
+        {
+          "label": "d8",
+          "x": [
+            800
+          ],
+          "y": [
+            5.279505342245102
+          ],
+          "source": "experiments/loop_depth_15m/results/arm_d8.json",
+          "json_fields": [
+            "evals[*].step",
+            "evals[*].valid_ce"
+          ],
+          "transform": "nearest observed evaluation to optimizer step 800",
+          "evidence": "measured"
+        },
+        {
+          "label": "b8",
+          "x": [
+            800
+          ],
+          "y": [
+            5.22491317987442
+          ],
+          "source": "experiments/loop_depth_15m/results_b/arm_b8.json",
+          "json_fields": [
+            "evals[*].step",
+            "evals[*].valid_ce"
+          ],
+          "transform": "nearest observed evaluation to optimizer step 800",
+          "evidence": "measured"
+        }
+      ],
+      "layout": {
+        "min_font_pt": 6.4,
+        "issues": [],
+        "size_mm": [
+          180.0,
+          89.0
+        ]
+      },
+      "status": "rendered"
+    },
+    {
+      "name": "block_vs_layer_ce",
+      "title": "Block-order and layer-order training",
+      "scope": "Depth 4 · clamp and sigmoid step sizes · paired gap uses exact common optimizer steps",
+      "evidence": "measured",
+      "note": "Logged values preserved; no smoothing or inferred error bars.",
+      "sources": {
+        "experiments/loop_depth_15m/results/arm_d1.json": "4de2fa7b7607de0961a6365fa09702fdeafe411f3a92a8313cefbeb520b13149",
+        "experiments/loop_depth_15m/results/arm_d4.json": "75b169056d1c217d6152db72b74ae6f330dd606f4b5c8dc8057181e5c1871587",
+        "experiments/loop_depth_15m/results_b/arm_b4.json": "cb2ce8774085d8cfe5f89700433754f534c948d6e63461114be93a4f019a3923",
+        "experiments/loop_depth_15m/results_m/arm_d4sig.json": "4b072a993eb34d7e40a84b4dffd23aa60776a99766ebdf0432d856575c9d0302",
+        "experiments/loop_depth_15m/results_k/arm_b4sig.json": "b1b8db0ad96ab43873081e1ca3b00b92063331e150011c145af0b925b5b73da2"
+      },
+      "series": [
+        {
+          "label": "d1",
+          "x": [
+            0,
+            25,
+            50,
+            75,
+            100,
+            150,
+            200,
+            300,
+            400,
+            500,
+            520,
+            600,
+            800,
+            1000,
+            1025,
+            1250,
+            1500,
+            1550,
+            2000,
+            2085,
+            2500,
+            2630,
+            3000,
+            3170,
+            3170
+          ],
+          "y": [
+            10.57109785079956,
+            9.1861172914505,
+            7.744904458522797,
+            7.41456139087677,
+            7.171934068202972,
+            6.839791685342789,
+            6.612984240055084,
+            6.296387761831284,
+            6.075185686349869,
+            5.8766045570373535,
+            5.852139115333557,
+            5.721298307180405,
+            5.447747081518173,
+            5.130508571863174,
+            5.088093191385269,
+            4.863718569278717,
+            4.7240989208221436,
+            4.703584522008896,
+            4.541473835706711,
+            4.525050222873688,
+            4.4446861743927,
+            4.416867822408676,
+            4.3690939247608185,
+            4.355414569377899,
+            4.3785764798521996
+          ],
+          "source": "experiments/loop_depth_15m/results/arm_d1.json",
+          "json_fields": [
+            "evals[*].step",
+            "evals[*].valid_ce"
+          ],
+          "transform": "identity",
+          "evidence": "measured"
+        },
+        {
+          "label": "d4",
+          "x": [
+            0,
+            25,
+            50,
+            75,
+            100,
+            150,
+            200,
+            300,
+            310,
+            400,
+            500,
+            600,
+            620,
+            800,
+            915,
+            1000,
+            1215,
+            1250,
+            1500,
+            1535,
+            1855,
+            1855
+          ],
+          "y": [
+            10.570690870285034,
+            9.187909424304962,
+            7.707067489624023,
+            7.3162519335746765,
+            7.044637501239777,
+            6.722981959581375,
+            6.524762392044067,
+            6.231628924608231,
+            6.204071879386902,
+            6.018022119998932,
+            5.87040451169014,
+            5.688298046588898,
+            5.662899613380432,
+            5.451222091913223,
+            5.302253216505051,
+            5.18149396777153,
+            4.892616778612137,
+            4.8574574291706085,
+            4.69429624080658,
+            4.6829851269721985,
+            4.559163868427277,
+            4.586233034729958
+          ],
+          "source": "experiments/loop_depth_15m/results/arm_d4.json",
+          "json_fields": [
+            "evals[*].step",
+            "evals[*].valid_ce"
+          ],
+          "transform": "identity",
+          "evidence": "measured"
+        },
+        {
+          "label": "b4",
+          "x": [
+            0,
+            25,
+            50,
+            75,
+            100,
+            150,
+            200,
+            210,
+            300,
+            400,
+            410,
+            500,
+            600,
+            610,
+            800,
+            810,
+            1000,
+            1015,
+            1225,
+            1225
+          ],
+          "y": [
+            10.573656558990479,
+            9.212062954902649,
+            7.647359192371368,
+            7.264325141906738,
+            7.023693650960922,
+            6.694006830453873,
+            6.486877113580704,
+            6.449027955532074,
+            6.177785903215408,
+            5.951929271221161,
+            5.932233393192291,
+            5.76526266336441,
+            5.613759815692902,
+            5.595552235841751,
+            5.3939327001571655,
+            5.376541018486023,
+            5.157259672880173,
+            5.125705301761627,
+            4.845867872238159,
+            4.878100201487541
+          ],
+          "source": "experiments/loop_depth_15m/results_b/arm_b4.json",
+          "json_fields": [
+            "evals[*].step",
+            "evals[*].valid_ce"
+          ],
+          "transform": "identity",
+          "evidence": "measured"
+        },
+        {
+          "label": "d4sig",
+          "x": [
+            0,
+            25,
+            50,
+            75,
+            100,
+            150,
+            200,
+            300,
+            305,
+            400,
+            500,
+            600,
+            800,
+            895,
+            1000,
+            1180,
+            1250,
+            1475,
+            1500,
+            1775,
+            1775
+          ],
+          "y": [
+            10.570574045181274,
+            9.188561737537384,
+            7.74137219786644,
+            7.3593239188194275,
+            7.080556482076645,
+            6.755597323179245,
+            6.537337779998779,
+            6.21574479341507,
+            6.203027814626694,
+            5.974298655986786,
+            5.7893675565719604,
+            5.620445758104324,
+            5.281273812055588,
+            5.111817300319672,
+            4.974776655435562,
+            4.819272696971893,
+            4.77193021774292,
+            4.653665840625763,
+            4.641440987586975,
+            4.544064581394196,
+            4.571625277400017
+          ],
+          "source": "experiments/loop_depth_15m/results_m/arm_d4sig.json",
+          "json_fields": [
+            "evals[*].step",
+            "evals[*].valid_ce"
+          ],
+          "transform": "identity",
+          "evidence": "measured"
+        },
+        {
+          "label": "b4sig",
+          "x": [
+            0,
+            25,
+            50,
+            75,
+            100,
+            150,
+            200,
+            300,
+            320,
+            400,
+            500,
+            600,
+            610,
+            800,
+            905,
+            1000,
+            1210,
+            1250,
+            1500,
+            1520,
+            1830,
+            1830
+          ],
+          "y": [
+            10.57579392194748,
+            9.209701418876648,
+            7.666374742984772,
+            7.269503206014633,
+            7.017906159162521,
+            6.669384658336639,
+            6.438403159379959,
+            6.121661841869354,
+            6.064062058925629,
+            5.887397021055222,
+            5.707956284284592,
+            5.546035498380661,
+            5.526882201433182,
+            5.233063787221909,
+            5.058039486408234,
+            4.927710115909576,
+            4.75993537902832,
+            4.734435737133026,
+            4.616442769765854,
+            4.615051239728928,
+            4.515265345573425,
+            4.542033322155476
+          ],
+          "source": "experiments/loop_depth_15m/results_k/arm_b4sig.json",
+          "json_fields": [
+            "evals[*].step",
+            "evals[*].valid_ce"
+          ],
+          "transform": "identity",
+          "evidence": "measured"
+        },
+        {
+          "label": "paired sigmoid gap",
+          "x": [
+            0,
+            25,
+            50,
+            75,
+            100,
+            150,
+            200,
+            300,
+            400,
+            500,
+            600,
+            800,
+            1000,
+            1250,
+            1500
+          ],
+          "y": [
+            -0.005219876766204834,
+            -0.021139681339263916,
+            0.07499745488166809,
+            0.08982071280479431,
+            0.06265032291412354,
+            0.08621266484260559,
+            0.09893462061882019,
+            0.09408295154571533,
+            0.08690163493156433,
+            0.08141127228736877,
+            0.07441025972366333,
+            0.0482100248336792,
+            0.04706653952598572,
+            0.0374944806098938,
+            0.024998217821121216
+          ],
+          "source": [
+            "experiments/loop_depth_15m/results_m/arm_d4sig.json",
+            "experiments/loop_depth_15m/results_k/arm_b4sig.json"
+          ],
+          "json_fields": [
+            "evals[*].step",
+            "evals[*].valid_ce"
+          ],
+          "transform": "exact shared-step intersection; layer CE minus block CE",
+          "evidence": "measured"
+        }
+      ],
+      "layout": {
+        "min_font_pt": 6.4,
+        "issues": [],
+        "size_mm": [
+          180.0,
+          104.0
+        ]
+      },
+      "status": "rendered"
+    },
+    {
+      "name": "dt_learned",
+      "title": "Learned recurrent step sizes",
+      "scope": "Sigmoid parameterization · all physical recurrent groups · full curves and late-step detail",
+      "evidence": "measured",
+      "note": "Logged values preserved; no smoothing or inferred error bars.",
+      "sources": {
+        "experiments/loop_depth_15m/results_k/arm_b4sig.json": "b1b8db0ad96ab43873081e1ca3b00b92063331e150011c145af0b925b5b73da2",
+        "experiments/loop_depth_15m/results_m/arm_d4sig.json": "4b072a993eb34d7e40a84b4dffd23aa60776a99766ebdf0432d856575c9d0302"
+      },
+      "series": [
+        {
+          "label": "b4sig, group 0",
+          "x": [
+            0,
+            25,
+            50,
+            75,
+            100,
+            150,
+            200,
+            300,
+            320,
+            400,
+            500,
+            600,
+            610,
+            800,
+            905,
+            1000,
+            1210,
+            1250,
+            1500,
+            1520,
+            1830,
+            1830
+          ],
+          "y": [
+            0.4999669643560638,
+            0.4978832657657289,
+            0.49303339089108666,
+            0.4888985050916264,
+            0.48427398712738584,
+            0.47784582263819453,
+            0.4716460971226378,
+            0.4522836747324066,
+            0.448207232533465,
+            0.42983245696880334,
+            0.4043206999484292,
+            0.37953212180261564,
+            0.3770185169633324,
+            0.33259148218725904,
+            0.310625529067804,
+            0.2925787348216949,
+            0.26285061225379797,
+            0.25774199455490904,
+            0.2300486848591326,
+            0.22891322559627192,
+            0.20225912340944463,
+            0.20225912340944463
+          ],
+          "source": "experiments/loop_depth_15m/results_k/arm_b4sig.json",
+          "json_fields": [
+            "evals[*].dt",
+            "evals[*].step",
+            "config.recurrent_dt_min",
+            "config.recurrent_dt_max"
+          ],
+          "transform": "dt_min + (dt_max - dt_min) * sigmoid(raw dt)",
+          "evidence": "measured"
+        },
+        {
+          "label": "b4sig, group 1",
+          "x": [
+            0,
+            25,
+            50,
+            75,
+            100,
+            150,
+            200,
+            300,
+            320,
+            400,
+            500,
+            600,
+            610,
+            800,
+            905,
+            1000,
+            1210,
+            1250,
+            1500,
+            1520,
+            1830,
+            1830
+          ],
+          "y": [
+            0.4999669643560638,
+            0.4976702178695779,
+            0.4928206154309511,
+            0.48819020211358294,
+            0.48290695710118275,
+            0.47211515672882864,
+            0.4609119401295713,
+            0.4347212331135444,
+            0.4289209575795206,
+            0.40518759135207494,
+            0.3770185169633324,
+            0.35075791241653936,
+            0.3483582504203616,
+            0.304040084210414,
+            0.2814625040020505,
+            0.26414163822761716,
+            0.23464570150830333,
+            0.2300486848591326,
+            0.20426426516369922,
+            0.20225912340944463,
+            0.18242798527319853,
+            0.18242798527319853
+          ],
+          "source": "experiments/loop_depth_15m/results_k/arm_b4sig.json",
+          "json_fields": [
+            "evals[*].dt",
+            "evals[*].step",
+            "config.recurrent_dt_min",
+            "config.recurrent_dt_max"
+          ],
+          "transform": "dt_min + (dt_max - dt_min) * sigmoid(raw dt)",
+          "evidence": "measured"
+        },
+        {
+          "label": "b4sig, group 2",
+          "x": [
+            0,
+            25,
+            50,
+            75,
+            100,
+            150,
+            200,
+            300,
+            320,
+            400,
+            500,
+            600,
+            610,
+            800,
+            905,
+            1000,
+            1210,
+            1250,
+            1500,
+            1520,
+            1830,
+            1830
+          ],
+          "y": [
+            0.4999669643560638,
+            0.4976702178695779,
+            0.49258421347176795,
+            0.4872696548602471,
+            0.4815170784361954,
+            0.4702864233138001,
+            0.45956004890160534,
+            0.4347212331135444,
+            0.42983245696880334,
+            0.409981779713963,
+            0.38712656995559286,
+            0.3645690128068693,
+            0.3629300034181742,
+            0.3210973041248,
+            0.29825750250661015,
+            0.2814625040020505,
+            0.25395284395861617,
+            0.24900013010555494,
+            0.22664444263384032,
+            0.22552555771744864,
+            0.20325904584603866,
+            0.20325904584603866
+          ],
+          "source": "experiments/loop_depth_15m/results_k/arm_b4sig.json",
+          "json_fields": [
+            "evals[*].dt",
+            "evals[*].step",
+            "config.recurrent_dt_min",
+            "config.recurrent_dt_max"
+          ],
+          "transform": "dt_min + (dt_max - dt_min) * sigmoid(raw dt)",
+          "evidence": "measured"
+        },
+        {
+          "label": "b4sig, group 3",
+          "x": [
+            0,
+            25,
+            50,
+            75,
+            100,
+            150,
+            200,
+            300,
+            320,
+            400,
+            500,
+            600,
+            610,
+            800,
+            905,
+            1000,
+            1210,
+            1250,
+            1500,
+            1520,
+            1830,
+            1830
+          ],
+          "y": [
+            0.4999669643560638,
+            0.4977885764553873,
+            0.49234782764499185,
+            0.48682128598724483,
+            0.4812815795133455,
+            0.47005208796153747,
+            0.45956004890160534,
+            0.43250276388000464,
+            0.42714565990667513,
+            0.4043206999484292,
+            0.3778553751118085,
+            0.35316789545109706,
+            0.35075791241653936,
+            0.3069538677524849,
+            0.28420447287970596,
+            0.2667403123637227,
+            0.23934638816493192,
+            0.23464570150830333,
+            0.21462379563286021,
+            0.21251149985478368,
+            0.19539466716432935,
+            0.19539466716432935
+          ],
+          "source": "experiments/loop_depth_15m/results_k/arm_b4sig.json",
+          "json_fields": [
+            "evals[*].dt",
+            "evals[*].step",
+            "config.recurrent_dt_min",
+            "config.recurrent_dt_max"
+          ],
+          "transform": "dt_min + (dt_max - dt_min) * sigmoid(raw dt)",
+          "evidence": "measured"
+        },
+        {
+          "label": "d4sig, group 0",
+          "x": [
+            0,
+            25,
+            50,
+            75,
+            100,
+            150,
+            200,
+            300,
+            305,
+            400,
+            500,
+            600,
+            800,
+            895,
+            1000,
+            1180,
+            1250,
+            1475,
+            1500,
+            1775,
+            1775
+          ],
+          "y": [
+            0.4999669643560638,
+            0.49871188863873517,
+            0.4935062712645844,
+            0.48911102762359887,
+            0.4838260909604271,
+            0.4753074859043909,
+            0.4636422295992162,
+            0.43742549942828923,
+            0.4360726195090909,
+            0.4126012825318277,
+            0.38627883813891534,
+            0.36211213026779004,
+            0.31509345005079886,
+            0.2954074139727436,
+            0.27739052797804975,
+            0.24900013010555494,
+            0.2405316997344581,
+            0.21675773276425353,
+            0.21462379563286021,
+            0.19158202372897237,
+            0.19158202372897237
+          ],
+          "source": "experiments/loop_depth_15m/results_m/arm_d4sig.json",
+          "json_fields": [
+            "evals[*].dt",
+            "evals[*].step",
+            "config.recurrent_dt_min",
+            "config.recurrent_dt_max"
+          ],
+          "transform": "dt_min + (dt_max - dt_min) * sigmoid(raw dt)",
+          "evidence": "measured"
+        },
+        {
+          "label": "d4sig, group 1",
+          "x": [
+            0,
+            25,
+            50,
+            75,
+            100,
+            150,
+            200,
+            300,
+            305,
+            400,
+            500,
+            600,
+            800,
+            895,
+            1000,
+            1180,
+            1250,
+            1475,
+            1500,
+            1775,
+            1775
+          ],
+          "y": [
+            0.4999669643560638,
+            0.4976702178695779,
+            0.4914260792550365,
+            0.4851935806867414,
+            0.47968076751315203,
+            0.46958349868834354,
+            0.4577204209972387,
+            0.43204586508612625,
+            0.4307218725264824,
+            0.4077933633420241,
+            0.38374145175171503,
+            0.35964421314804634,
+            0.31583946094539866,
+            0.2954074139727436,
+            0.27739052797804975,
+            0.25395284395861617,
+            0.2441209435442082,
+            0.22110483803121228,
+            0.21892727033881337,
+            0.1934718441720205,
+            0.1934718441720205
+          ],
+          "source": "experiments/loop_depth_15m/results_m/arm_d4sig.json",
+          "json_fields": [
+            "evals[*].dt",
+            "evals[*].step",
+            "config.recurrent_dt_min",
+            "config.recurrent_dt_max"
+          ],
+          "transform": "dt_min + (dt_max - dt_min) * sigmoid(raw dt)",
+          "evidence": "measured"
+        },
+        {
+          "label": "d4sig, group 2",
+          "x": [
+            0,
+            25,
+            50,
+            75,
+            100,
+            150,
+            200,
+            300,
+            305,
+            400,
+            500,
+            600,
+            800,
+            895,
+            1000,
+            1180,
+            1250,
+            1475,
+            1500,
+            1775,
+            1775
+          ],
+          "y": [
+            0.4999669643560638,
+            0.4977885764553873,
+            0.49118977416087883,
+            0.4838260909604271,
+            0.47737555056702624,
+            0.46616616605707667,
+            0.45409383178572754,
+            0.428488253222118,
+            0.42760059458757316,
+            0.4060553359552504,
+            0.38543207131574986,
+            0.36539014088995836,
+            0.3249104383699768,
+            0.3062234536057521,
+            0.2897715650258324,
+            0.26937799271204993,
+            0.26414163822761716,
+            0.2465415522665047,
+            0.2453284687574922,
+            0.22891322559627192,
+            0.22891322559627192
+          ],
+          "source": "experiments/loop_depth_15m/results_m/arm_d4sig.json",
+          "json_fields": [
+            "evals[*].dt",
+            "evals[*].step",
+            "config.recurrent_dt_min",
+            "config.recurrent_dt_max"
+          ],
+          "transform": "dt_min + (dt_max - dt_min) * sigmoid(raw dt)",
+          "evidence": "measured"
+        },
+        {
+          "label": "d4sig, group 3",
+          "x": [
+            0,
+            25,
+            50,
+            75,
+            100,
+            150,
+            200,
+            300,
+            305,
+            400,
+            500,
+            600,
+            800,
+            895,
+            1000,
+            1180,
+            1250,
+            1475,
+            1500,
+            1775,
+            1775
+          ],
+          "y": [
+            0.4999669643560638,
+            0.5006775410916131,
+            0.49511452802149886,
+            0.48911102762359887,
+            0.48359038571237667,
+            0.474180247788703,
+            0.46593232415849173,
+            0.45184306427202486,
+            0.45137940307347885,
+            0.43742549942828923,
+            0.4253732126041135,
+            0.4095347390394408,
+            0.3778553751118085,
+            0.36211213026779004,
+            0.3491569849347589,
+            0.3310453947010752,
+            0.3264367228160562,
+            0.3113637646539805,
+            0.3098885917260054,
+            0.2954074139727436,
+            0.2954074139727436
+          ],
+          "source": "experiments/loop_depth_15m/results_m/arm_d4sig.json",
+          "json_fields": [
+            "evals[*].dt",
+            "evals[*].step",
+            "config.recurrent_dt_min",
+            "config.recurrent_dt_max"
+          ],
+          "transform": "dt_min + (dt_max - dt_min) * sigmoid(raw dt)",
+          "evidence": "measured"
+        }
+      ],
+      "layout": {
+        "min_font_pt": 6.4,
+        "issues": [],
+        "size_mm": [
+          180.0,
+          143.0
+        ]
+      },
+      "status": "rendered"
+    },
+    {
+      "name": "residency_bench",
+      "title": "Expert residency policies on a fixed checkpoint",
+      "scope": "50M checkpoint · FLORES+ en→zh · 16 cold-start prompts · CPU / float32",
+      "evidence": "measured",
+      "note": "Logged values preserved; no smoothing or inferred error bars.",
+      "sources": {
+        "reports/residency_20261107/bench_residency_50m_s13996_flores16_cpu.json": "d327fa90f142f61d9da57e314d7b4b9a1648b05cdc7fd7acc63c70408fc6fe94"
+      },
+      "series": [
+        {
+          "label": "ssd_loads_per_token",
+          "x": [
+            "plain",
+            "planned",
+            "spec-window",
+            "spec-planned"
+          ],
+          "y": [
+            12.5246,
+            8.0838,
+            16.9344,
+            11.3989
+          ],
+          "source": "reports/residency_20261107/bench_residency_50m_s13996_flores16_cpu.json",
+          "json_fields": [
+            "summary.*.ssd_loads_per_token"
+          ],
+          "transform": "identity",
+          "evidence": "measured",
+          "scope": "Summary totals; SSD loads are demand-miss counters, not cluster-file read counts"
+        },
+        {
+          "label": "tok_s",
+          "x": [
+            "plain",
+            "planned",
+            "spec-window",
+            "spec-planned"
+          ],
+          "y": [
+            23.17,
+            22.47,
+            16.03,
+            18.96
+          ],
+          "source": "reports/residency_20261107/bench_residency_50m_s13996_flores16_cpu.json",
+          "json_fields": [
+            "summary.*.tok_s"
+          ],
+          "transform": "identity",
+          "evidence": "measured",
+          "scope": "Summary totals; SSD loads are demand-miss counters, not cluster-file read counts"
+        },
+        {
+          "label": "selection_miss_rate",
+          "x": [
+            "plain",
+            "planned",
+            "spec-window",
+            "spec-planned"
+          ],
+          "y": [
+            0.2175,
+            0.1394,
+            0.2054,
+            0.1395
+          ],
+          "source": "reports/residency_20261107/bench_residency_50m_s13996_flores16_cpu.json",
+          "json_fields": [
+            "summary.*.selection_miss_rate"
+          ],
+          "transform": "identity",
+          "evidence": "measured",
+          "scope": "Summary totals; SSD loads are demand-miss counters, not cluster-file read counts"
+        }
+      ],
+      "bench_source": "reports/residency_20261107/bench_residency_50m_s13996_flores16_cpu.json",
+      "layout": {
+        "min_font_pt": 6.4,
+        "issues": [],
+        "size_mm": [
+          180.0,
+          94.0
+        ]
+      },
+      "status": "rendered"
+    },
+    {
+      "name": "cluster_locality_sweep",
+      "title": "Cluster-locality coefficient sweep",
+      "scope": "Synthetic stream benchmark · one seed · routing windows match 32-token topic segments",
+      "evidence": "measured",
+      "note": "Logged values preserved; no smoothing or inferred error bars.",
+      "sources": {
+        "reports/residency_20261107/sweep/lam_0.03_w32.json": "dead40ceb37363db04f0bae80634cf3ebeffd35f4bd486f758e9be103c6c9550",
+        "reports/residency_20261107/sweep/lam_0.1_w32.json": "ba49400e5702b6c847fc44536c598265983f7ca0f34f08ba60d4c51151ff6f76",
+        "reports/residency_20261107/sweep/lam_0.3_w32.json": "efdf92e915c5fc76d6be385977fe17104a180953b8670e4cff18ace75bead4ad",
+        "reports/residency_20261107/sweep/lam_1.0_w32.json": "d3717ad1bcb5ab8fc41020dd65a0b157450c4587ceed1645182603fce5b25cf1"
+      },
+      "series": [
+        {
+          "label": "lambda 0.03: reads",
+          "x": [
+            0.03
+          ],
+          "y": [
+            0.513
+          ],
+          "source": "reports/residency_20261107/sweep/lam_0.03_w32.json",
+          "json_fields": [
+            "settings.lam",
+            "arms.cluster.lazy_decode.window.cluster_reads_per_token"
+          ],
+          "transform": "identity: cluster_reads_per_token",
+          "evidence": "measured",
+          "scope": "Synthetic task; software-instrumented cluster reads"
+        },
+        {
+          "label": "lambda 0.03: CE gap",
+          "x": [
+            0.03
+          ],
+          "y": [
+            -0.009800000000000031
+          ],
+          "source": "reports/residency_20261107/sweep/lam_0.03_w32.json",
+          "json_fields": [
+            "arms.cluster.curve[-1].ce",
+            "arms.baseline.curve[-1].ce"
+          ],
+          "transform": "final cluster CE - final baseline CE",
+          "evidence": "measured"
+        },
+        {
+          "label": "lambda 0.1: reads",
+          "x": [
+            0.1
+          ],
+          "y": [
+            0.151
+          ],
+          "source": "reports/residency_20261107/sweep/lam_0.1_w32.json",
+          "json_fields": [
+            "settings.lam",
+            "arms.cluster.lazy_decode.window.cluster_reads_per_token"
+          ],
+          "transform": "identity: cluster_reads_per_token",
+          "evidence": "measured",
+          "scope": "Synthetic task; software-instrumented cluster reads"
+        },
+        {
+          "label": "lambda 0.1: CE gap",
+          "x": [
+            0.1
+          ],
+          "y": [
+            0.0035000000000000586
+          ],
+          "source": "reports/residency_20261107/sweep/lam_0.1_w32.json",
+          "json_fields": [
+            "arms.cluster.curve[-1].ce",
+            "arms.baseline.curve[-1].ce"
+          ],
+          "transform": "final cluster CE - final baseline CE",
+          "evidence": "measured"
+        },
+        {
+          "label": "lambda 0.3: reads",
+          "x": [
+            0.3
+          ],
+          "y": [
+            0.0234
+          ],
+          "source": "reports/residency_20261107/sweep/lam_0.3_w32.json",
+          "json_fields": [
+            "settings.lam",
+            "arms.cluster.lazy_decode.window.cluster_reads_per_token"
+          ],
+          "transform": "identity: cluster_reads_per_token",
+          "evidence": "measured",
+          "scope": "Synthetic task; software-instrumented cluster reads"
+        },
+        {
+          "label": "lambda 0.3: CE gap",
+          "x": [
+            0.3
+          ],
+          "y": [
+            0.00039999999999995595
+          ],
+          "source": "reports/residency_20261107/sweep/lam_0.3_w32.json",
+          "json_fields": [
+            "arms.cluster.curve[-1].ce",
+            "arms.baseline.curve[-1].ce"
+          ],
+          "transform": "final cluster CE - final baseline CE",
+          "evidence": "measured"
+        },
+        {
+          "label": "lambda 1.0: reads",
+          "x": [
+            1.0
+          ],
+          "y": [
+            0.026
+          ],
+          "source": "reports/residency_20261107/sweep/lam_1.0_w32.json",
+          "json_fields": [
+            "settings.lam",
+            "arms.cluster.lazy_decode.window.cluster_reads_per_token"
+          ],
+          "transform": "identity: cluster_reads_per_token",
+          "evidence": "measured",
+          "scope": "Synthetic task; software-instrumented cluster reads"
+        },
+        {
+          "label": "lambda 1.0: CE gap",
+          "x": [
+            1.0
+          ],
+          "y": [
+            0.007400000000000073
+          ],
+          "source": "reports/residency_20261107/sweep/lam_1.0_w32.json",
+          "json_fields": [
+            "arms.cluster.curve[-1].ce",
+            "arms.baseline.curve[-1].ce"
+          ],
+          "transform": "final cluster CE - final baseline CE",
+          "evidence": "measured"
+        },
+        {
+          "label": "lambda zero baseline",
+          "x": [
+            0
+          ],
+          "y": [
+            1.4818
+          ],
+          "source": "reports/residency_20261107/sweep/lam_0.03_w32.json",
+          "json_fields": [
+            "arms.baseline.lazy_decode.window.cluster_reads_per_token"
+          ],
+          "transform": "identity",
+          "evidence": "measured"
+        }
+      ],
+      "layout": {
+        "min_font_pt": 6.4,
+        "issues": [],
+        "size_mm": [
+          180.0,
+          91.0
+        ]
+      },
+      "status": "rendered"
+    },
+    {
+      "name": "lazy_planned_vs_lru",
+      "title": "Paired prompt-level comparison of residency policies",
+      "scope": "50M checkpoint · 16 paired cold-start prompts · next-use planning versus LRU",
+      "evidence": "measured",
+      "note": "Logged values preserved; no smoothing or inferred error bars.",
+      "sources": {
+        "reports/residency_20261107/bench_residency_50m_s13996_flores16_cpu.json": "d327fa90f142f61d9da57e314d7b4b9a1648b05cdc7fd7acc63c70408fc6fe94"
+      },
+      "series": [
+        {
+          "label": "s",
+          "x": [
+            1.7617874999996275,
+            1.7775090409995755,
+            1.6499649589968612,
+            1.062335875001736,
+            0.78412991600635,
+            1.4923341250105295,
+            1.3860392089991365,
+            1.5913087079970865,
+            1.0879823330033105,
+            1.3477633750007953,
+            3.1965762080071727,
+            1.0975627080042614,
+            0.8778314169903751,
+            1.1606041670020204,
+            1.5357000829972094,
+            1.8883872500009602
+          ],
+          "y": [
+            1.853657250001561,
+            1.9302419169980567,
+            1.8351264579978306,
+            1.0693116670008749,
+            0.7847320839937311,
+            1.5851479999982985,
+            1.3286414169997443,
+            1.8959565830009524,
+            0.9571430000069086,
+            1.5166876250004862,
+            3.1805184590048157,
+            1.0790139170130715,
+            0.7966191669984255,
+            1.1387737920013024,
+            1.5111392090038862,
+            1.9698821249912726
+          ],
+          "source": "reports/residency_20261107/bench_residency_50m_s13996_flores16_cpu.json",
+          "json_fields": [
+            "rows[*].plain",
+            "rows[*].planned"
+          ],
+          "transform": "identity latency; per-prompt ssd/n_tokens for loads",
+          "evidence": "measured",
+          "paired": true
+        },
+        {
+          "label": "loads",
+          "x": [
+            9.830188679245284,
+            11.80952380952381,
+            12.473684210526315,
+            12.074074074074074,
+            20.933333333333334,
+            10.5,
+            16.814814814814813,
+            13.64864864864865,
+            17.318181818181817,
+            16.033333333333335,
+            6.222222222222222,
+            20.63157894736842,
+            15.555555555555555,
+            15.304347826086957,
+            13.40625,
+            13.325
+          ],
+          "y": [
+            6.7924528301886795,
+            7.571428571428571,
+            8.605263157894736,
+            7.0,
+            11.933333333333334,
+            7.0,
+            10.962962962962964,
+            9.864864864864865,
+            9.409090909090908,
+            10.1,
+            4.511111111111111,
+            12.31578947368421,
+            8.666666666666666,
+            9.347826086956522,
+            8.40625,
+            9.05
+          ],
+          "source": "reports/residency_20261107/bench_residency_50m_s13996_flores16_cpu.json",
+          "json_fields": [
+            "rows[*].plain",
+            "rows[*].planned"
+          ],
+          "transform": "identity latency; per-prompt ssd/n_tokens for loads",
+          "evidence": "measured",
+          "paired": true
+        }
+      ],
+      "bench_source": "reports/residency_20261107/bench_residency_50m_s13996_flores16_cpu.json",
+      "layout": {
+        "min_font_pt": 6.4,
+        "issues": [],
+        "size_mm": [
+          180.0,
+          96.0
+        ]
+      },
+      "status": "rendered"
+    },
+    {
+      "name": "speculative_bench",
+      "title": "Self-speculative decoding and verification readiness",
+      "scope": "50M checkpoint · FLORES+ en→zh · 16 prompts · every dot is one prompt",
+      "evidence": "measured",
+      "note": "Logged values preserved; no smoothing or inferred error bars.",
+      "sources": {
+        "reports/residency_20261107/bench_residency_50m_s13996_flores16_cpu.json": "d327fa90f142f61d9da57e314d7b4b9a1648b05cdc7fd7acc63c70408fc6fe94"
+      },
+      "series": [
+        {
+          "label": "plain throughput",
+          "x": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15
+          ],
+          "y": [
+            30.083083232234994,
+            23.628571799770683,
+            23.0307921345815,
+            25.415690682530965,
+            19.12948313003598,
+            24.123284053258512,
+            19.47996840543695,
+            23.251302411692542,
+            20.220916583516857,
+            22.259100192555906,
+            28.15512415269721,
+            17.31108378722925,
+            20.50507609047827,
+            19.817264709131415,
+            20.837402012472346,
+            21.18209599221752
+          ],
+          "source": "reports/residency_20261107/bench_residency_50m_s13996_flores16_cpu.json",
+          "json_fields": [
+            "rows[*].plain.n_tokens",
+            "rows[*].plain.s"
+          ],
+          "transform": "n_tokens / seconds",
+          "evidence": "measured",
+          "paired": true
+        },
+        {
+          "label": "spec-window throughput",
+          "x": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15
+          ],
+          "y": [
+            19.058587293724703,
+            15.484290542054664,
+            15.36447077195859,
+            14.45793777594432,
+            11.787540576566155,
+            18.93599769328087,
+            15.340395928460165,
+            14.29410057382218,
+            14.666641410625983,
+            14.573062107548422,
+            21.996633170878255,
+            12.777349743235987,
+            15.485243539766925,
+            14.036801541036901,
+            14.329730227151405,
+            14.726953992736476
+          ],
+          "source": "reports/residency_20261107/bench_residency_50m_s13996_flores16_cpu.json",
+          "json_fields": [
+            "rows[*].spec-window.n_tokens",
+            "rows[*].spec-window.s"
+          ],
+          "transform": "n_tokens / seconds",
+          "evidence": "measured",
+          "paired": true
+        },
+        {
+          "label": "spec-planned throughput",
+          "x": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15
+          ],
+          "y": [
+            21.92984535889309,
+            17.4563034755937,
+            17.68953733394727,
+            17.771437104582876,
+            14.138155154789342,
+            22.16586516797896,
+            18.525243130956053,
+            16.357371726614783,
+            16.863180204277672,
+            19.167287824666857,
+            24.116622358507758,
+            15.486042177113116,
+            18.888002098361238,
+            17.167499965193667,
+            17.465388682367315,
+            18.930602386580315
+          ],
+          "source": "reports/residency_20261107/bench_residency_50m_s13996_flores16_cpu.json",
+          "json_fields": [
+            "rows[*].spec-planned.n_tokens",
+            "rows[*].spec-planned.s"
+          ],
+          "transform": "n_tokens / seconds",
+          "evidence": "measured",
+          "paired": true
+        },
+        {
+          "label": "spec-window readiness",
+          "x": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15
+          ],
+          "y": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "source": "reports/residency_20261107/bench_residency_50m_s13996_flores16_cpu.json",
+          "json_fields": [
+            "rows[*].spec-window.verify_ready_rate"
+          ],
+          "transform": "identity",
+          "evidence": "measured",
+          "paired": true
+        },
+        {
+          "label": "spec-planned readiness",
+          "x": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15
+          ],
+          "y": [
+            0.7103,
+            0.7361,
+            0.6078,
+            0.7753,
+            0.6667,
+            0.7292,
+            0.5476,
+            0.6979,
+            0.7222,
+            0.6389,
+            0.759,
+            0.6061,
+            0.713,
+            0.5917,
+            0.6872,
+            0.5542
+          ],
+          "source": "reports/residency_20261107/bench_residency_50m_s13996_flores16_cpu.json",
+          "json_fields": [
+            "rows[*].spec-planned.verify_ready_rate"
+          ],
+          "transform": "identity",
+          "evidence": "measured",
+          "paired": true
+        }
+      ],
+      "bench_source": "reports/residency_20261107/bench_residency_50m_s13996_flores16_cpu.json",
+      "layout": {
+        "min_font_pt": 6.4,
+        "issues": [],
+        "size_mm": [
+          180.0,
+          96.0
+        ]
+      },
+      "status": "rendered"
+    },
+    {
+      "name": "long_context_memory",
+      "title": "Reported single-layer attention memory",
+      "scope": "One attention layer · bf16 · GPU · values reported in source documentation",
+      "evidence": "reported-unverified",
+      "note": "Logged values preserved; no smoothing or inferred error bars.",
+      "sources": {
+        "source_data/long_context_layer_reported.json": "b405416794958048c89ddb863cc87c234022df25b8efaf5056933b37460991e3"
+      },
+      "series": [
+        {
+          "label": "SWA · full",
+          "x": [
+            16384,
+            32768,
+            65536
+          ],
+          "y": [
+            10.4,
+            40.5,
+            null
+          ],
+          "source": "long_context_layer_reported.json",
+          "json_fields": [
+            "swa_full_GiB",
+            "sequence_tokens"
+          ],
+          "transform": "identity",
+          "evidence": "reported-unverified",
+          "scope": "one layer, bf16, GPU as described by original drawing script; raw measurement file not supplied"
+        },
+        {
+          "label": "SWA · blockwise",
+          "x": [
+            16384,
+            32768,
+            65536
+          ],
+          "y": [
+            0.8,
+            1.2,
+            2.7
+          ],
+          "source": "long_context_layer_reported.json",
+          "json_fields": [
+            "swa_blockwise_GiB",
+            "sequence_tokens"
+          ],
+          "transform": "identity",
+          "evidence": "reported-unverified",
+          "scope": "one layer, bf16, GPU as described by original drawing script; raw measurement file not supplied"
+        },
+        {
+          "label": "MLA · full",
+          "x": [
+            16384,
+            32768,
+            65536
+          ],
+          "y": [
+            10.3,
+            39.5,
+            148.6
+          ],
+          "source": "long_context_layer_reported.json",
+          "json_fields": [
+            "mla_full_GiB",
+            "sequence_tokens"
+          ],
+          "transform": "identity",
+          "evidence": "reported-unverified",
+          "scope": "one layer, bf16, GPU as described by original drawing script; raw measurement file not supplied"
+        },
+        {
+          "label": "MLA · blockwise",
+          "x": [
+            16384,
+            32768,
+            65536
+          ],
+          "y": [
+            0.96,
+            1.41,
+            2.49
+          ],
+          "source": "long_context_layer_reported.json",
+          "json_fields": [
+            "mla_blockwise_GiB",
+            "sequence_tokens"
+          ],
+          "transform": "identity",
+          "evidence": "reported-unverified",
+          "scope": "one layer, bf16, GPU as described by original drawing script; raw measurement file not supplied"
+        }
+      ],
+      "layout": {
+        "min_font_pt": 6.4,
+        "issues": [],
+        "size_mm": [
+          180.0,
+          96.0
+        ]
+      },
+      "status": "rendered"
+    },
+    {
+      "name": "long_context_throughput",
+      "title": "Long-context training on real-corpus data",
+      "scope": "50M random-init model · Apple M5 Max / MLX / bf16 · 3–6 optimizer steps per arm",
+      "evidence": "measured",
+      "note": "Gaps mean not run, not zero. Brief runs do not establish final model quality.",
+      "sources": {
+        "reports/long_context_20261109/real_corpus_ab.json": "ac6b0853401d3c9a3872c9efbf5621004f89c9fcd581d1b5c9467bc83eb87c9b"
+      },
+      "series": [
+        {
+          "label": "Baseline tok_per_s",
+          "x": [
+            8192,
+            16384,
+            32768,
+            65536
+          ],
+          "y": [
+            8.884,
+            1.877,
+            null,
+            null
+          ],
+          "source": "reports/long_context_20261109/real_corpus_ab.json",
+          "json_fields": [
+            "real_corpus[*].tok_per_s",
+            "real_corpus[*].seq",
+            "real_corpus[*].arm"
+          ],
+          "transform": "tok_per_s / 1000",
+          "evidence": "measured",
+          "scope": "real en-zh shards (Translation Training Data/shards_v1), production 50M model_config, random init, same seed and data order per arm, 3-6 optimizer steps, valid CE on 6 fixed validation windows. long = attention_block_size 1024 + ce_chunk_size 1024 + moe_chunk_tokens 8192. Few steps: the CE column shows equal quality between arms, not final model quality."
+        },
+        {
+          "label": "Long-context tok_per_s",
+          "x": [
+            8192,
+            16384,
+            32768,
+            65536
+          ],
+          "y": [
+            19.466,
+            15.226,
+            8.792,
+            3.69
+          ],
+          "source": "reports/long_context_20261109/real_corpus_ab.json",
+          "json_fields": [
+            "real_corpus[*].tok_per_s",
+            "real_corpus[*].seq",
+            "real_corpus[*].arm"
+          ],
+          "transform": "tok_per_s / 1000",
+          "evidence": "measured",
+          "scope": "real en-zh shards (Translation Training Data/shards_v1), production 50M model_config, random init, same seed and data order per arm, 3-6 optimizer steps, valid CE on 6 fixed validation windows. long = attention_block_size 1024 + ce_chunk_size 1024 + moe_chunk_tokens 8192. Few steps: the CE column shows equal quality between arms, not final model quality."
+        },
+        {
+          "label": "+ block recompute tok_per_s",
+          "x": [
+            8192,
+            16384,
+            32768,
+            65536
+          ],
+          "y": [
+            null,
+            null,
+            7.158,
+            3.512
+          ],
+          "source": "reports/long_context_20261109/real_corpus_ab.json",
+          "json_fields": [
+            "real_corpus[*].tok_per_s",
+            "real_corpus[*].seq",
+            "real_corpus[*].arm"
+          ],
+          "transform": "tok_per_s / 1000",
+          "evidence": "measured",
+          "scope": "real en-zh shards (Translation Training Data/shards_v1), production 50M model_config, random init, same seed and data order per arm, 3-6 optimizer steps, valid CE on 6 fixed validation windows. long = attention_block_size 1024 + ce_chunk_size 1024 + moe_chunk_tokens 8192. Few steps: the CE column shows equal quality between arms, not final model quality."
+        },
+        {
+          "label": "+ MLP recompute tok_per_s",
+          "x": [
+            8192,
+            16384,
+            32768,
+            65536
+          ],
+          "y": [
+            null,
+            null,
+            7.794,
+            null
+          ],
+          "source": "reports/long_context_20261109/real_corpus_ab.json",
+          "json_fields": [
+            "real_corpus[*].tok_per_s",
+            "real_corpus[*].seq",
+            "real_corpus[*].arm"
+          ],
+          "transform": "tok_per_s / 1000",
+          "evidence": "measured",
+          "scope": "real en-zh shards (Translation Training Data/shards_v1), production 50M model_config, random init, same seed and data order per arm, 3-6 optimizer steps, valid CE on 6 fixed validation windows. long = attention_block_size 1024 + ce_chunk_size 1024 + moe_chunk_tokens 8192. Few steps: the CE column shows equal quality between arms, not final model quality."
+        },
+        {
+          "label": "Baseline peak_gb",
+          "x": [
+            8192,
+            16384,
+            32768,
+            65536
+          ],
+          "y": [
+            40.64,
+            141.5,
+            null,
+            null
+          ],
+          "source": "reports/long_context_20261109/real_corpus_ab.json",
+          "json_fields": [
+            "real_corpus[*].peak_gb",
+            "real_corpus[*].seq",
+            "real_corpus[*].arm"
+          ],
+          "transform": "peak_gb / 1",
+          "evidence": "measured",
+          "scope": "real en-zh shards (Translation Training Data/shards_v1), production 50M model_config, random init, same seed and data order per arm, 3-6 optimizer steps, valid CE on 6 fixed validation windows. long = attention_block_size 1024 + ce_chunk_size 1024 + moe_chunk_tokens 8192. Few steps: the CE column shows equal quality between arms, not final model quality."
+        },
+        {
+          "label": "Long-context peak_gb",
+          "x": [
+            8192,
+            16384,
+            32768,
+            65536
+          ],
+          "y": [
+            7.51,
+            13.81,
+            27.01,
+            54.64
+          ],
+          "source": "reports/long_context_20261109/real_corpus_ab.json",
+          "json_fields": [
+            "real_corpus[*].peak_gb",
+            "real_corpus[*].seq",
+            "real_corpus[*].arm"
+          ],
+          "transform": "peak_gb / 1",
+          "evidence": "measured",
+          "scope": "real en-zh shards (Translation Training Data/shards_v1), production 50M model_config, random init, same seed and data order per arm, 3-6 optimizer steps, valid CE on 6 fixed validation windows. long = attention_block_size 1024 + ce_chunk_size 1024 + moe_chunk_tokens 8192. Few steps: the CE column shows equal quality between arms, not final model quality."
+        },
+        {
+          "label": "+ block recompute peak_gb",
+          "x": [
+            8192,
+            16384,
+            32768,
+            65536
+          ],
+          "y": [
+            null,
+            null,
+            20.16,
+            46.85
+          ],
+          "source": "reports/long_context_20261109/real_corpus_ab.json",
+          "json_fields": [
+            "real_corpus[*].peak_gb",
+            "real_corpus[*].seq",
+            "real_corpus[*].arm"
+          ],
+          "transform": "peak_gb / 1",
+          "evidence": "measured",
+          "scope": "real en-zh shards (Translation Training Data/shards_v1), production 50M model_config, random init, same seed and data order per arm, 3-6 optimizer steps, valid CE on 6 fixed validation windows. long = attention_block_size 1024 + ce_chunk_size 1024 + moe_chunk_tokens 8192. Few steps: the CE column shows equal quality between arms, not final model quality."
+        },
+        {
+          "label": "+ MLP recompute peak_gb",
+          "x": [
+            8192,
+            16384,
+            32768,
+            65536
+          ],
+          "y": [
+            null,
+            null,
+            25.64,
+            null
+          ],
+          "source": "reports/long_context_20261109/real_corpus_ab.json",
+          "json_fields": [
+            "real_corpus[*].peak_gb",
+            "real_corpus[*].seq",
+            "real_corpus[*].arm"
+          ],
+          "transform": "peak_gb / 1",
+          "evidence": "measured",
+          "scope": "real en-zh shards (Translation Training Data/shards_v1), production 50M model_config, random init, same seed and data order per arm, 3-6 optimizer steps, valid CE on 6 fixed validation windows. long = attention_block_size 1024 + ce_chunk_size 1024 + moe_chunk_tokens 8192. Few steps: the CE column shows equal quality between arms, not final model quality."
+        }
+      ],
+      "layout": {
+        "min_font_pt": 6.4,
+        "issues": [],
+        "size_mm": [
+          180.0,
+          103.0
+        ]
+      },
+      "status": "rendered"
+    },
+    {
+      "name": "architecture_stack",
+      "title": "Configurable forward stack",
+      "scope": "Source-verified module graph; input lookup and output linear embedding are separate",
+      "evidence": "schematic",
+      "note": "Logged values preserved; no smoothing or inferred error bars.",
+      "sources": {
+        "chronos_diagrams.py": "c6967f7b63a895c56bbc186060b9b8b66df33a56919d2a6d55a392480b2fcfe3"
+      },
+      "series": [],
+      "layout": {
+        "figure": "chronos_forward_stack",
+        "size_mm": [
+          180,
+          225
+        ],
+        "text_count": 92,
+        "node_count": 29,
+        "route_count": 64,
+        "minimum_font_pt": 6.0,
+        "issues": [],
+        "min_font_pt": 6.0
+      },
+      "status": "rendered"
+    },
+    {
+      "name": "block_vs_layer_schema",
+      "title": "Recurrent execution order",
+      "scope": "Illustrative example: four physical blocks, two repeats; IDs do not denote different layer types",
+      "evidence": "schematic",
+      "note": "Logged values preserved; no smoothing or inferred error bars.",
+      "sources": {
+        "chronos_diagrams.py": "c6967f7b63a895c56bbc186060b9b8b66df33a56919d2a6d55a392480b2fcfe3"
+      },
+      "series": [],
+      "layout": {
+        "figure": "block_vs_layer_schema",
+        "size_mm": [
+          180,
+          100
+        ],
+        "text_count": 24,
+        "node_count": 16,
+        "route_count": 15,
+        "minimum_font_pt": 6.3,
+        "issues": [],
+        "min_font_pt": 6.3
+      },
+      "status": "rendered"
+    },
+    {
+      "name": "router_lookahead",
+      "title": "Current dispatch and future expert prediction",
+      "scope": "Separate data/control paths; future prefetch does not directly contribute to the current output",
+      "evidence": "schematic",
+      "note": "Logged values preserved; no smoothing or inferred error bars.",
+      "sources": {
+        "chronos_diagrams.py": "c6967f7b63a895c56bbc186060b9b8b66df33a56919d2a6d55a392480b2fcfe3"
+      },
+      "series": [],
+      "layout": {
+        "figure": "router_lookahead",
+        "size_mm": [
+          180,
+          112
+        ],
+        "text_count": 24,
+        "node_count": 9,
+        "route_count": 13,
+        "minimum_font_pt": 6.0,
+        "issues": [],
+        "min_font_pt": 6.0
+      },
+      "status": "rendered"
+    },
+    {
+      "name": "lazy_tiers",
+      "title": "Selective expert paging and runtime policies",
+      "scope": "Code-generated kernel schematic; includes CUDA and MLX distinctions",
+      "evidence": "schematic",
+      "note": "Logged values preserved; no smoothing or inferred error bars.",
+      "sources": {
+        "chronos_diagrams.py": "c6967f7b63a895c56bbc186060b9b8b66df33a56919d2a6d55a392480b2fcfe3"
+      },
+      "series": [],
+      "layout": {
+        "figure": "chronos_ssd_kernel",
+        "size_mm": [
+          180,
+          188
+        ],
+        "text_count": 43,
+        "node_count": 16,
+        "route_count": 14,
+        "minimum_font_pt": 6.0,
+        "issues": [],
+        "min_font_pt": 6.0
+      },
+      "status": "rendered"
+    },
+    {
+      "name": "kernel_evolution",
+      "title": "Supported execution configurations",
+      "scope": "Configuration comparison, not an unverified historical mapping of releases",
+      "evidence": "schematic",
+      "note": "Logged values preserved; no smoothing or inferred error bars.",
+      "sources": {
+        "chronos_diagrams.py": "c6967f7b63a895c56bbc186060b9b8b66df33a56919d2a6d55a392480b2fcfe3"
+      },
+      "series": [],
+      "layout": {
+        "figure": "kernel_evolution",
+        "size_mm": [
+          180,
+          113
+        ],
+        "text_count": 22,
+        "node_count": 15,
+        "route_count": 13,
+        "minimum_font_pt": 6.3,
+        "issues": [],
+        "min_font_pt": 6.3
+      },
+      "status": "rendered"
+    },
+    {
+      "name": "version_timeline",
+      "title": "Release dates recorded in the project changelog",
+      "scope": "Source: CHANGELOG.md; no undocumented stable-release date is inferred",
+      "evidence": "reported",
+      "note": "Logged values preserved; no smoothing or inferred error bars.",
+      "sources": {
+        "CHANGELOG.md": "c496d2069a8420b692d6444d8fd9f5a26894a3f9634854737348156b9d1e7c7c",
+        "chronos_diagrams.py": "c6967f7b63a895c56bbc186060b9b8b66df33a56919d2a6d55a392480b2fcfe3"
+      },
+      "series": [
+        {
+          "label": "release headers",
+          "x": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          "y": [
+            [
+              "0.1.0",
+              "2026-04-20"
+            ],
+            [
+              "0.3.0",
+              "2026-11-06"
+            ],
+            [
+              "0.3.1a0",
+              "2026-11-07"
+            ],
+            [
+              "0.3.1a1",
+              "2026-11-07"
+            ],
+            [
+              "0.3.1a2",
+              "2026-11-07"
+            ],
+            [
+              "0.3.1a3",
+              "2026-11-08"
+            ],
+            [
+              "0.3.2a0",
+              "2026-11-08"
+            ],
+            [
+              "0.3.2a1",
+              "2026-11-09"
+            ],
+            [
+              "0.3.2a2",
+              "2026-11-09"
+            ],
+            [
+              "0.3.2a3",
+              "2026-11-10"
+            ],
+            [
+              "0.3.3a0",
+              "2026-11-12"
+            ],
+            [
+              "0.3.3a1",
+              "2026-11-12"
+            ]
+          ],
+          "source": "CHANGELOG.md",
+          "json_fields": [
+            "dated level-two release headers"
+          ],
+          "transform": "identity",
+          "evidence": "reported"
+        }
+      ],
+      "layout": {
+        "figure": "version_timeline",
+        "size_mm": [
+          180,
+          121
+        ],
+        "text_count": 27,
+        "node_count": 12,
+        "route_count": 10,
+        "minimum_font_pt": 6.3,
+        "issues": [],
+        "min_font_pt": 6.3
+      },
+      "status": "rendered"
+    },
+    {
+      "name": "moe_balance",
+      "title": "Expert load before and after training",
+      "scope": "Recorded benchmark · identical expert-ID ordering before / after training",
+      "evidence": "measured",
+      "note": "Logged values preserved; no smoothing or inferred error bars.",
+      "sources": {},
+      "series": [],
+      "status": "missing_data",
+      "reason": "Missing source: experiments/figures/benches/out/moe_balance.json"
+    },
+    {
+      "name": "router_entropy",
+      "title": "Routing entropy and top-one probability",
+      "scope": "Recorded training trajectories · no smoothing or extrapolation",
+      "evidence": "measured",
+      "note": "Logged values preserved; no smoothing or inferred error bars.",
+      "sources": {},
+      "series": [],
+      "status": "missing_data",
+      "reason": "Missing source: experiments/figures/benches/out/router_entropy.json"
+    },
+    {
+      "name": "lazy_inference_trace",
+      "title": "Resident expert memory and cache hit rate",
+      "scope": "Recorded decoding trace · cumulative hit rates are plotted as recorded",
+      "evidence": "measured",
+      "note": "Logged values preserved; no smoothing or inferred error bars.",
+      "sources": {},
+      "series": [],
+      "status": "missing_data",
+      "reason": "Missing source: experiments/figures/benches/out/lazy_inference_trace.json"
+    },
+    {
+      "name": "prefetch_depth",
+      "title": "Prefetch coverage across lookahead depths",
+      "scope": "Recorded benchmark points · missing depth settings are not interpolated",
+      "evidence": "measured",
+      "note": "Logged values preserved; no smoothing or inferred error bars.",
+      "sources": {},
+      "series": [],
+      "status": "missing_data",
+      "reason": "Missing source: experiments/figures/benches/out/prefetch_depth.json"
+    }
+  ],
+  "source_files": {
+    "experiments/loop_depth_15m/results/arm_d1.json": {
+      "sha256": "4de2fa7b7607de0961a6365fa09702fdeafe411f3a92a8313cefbeb520b13149",
+      "bytes": 96756
+    },
+    "experiments/loop_depth_15m/results/arm_d4.json": {
+      "sha256": "75b169056d1c217d6152db72b74ae6f330dd606f4b5c8dc8057181e5c1871587",
+      "bytes": 58556
+    },
+    "experiments/loop_depth_15m/results/arm_d8.json": {
+      "sha256": "4d1fbccb276d3222caf4afc55b55e5bf3d2a884ee869b375f1b80c2edb24b9b0",
+      "bytes": 38892
+    },
+    "experiments/loop_depth_15m/results_b/arm_b4.json": {
+      "sha256": "cb2ce8774085d8cfe5f89700433754f534c948d6e63461114be93a4f019a3923",
+      "bytes": 41928
+    },
+    "experiments/loop_depth_15m/results_b/arm_b8.json": {
+      "sha256": "1728cb212ba4ea1622c04ed6bbc350645107d346a4e64624a1f082b97ee6192e",
+      "bytes": 30617
+    },
+    "experiments/loop_depth_15m/results_m/arm_d4sig.json": {
+      "sha256": "4b072a993eb34d7e40a84b4dffd23aa60776a99766ebdf0432d856575c9d0302",
+      "bytes": 57864
+    },
+    "experiments/loop_depth_15m/results_k/arm_b4sig.json": {
+      "sha256": "b1b8db0ad96ab43873081e1ca3b00b92063331e150011c145af0b925b5b73da2",
+      "bytes": 59639
+    },
+    "reports/residency_20261107/bench_residency_50m_s13996_flores16_cpu.json": {
+      "sha256": "d327fa90f142f61d9da57e314d7b4b9a1648b05cdc7fd7acc63c70408fc6fe94",
+      "bytes": 20002
+    },
+    "reports/residency_20261107/sweep/lam_0.03_w32.json": {
+      "sha256": "dead40ceb37363db04f0bae80634cf3ebeffd35f4bd486f758e9be103c6c9550",
+      "bytes": 4291
+    },
+    "reports/residency_20261107/sweep/lam_0.1_w32.json": {
+      "sha256": "ba49400e5702b6c847fc44536c598265983f7ca0f34f08ba60d4c51151ff6f76",
+      "bytes": 4279
+    },
+    "reports/residency_20261107/sweep/lam_0.3_w32.json": {
+      "sha256": "efdf92e915c5fc76d6be385977fe17104a180953b8670e4cff18ace75bead4ad",
+      "bytes": 4279
+    },
+    "reports/residency_20261107/sweep/lam_1.0_w32.json": {
+      "sha256": "d3717ad1bcb5ab8fc41020dd65a0b157450c4587ceed1645182603fce5b25cf1",
+      "bytes": 4281
+    },
+    "reports/long_context_20261109/real_corpus_ab.json": {
+      "sha256": "ac6b0853401d3c9a3872c9efbf5621004f89c9fcd581d1b5c9467bc83eb87c9b",
+      "bytes": 3287
+    }
+  },
+  "rendered": 18,
+  "missing": 4
+}

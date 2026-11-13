@@ -1,0 +1,3 @@
+[exp] b4sg2 start 02:01:31 load 2.25 2.55 2.76 src /tmp/chronos_release_dev
+{"label": "b4sg2", "depth": 4, "steps": 2365, "wall_s": 1802.2, "valid_ce": 4.439986981451511, "peak_gb": 6.57}
+[exp] QUEUE O DONE

@@ -1,0 +1,911 @@
+{
+ "label": "measured",
+ "time": "2026-11-07T02:26:27",
+ "env": {
+  "python": "3.10.20",
+  "platform": "macOS-26.4.1-arm64-arm-64bit",
+  "torch": "2.10.0",
+  "mlx.core": "0.32.4",
+  "chip": "Apple M5 Max"
+ },
+ "checkpoint": {
+  "path": "dist/bundles/chronos-enzh-50m-pretrain-s13996/model/chronos-enzh-50m-pretrain-s13996.pth",
+  "sha256": "8d4b356de7a0c7b372f33fdf5adb80e44a3dd1770ed6a6a1a5b890efd8a5328f"
+ },
+ "settings": {
+  "checkpoint": "dist/bundles/chronos-enzh-50m-pretrain-s13996/model/chronos-enzh-50m-pretrain-s13996.pth",
+  "prompts": "flores_dev32.jsonl",
+  "field": "en",
+  "format": "tags:<|en|>,<|zh|>",
+  "eos": "<|endoftext|>",
+  "n": 16,
+  "max_new": 96,
+  "device": "cpu",
+  "dtype": "auto",
+  "ratio": 1.0,
+  "draft_depth": 1,
+  "gamma": 4,
+  "decay": 0.7,
+  "modes": "plain,planned,spec-window,spec-planned",
+  "out": "res16.json",
+  "note": "",
+  "eos_id": 0,
+  "decoding": "greedy, batch 1",
+  "order": "modes alternate per prompt; residency reset to the same cold start"
+ },
+ "budget": {
+  "ideal_active_experts": 12,
+  "routing_top_k": 2,
+  "num_moe_layers": 6,
+  "requested_ram_load_ratio": 1.0,
+  "requested_expert_budget": 12,
+  "max_allowed_expert_budget": 15,
+  "effective_expert_budget": 12,
+  "effective_vram_expert_budget": 12,
+  "effective_ram_expert_budget": 12,
+  "min_vram_expert_budget": 1,
+  "budget_clamped": false
+ },
+ "dtype": "float32",
+ "summary": {
+  "plain": {
+   "tokens": 549,
+   "seconds": 23.698,
+   "tok_s": 23.17,
+   "sync_ssd_loads": 6876,
+   "ssd_loads_per_token": 12.5246,
+   "selection_miss_rate": 0.2175,
+   "prefetch_loads": 7376,
+   "identical_to_plain": 16
+  },
+  "planned": {
+   "tokens": 549,
+   "seconds": 24.433,
+   "tok_s": 22.47,
+   "sync_ssd_loads": 4438,
+   "ssd_loads_per_token": 8.0838,
+   "selection_miss_rate": 0.1394,
+   "prefetch_loads": 5396,
+   "identical_to_plain": 16
+  },
+  "spec-window": {
+   "tokens": 549,
+   "seconds": 34.244,
+   "tok_s": 16.03,
+   "sync_ssd_loads": 9297,
+   "ssd_loads_per_token": 16.9344,
+   "selection_miss_rate": 0.2054,
+   "prefetch_loads": 11394,
+   "identical_to_plain": 16
+  },
+  "spec-planned": {
+   "tokens": 549,
+   "seconds": 28.961,
+   "tok_s": 18.96,
+   "sync_ssd_loads": 6258,
+   "ssd_loads_per_token": 11.3989,
+   "selection_miss_rate": 0.1395,
+   "prefetch_loads": 7004,
+   "identical_to_plain": 16,
+   "verify_ready_rate_mean": 0.6714
+  }
+ },
+ "rows": [
+  {
+   "index": 0,
+   "plain": {
+    "s": 1.7617874999996275,
+    "ssd": 521,
+    "hits": 2239,
+    "misses": 521,
+    "cluster_loads": 564,
+    "prefetch_loads": 564,
+    "planned_evictions": 0,
+    "eviction_policy": "lru",
+    "verify_ready_rate": null,
+    "n_tokens": 53
+   },
+   "planned": {
+    "s": 1.853657250001561,
+    "ssd": 360,
+    "hits": 2424,
+    "misses": 360,
+    "cluster_loads": 431,
+    "prefetch_loads": 431,
+    "planned_evictions": 419,
+    "eviction_policy": "planned",
+    "verify_ready_rate": null,
+    "n_tokens": 53
+   },
+   "spec-window": {
+    "s": 2.780898666998837,
+    "ssd": 686,
+    "hits": 3327,
+    "misses": 686,
+    "cluster_loads": 852,
+    "prefetch_loads": 852,
+    "planned_evictions": 0,
+    "eviction_policy": "lru",
+    "verify_ready_rate": 0.0,
+    "n_tokens": 53
+   },
+   "spec-planned": {
+    "s": 2.416797707992373,
+    "ssd": 505,
+    "hits": 3480,
+    "misses": 505,
+    "cluster_loads": 571,
+    "prefetch_loads": 571,
+    "planned_evictions": 557,
+    "eviction_policy": "planned",
+    "verify_ready_rate": 0.7103,
+    "n_tokens": 53
+   }
+  },
+  {
+   "index": 1,
+   "plain": {
+    "s": 1.7775090409995755,
+    "ssd": 496,
+    "hits": 1835,
+    "misses": 496,
+    "cluster_loads": 529,
+    "prefetch_loads": 529,
+    "planned_evictions": 0,
+    "eviction_policy": "lru",
+    "verify_ready_rate": null,
+    "n_tokens": 42
+   },
+   "planned": {
+    "s": 1.9302419169980567,
+    "ssd": 318,
+    "hits": 2003,
+    "misses": 318,
+    "cluster_loads": 392,
+    "prefetch_loads": 392,
+    "planned_evictions": 380,
+    "eviction_policy": "planned",
+    "verify_ready_rate": null,
+    "n_tokens": 42
+   },
+   "spec-window": {
+    "s": 2.7124265000020387,
+    "ssd": 651,
+    "hits": 3039,
+    "misses": 651,
+    "cluster_loads": 809,
+    "prefetch_loads": 809,
+    "planned_evictions": 0,
+    "eviction_policy": "lru",
+    "verify_ready_rate": 0.0,
+    "n_tokens": 42
+   },
+   "spec-planned": {
+    "s": 2.4060076670139097,
+    "ssd": 455,
+    "hits": 3192,
+    "misses": 455,
+    "cluster_loads": 499,
+    "prefetch_loads": 499,
+    "planned_evictions": 486,
+    "eviction_policy": "planned",
+    "verify_ready_rate": 0.7361,
+    "n_tokens": 42
+   }
+  },
+  {
+   "index": 2,
+   "plain": {
+    "s": 1.6499649589968612,
+    "ssd": 474,
+    "hits": 1697,
+    "misses": 474,
+    "cluster_loads": 516,
+    "prefetch_loads": 516,
+    "planned_evictions": 0,
+    "eviction_policy": "lru",
+    "verify_ready_rate": null,
+    "n_tokens": 38
+   },
+   "planned": {
+    "s": 1.8351264579978306,
+    "ssd": 327,
+    "hits": 1898,
+    "misses": 327,
+    "cluster_loads": 396,
+    "prefetch_loads": 396,
+    "planned_evictions": 384,
+    "eviction_policy": "planned",
+    "verify_ready_rate": null,
+    "n_tokens": 38
+   },
+   "spec-window": {
+    "s": 2.4732384579983773,
+    "ssd": 795,
+    "hits": 2577,
+    "misses": 795,
+    "cluster_loads": 984,
+    "prefetch_loads": 984,
+    "planned_evictions": 0,
+    "eviction_policy": "lru",
+    "verify_ready_rate": 0.0,
+    "n_tokens": 38
+   },
+   "spec-planned": {
+    "s": 2.148162457990111,
+    "ssd": 518,
+    "hits": 2799,
+    "misses": 518,
+    "cluster_loads": 589,
+    "prefetch_loads": 589,
+    "planned_evictions": 574,
+    "eviction_policy": "planned",
+    "verify_ready_rate": 0.6078,
+    "n_tokens": 38
+   }
+  },
+  {
+   "index": 3,
+   "plain": {
+    "s": 1.062335875001736,
+    "ssd": 326,
+    "hits": 1221,
+    "misses": 326,
+    "cluster_loads": 346,
+    "prefetch_loads": 346,
+    "planned_evictions": 0,
+    "eviction_policy": "lru",
+    "verify_ready_rate": null,
+    "n_tokens": 27
+   },
+   "planned": {
+    "s": 1.0693116670008749,
+    "ssd": 189,
+    "hits": 1366,
+    "misses": 189,
+    "cluster_loads": 230,
+    "prefetch_loads": 230,
+    "planned_evictions": 218,
+    "eviction_policy": "planned",
+    "verify_ready_rate": null,
+    "n_tokens": 27
+   },
+   "spec-window": {
+    "s": 1.8674862500047311,
+    "ssd": 438,
+    "hits": 1881,
+    "misses": 438,
+    "cluster_loads": 537,
+    "prefetch_loads": 537,
+    "planned_evictions": 0,
+    "eviction_policy": "lru",
+    "verify_ready_rate": 0.0,
+    "n_tokens": 27
+   },
+   "spec-planned": {
+    "s": 1.51929187499627,
+    "ssd": 291,
+    "hits": 2029,
+    "misses": 291,
+    "cluster_loads": 324,
+    "prefetch_loads": 324,
+    "planned_evictions": 310,
+    "eviction_policy": "planned",
+    "verify_ready_rate": 0.7753,
+    "n_tokens": 27
+   }
+  },
+  {
+   "index": 4,
+   "plain": {
+    "s": 0.78412991600635,
+    "ssd": 314,
+    "hits": 819,
+    "misses": 314,
+    "cluster_loads": 337,
+    "prefetch_loads": 337,
+    "planned_evictions": 0,
+    "eviction_policy": "lru",
+    "verify_ready_rate": null,
+    "n_tokens": 15
+   },
+   "planned": {
+    "s": 0.7847320839937311,
+    "ssd": 179,
+    "hits": 963,
+    "misses": 179,
+    "cluster_loads": 214,
+    "prefetch_loads": 214,
+    "planned_evictions": 202,
+    "eviction_policy": "planned",
+    "verify_ready_rate": null,
+    "n_tokens": 15
+   },
+   "spec-window": {
+    "s": 1.2725300839956617,
+    "ssd": 408,
+    "hits": 1221,
+    "misses": 408,
+    "cluster_loads": 493,
+    "prefetch_loads": 493,
+    "planned_evictions": 0,
+    "eviction_policy": "lru",
+    "verify_ready_rate": 0.0,
+    "n_tokens": 15
+   },
+   "spec-planned": {
+    "s": 1.0609587910003029,
+    "ssd": 246,
+    "hits": 1372,
+    "misses": 246,
+    "cluster_loads": 282,
+    "prefetch_loads": 282,
+    "planned_evictions": 269,
+    "eviction_policy": "planned",
+    "verify_ready_rate": 0.6667,
+    "n_tokens": 15
+   }
+  },
+  {
+   "index": 5,
+   "plain": {
+    "s": 1.4923341250105295,
+    "ssd": 378,
+    "hits": 1573,
+    "misses": 378,
+    "cluster_loads": 408,
+    "prefetch_loads": 408,
+    "planned_evictions": 0,
+    "eviction_policy": "lru",
+    "verify_ready_rate": null,
+    "n_tokens": 36
+   },
+   "planned": {
+    "s": 1.5851479999982985,
+    "ssd": 252,
+    "hits": 1725,
+    "misses": 252,
+    "cluster_loads": 311,
+    "prefetch_loads": 311,
+    "planned_evictions": 299,
+    "eviction_policy": "planned",
+    "verify_ready_rate": null,
+    "n_tokens": 36
+   },
+   "spec-window": {
+    "s": 1.901140916001168,
+    "ssd": 479,
+    "hits": 2134,
+    "misses": 479,
+    "cluster_loads": 602,
+    "prefetch_loads": 602,
+    "planned_evictions": 0,
+    "eviction_policy": "lru",
+    "verify_ready_rate": 0.0,
+    "n_tokens": 36
+   },
+   "spec-planned": {
+    "s": 1.6241188749991124,
+    "ssd": 333,
+    "hits": 2286,
+    "misses": 333,
+    "cluster_loads": 373,
+    "prefetch_loads": 373,
+    "planned_evictions": 357,
+    "eviction_policy": "planned",
+    "verify_ready_rate": 0.7292,
+    "n_tokens": 36
+   }
+  },
+  {
+   "index": 6,
+   "plain": {
+    "s": 1.3860392089991365,
+    "ssd": 454,
+    "hits": 1325,
+    "misses": 454,
+    "cluster_loads": 489,
+    "prefetch_loads": 489,
+    "planned_evictions": 0,
+    "eviction_policy": "lru",
+    "verify_ready_rate": null,
+    "n_tokens": 27
+   },
+   "planned": {
+    "s": 1.3286414169997443,
+    "ssd": 296,
+    "hits": 1498,
+    "misses": 296,
+    "cluster_loads": 364,
+    "prefetch_loads": 364,
+    "planned_evictions": 352,
+    "eviction_policy": "planned",
+    "verify_ready_rate": null,
+    "n_tokens": 27
+   },
+   "spec-window": {
+    "s": 1.7600588750065072,
+    "ssd": 737,
+    "hits": 1609,
+    "misses": 737,
+    "cluster_loads": 871,
+    "prefetch_loads": 871,
+    "planned_evictions": 0,
+    "eviction_policy": "lru",
+    "verify_ready_rate": 0.0,
+    "n_tokens": 27
+   },
+   "spec-planned": {
+    "s": 1.4574707499996293,
+    "ssd": 446,
+    "hits": 1862,
+    "misses": 446,
+    "cluster_loads": 506,
+    "prefetch_loads": 506,
+    "planned_evictions": 490,
+    "eviction_policy": "planned",
+    "verify_ready_rate": 0.5476,
+    "n_tokens": 27
+   }
+  },
+  {
+   "index": 7,
+   "plain": {
+    "s": 1.5913087079970865,
+    "ssd": 505,
+    "hits": 1734,
+    "misses": 505,
+    "cluster_loads": 545,
+    "prefetch_loads": 545,
+    "planned_evictions": 0,
+    "eviction_policy": "lru",
+    "verify_ready_rate": null,
+    "n_tokens": 37
+   },
+   "planned": {
+    "s": 1.8959565830009524,
+    "ssd": 365,
+    "hits": 1897,
+    "misses": 365,
+    "cluster_loads": 441,
+    "prefetch_loads": 441,
+    "planned_evictions": 429,
+    "eviction_policy": "planned",
+    "verify_ready_rate": null,
+    "n_tokens": 37
+   },
+   "spec-window": {
+    "s": 2.58848045799823,
+    "ssd": 676,
+    "hits": 2633,
+    "misses": 676,
+    "cluster_loads": 849,
+    "prefetch_loads": 849,
+    "planned_evictions": 0,
+    "eviction_policy": "lru",
+    "verify_ready_rate": 0.0,
+    "n_tokens": 37
+   },
+   "spec-planned": {
+    "s": 2.261977083995589,
+    "ssd": 500,
+    "hits": 2827,
+    "misses": 500,
+    "cluster_loads": 555,
+    "prefetch_loads": 555,
+    "planned_evictions": 539,
+    "eviction_policy": "planned",
+    "verify_ready_rate": 0.6979,
+    "n_tokens": 37
+   }
+  },
+  {
+   "index": 8,
+   "plain": {
+    "s": 1.0879823330033105,
+    "ssd": 381,
+    "hits": 1064,
+    "misses": 381,
+    "cluster_loads": 405,
+    "prefetch_loads": 405,
+    "planned_evictions": 0,
+    "eviction_policy": "lru",
+    "verify_ready_rate": null,
+    "n_tokens": 22
+   },
+   "planned": {
+    "s": 0.9571430000069086,
+    "ssd": 207,
+    "hits": 1239,
+    "misses": 207,
+    "cluster_loads": 244,
+    "prefetch_loads": 244,
+    "planned_evictions": 232,
+    "eviction_policy": "planned",
+    "verify_ready_rate": null,
+    "n_tokens": 22
+   },
+   "spec-window": {
+    "s": 1.5000025830086088,
+    "ssd": 455,
+    "hits": 1656,
+    "misses": 455,
+    "cluster_loads": 542,
+    "prefetch_loads": 542,
+    "planned_evictions": 0,
+    "eviction_policy": "lru",
+    "verify_ready_rate": 0.0,
+    "n_tokens": 22
+   },
+   "spec-planned": {
+    "s": 1.3046174999908544,
+    "ssd": 286,
+    "hits": 1806,
+    "misses": 286,
+    "cluster_loads": 313,
+    "prefetch_loads": 313,
+    "planned_evictions": 300,
+    "eviction_policy": "planned",
+    "verify_ready_rate": 0.7222,
+    "n_tokens": 22
+   }
+  },
+  {
+   "index": 9,
+   "plain": {
+    "s": 1.3477633750007953,
+    "ssd": 481,
+    "hits": 1427,
+    "misses": 481,
+    "cluster_loads": 508,
+    "prefetch_loads": 508,
+    "planned_evictions": 0,
+    "eviction_policy": "lru",
+    "verify_ready_rate": null,
+    "n_tokens": 30
+   },
+   "planned": {
+    "s": 1.5166876250004862,
+    "ssd": 303,
+    "hits": 1621,
+    "misses": 303,
+    "cluster_loads": 356,
+    "prefetch_loads": 356,
+    "planned_evictions": 344,
+    "eviction_policy": "planned",
+    "verify_ready_rate": null,
+    "n_tokens": 30
+   },
+   "spec-window": {
+    "s": 2.0585927500069374,
+    "ssd": 614,
+    "hits": 2197,
+    "misses": 614,
+    "cluster_loads": 735,
+    "prefetch_loads": 735,
+    "planned_evictions": 0,
+    "eviction_policy": "lru",
+    "verify_ready_rate": 0.0,
+    "n_tokens": 30
+   },
+   "spec-planned": {
+    "s": 1.565166667001904,
+    "ssd": 400,
+    "hits": 2350,
+    "misses": 400,
+    "cluster_loads": 447,
+    "prefetch_loads": 447,
+    "planned_evictions": 433,
+    "eviction_policy": "planned",
+    "verify_ready_rate": 0.6389,
+    "n_tokens": 30
+   }
+  },
+  {
+   "index": 10,
+   "plain": {
+    "s": 3.1965762080071727,
+    "ssd": 560,
+    "hits": 3602,
+    "misses": 560,
+    "cluster_loads": 599,
+    "prefetch_loads": 599,
+    "planned_evictions": 0,
+    "eviction_policy": "lru",
+    "verify_ready_rate": null,
+    "n_tokens": 90
+   },
+   "planned": {
+    "s": 3.1805184590048157,
+    "ssd": 406,
+    "hits": 3763,
+    "misses": 406,
+    "cluster_loads": 510,
+    "prefetch_loads": 510,
+    "planned_evictions": 498,
+    "eviction_policy": "planned",
+    "verify_ready_rate": null,
+    "n_tokens": 90
+   },
+   "spec-window": {
+    "s": 4.091535250001471,
+    "ssd": 711,
+    "hits": 4599,
+    "misses": 711,
+    "cluster_loads": 891,
+    "prefetch_loads": 891,
+    "planned_evictions": 0,
+    "eviction_policy": "lru",
+    "verify_ready_rate": 0.0,
+    "n_tokens": 90
+   },
+   "spec-planned": {
+    "s": 3.731865875000949,
+    "ssd": 540,
+    "hits": 4759,
+    "misses": 540,
+    "cluster_loads": 594,
+    "prefetch_loads": 594,
+    "planned_evictions": 576,
+    "eviction_policy": "planned",
+    "verify_ready_rate": 0.759,
+    "n_tokens": 90
+   }
+  },
+  {
+   "index": 11,
+   "plain": {
+    "s": 1.0975627080042614,
+    "ssd": 392,
+    "hits": 979,
+    "misses": 392,
+    "cluster_loads": 412,
+    "prefetch_loads": 412,
+    "planned_evictions": 0,
+    "eviction_policy": "lru",
+    "verify_ready_rate": null,
+    "n_tokens": 19
+   },
+   "planned": {
+    "s": 1.0790139170130715,
+    "ssd": 234,
+    "hits": 1147,
+    "misses": 234,
+    "cluster_loads": 278,
+    "prefetch_loads": 278,
+    "planned_evictions": 266,
+    "eviction_policy": "planned",
+    "verify_ready_rate": null,
+    "n_tokens": 19
+   },
+   "spec-window": {
+    "s": 1.487006334005855,
+    "ssd": 503,
+    "hits": 1492,
+    "misses": 503,
+    "cluster_loads": 600,
+    "prefetch_loads": 600,
+    "planned_evictions": 0,
+    "eviction_policy": "lru",
+    "verify_ready_rate": 0.0,
+    "n_tokens": 19
+   },
+   "spec-planned": {
+    "s": 1.2269112909998512,
+    "ssd": 327,
+    "hits": 1661,
+    "misses": 327,
+    "cluster_loads": 365,
+    "prefetch_loads": 365,
+    "planned_evictions": 350,
+    "eviction_policy": "planned",
+    "verify_ready_rate": 0.6061,
+    "n_tokens": 19
+   }
+  },
+  {
+   "index": 12,
+   "plain": {
+    "s": 0.8778314169903751,
+    "ssd": 280,
+    "hits": 888,
+    "misses": 280,
+    "cluster_loads": 304,
+    "prefetch_loads": 304,
+    "planned_evictions": 0,
+    "eviction_policy": "lru",
+    "verify_ready_rate": null,
+    "n_tokens": 18
+   },
+   "planned": {
+    "s": 0.7966191669984255,
+    "ssd": 156,
+    "hits": 988,
+    "misses": 156,
+    "cluster_loads": 187,
+    "prefetch_loads": 187,
+    "planned_evictions": 175,
+    "eviction_policy": "planned",
+    "verify_ready_rate": null,
+    "n_tokens": 18
+   },
+   "spec-window": {
+    "s": 1.1623969590000343,
+    "ssd": 342,
+    "hits": 1238,
+    "misses": 342,
+    "cluster_loads": 408,
+    "prefetch_loads": 408,
+    "planned_evictions": 0,
+    "eviction_policy": "lru",
+    "verify_ready_rate": 0.0,
+    "n_tokens": 18
+   },
+   "spec-planned": {
+    "s": 0.9529859169997508,
+    "ssd": 207,
+    "hits": 1347,
+    "misses": 207,
+    "cluster_loads": 228,
+    "prefetch_loads": 228,
+    "planned_evictions": 216,
+    "eviction_policy": "planned",
+    "verify_ready_rate": 0.713,
+    "n_tokens": 18
+   }
+  },
+  {
+   "index": 13,
+   "plain": {
+    "s": 1.1606041670020204,
+    "ssd": 352,
+    "hits": 1090,
+    "misses": 352,
+    "cluster_loads": 383,
+    "prefetch_loads": 383,
+    "planned_evictions": 0,
+    "eviction_policy": "lru",
+    "verify_ready_rate": null,
+    "n_tokens": 23
+   },
+   "planned": {
+    "s": 1.1387737920013024,
+    "ssd": 215,
+    "hits": 1252,
+    "misses": 215,
+    "cluster_loads": 266,
+    "prefetch_loads": 266,
+    "planned_evictions": 254,
+    "eviction_policy": "planned",
+    "verify_ready_rate": null,
+    "n_tokens": 23
+   },
+   "spec-window": {
+    "s": 1.6385499169991817,
+    "ssd": 457,
+    "hits": 1471,
+    "misses": 457,
+    "cluster_loads": 544,
+    "prefetch_loads": 544,
+    "planned_evictions": 0,
+    "eviction_policy": "lru",
+    "verify_ready_rate": 0.0,
+    "n_tokens": 23
+   },
+   "spec-planned": {
+    "s": 1.339740791998338,
+    "ssd": 259,
+    "hits": 1640,
+    "misses": 259,
+    "cluster_loads": 291,
+    "prefetch_loads": 291,
+    "planned_evictions": 275,
+    "eviction_policy": "planned",
+    "verify_ready_rate": 0.5917,
+    "n_tokens": 23
+   }
+  },
+  {
+   "index": 14,
+   "plain": {
+    "s": 1.5357000829972094,
+    "ssd": 429,
+    "hits": 1438,
+    "misses": 429,
+    "cluster_loads": 456,
+    "prefetch_loads": 456,
+    "planned_evictions": 0,
+    "eviction_policy": "lru",
+    "verify_ready_rate": null,
+    "n_tokens": 32
+   },
+   "planned": {
+    "s": 1.5111392090038862,
+    "ssd": 269,
+    "hits": 1612,
+    "misses": 269,
+    "cluster_loads": 327,
+    "prefetch_loads": 327,
+    "planned_evictions": 315,
+    "eviction_policy": "planned",
+    "verify_ready_rate": null,
+    "n_tokens": 32
+   },
+   "spec-window": {
+    "s": 2.233119500000612,
+    "ssd": 558,
+    "hits": 2179,
+    "misses": 558,
+    "cluster_loads": 690,
+    "prefetch_loads": 690,
+    "planned_evictions": 0,
+    "eviction_policy": "lru",
+    "verify_ready_rate": 0.0,
+    "n_tokens": 32
+   },
+   "spec-planned": {
+    "s": 1.8321951249963604,
+    "ssd": 388,
+    "hits": 2313,
+    "misses": 388,
+    "cluster_loads": 434,
+    "prefetch_loads": 434,
+    "planned_evictions": 420,
+    "eviction_policy": "planned",
+    "verify_ready_rate": 0.6872,
+    "n_tokens": 32
+   }
+  },
+  {
+   "index": 15,
+   "plain": {
+    "s": 1.8883872500009602,
+    "ssd": 533,
+    "hits": 1808,
+    "misses": 533,
+    "cluster_loads": 575,
+    "prefetch_loads": 575,
+    "planned_evictions": 0,
+    "eviction_policy": "lru",
+    "verify_ready_rate": null,
+    "n_tokens": 40
+   },
+   "planned": {
+    "s": 1.9698821249912726,
+    "ssd": 362,
+    "hits": 1997,
+    "misses": 362,
+    "cluster_loads": 449,
+    "prefetch_loads": 449,
+    "planned_evictions": 437,
+    "eviction_policy": "planned",
+    "verify_ready_rate": null,
+    "n_tokens": 40
+   },
+   "spec-window": {
+    "s": 2.7161081660015043,
+    "ssd": 787,
+    "hits": 2707,
+    "misses": 787,
+    "cluster_loads": 987,
+    "prefetch_loads": 987,
+    "planned_evictions": 0,
+    "eviction_policy": "lru",
+    "verify_ready_rate": 0.0,
+    "n_tokens": 40
+   },
+   "spec-planned": {
+    "s": 2.11298083300062,
+    "ssd": 557,
+    "hits": 2886,
+    "misses": 557,
+    "cluster_loads": 633,
+    "prefetch_loads": 633,
+    "planned_evictions": 616,
+    "eviction_policy": "planned",
+    "verify_ready_rate": 0.5542,
+    "n_tokens": 40
+   }
+  }
+ ]
+}
