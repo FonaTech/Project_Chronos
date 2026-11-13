@@ -111,8 +111,8 @@ flowchart LR
 For MLA, the adapter must define whether it stores latents and rotary keys or expanded K/V, and how the attention kernel reconstructs the same scores. For SWA, it must preserve the moving window and absolute end index. For speculation, append and rollback must commute with $\Phi$:
 
 $$
-\Phi(\operatorname{truncate}(C,n))
-=\operatorname{truncate}_{\mathrm{engine}}(\Phi(C),n).
+\Phi(\mathrm{truncate}(C,n))
+=\mathrm{truncate}_{\mathrm{engine}}(\Phi(C),n).
 \tag{3}
 $$
 

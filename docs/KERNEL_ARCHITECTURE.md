@@ -34,7 +34,7 @@ The input operation is a lookup. The output operation is a linear projection:
 
 $$
 h_{b,t}^{(0)}=W_{\mathrm{in}}[x_{b,t}],\qquad
-z_{b,t}=W_{\mathrm{out}}\operatorname{RMSNorm}(h_{b,t}^{\mathrm{coda}}),
+z_{b,t}=W_{\mathrm{out}}\mathrm{RMSNorm}(h_{b,t}^{\mathrm{coda}}),
 \quad W_{\mathrm{in}},W_{\mathrm{out}}\in\mathbb R^{V\times d}.
 \tag{K.1}
 $$
@@ -86,13 +86,13 @@ Physical parity includes the prelude offset. Recurrent group $g$ occupies physic
 For the default SiLU activation, a bias-free SwiGLU expert with intermediate width $m$ is
 
 $$
-E(h)=W_d\bigl[\operatorname{SiLU}(W_g h)\odot(W_u h)\bigr].
+E(h)=W_d\bigl[\mathrm{SiLU}(W_g h)\odot(W_u h)\bigr].
 \tag{K.3}
 $$
 
 Its three matrices contain $3dm$ weights. Dense and expert intermediate widths are separate configuration fields. There is no general requirement that either equals $4d$.
 
-For routed expert probabilities $p=\operatorname{softmax}_{\mathrm{FP32}}(W_r h)$, let $I$ be the selected top-$k$ set. The normal fully available MoE path is
+For routed expert probabilities $p=\mathrm{softmax}_{\mathrm{FP32}}(W_r h)$, let $I$ be the selected top-$k$ set. The normal fully available MoE path is
 
 $$
 M(h)=\sum_{i\in I}a_iE_i(h)+\bar S(h),\qquad
@@ -110,8 +110,8 @@ The implemented contracted step is indexed by recurrent group and iteration. It 
 
 $$
 \begin{aligned}
-h^*&=h+e_r+u_g,\\
-\Phi_{r,g}(h)&=h+\alpha_g\left[F_{P+g}(h^*;\mathcal K_g^{(0)})-h\right].
+h^{\ast}&=h+e_r+u_g,\\
+\Phi_{r,g}(h)&=h+\alpha_g\left[F_{P+g}(h^{\ast};\mathcal K_g^{(0)})-h\right].
 \end{aligned}
 \tag{K.5}
 $$
@@ -202,7 +202,7 @@ in bounded decode. A shared prefill view can be longer than the retained cache. 
 Define expert-to-cluster membership $A_{i,c}\in\{0,1\}$. Aggregate routing probabilities over tokens and dispatches within a stream unit $w$:
 
 $$
-p(c\mid w)=\sum_i A_{i,c}\,\operatorname{mean}_{(t,v)\in w}p_{t,v,i}.
+p(c\mid w)=\sum_i A_{i,c}\,\mathrm{mean}_{(t,v)\in w}p_{t,v,i}.
 \tag{K.9}
 $$
 

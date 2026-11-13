@@ -70,7 +70,7 @@ The supported shallow/full cache layout must be depth independent. `shared_first
 At proposal position $i$, let $d_i$ be the shallow proposal and $p_i$ the full-depth distribution conditioned on the committed prefix and all previously accepted proposals. Greedy verification accepts while
 
 $$
-d_i=\operatorname*{arg\,max}_{v}p_i(v).
+d_i=\mathop{\mathrm{arg\,max}}\limits_{v}p_i(v).
 \tag{1}
 $$
 
@@ -85,7 +85,7 @@ For sampled generation, let $q(v)$ be the normalized draft distribution and $p(v
 A token $v\sim q$ is accepted with probability
 
 $$
-a(v)=\min\!\left(1,\frac{p(v)}{q(v)}\right).
+a(v)=\min\left(1,\frac{p(v)}{q(v)}\right).
 \tag{2}
 $$
 

@@ -123,8 +123,8 @@ For batch $B$, query heads $H_q$ and head width $d_h$, the leading full-causal a
 For the implemented SWA block span, a corresponding work estimate is
 
 $$
-O\!\left(\frac{T}{c}\,BH_q\,c(W+c)d_h\right)
-=O\!\left(BH_qT(W+c)d_h\right).
+O\left(\frac{T}{c}\,BH_q\,c(W+c)d_h\right)
+=O\left(BH_qT(W+c)d_h\right).
 \tag{7}
 $$
 

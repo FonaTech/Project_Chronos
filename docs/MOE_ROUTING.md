@@ -25,7 +25,7 @@ $$
 
 The router linear layer has **no bias**. Both Torch and MLX cast the router scores to FP32 before softmax; this is a numerical policy, not evidence of a measured latency benefit. Torch uses `torch.topk`; MLX uses `argpartition` and gathers the selected scores. The separate sorting of dispatch rows groups tokens by expert; it should not be confused with the top-k selection algorithm. [Torch selection](../chronos/model/moe_chronos.py#L138), [MLX selection](../chronos/mlx/moe.py#L233).
 
-Write $I(h)=\operatorname{TopK}(g,k)$. If `norm_topk_prob=True`,
+Write $I(h)=\mathrm{TopK}(g,k)$. If `norm_topk_prob=True`,
 
 $$
  a_i=\frac{g_i}{\sum_{j\in I}g_j+\epsilon},\quad i\in I,
@@ -53,7 +53,7 @@ flowchart TB
 With the default `hidden_act="silu"`, an expert is a SwiGLU map:
 
 $$
- E_i(h)=W_{d,i}\left[\operatorname{SiLU}(W_{g,i}h)
+ E_i(h)=W_{d,i}\left[\mathrm{SiLU}(W_{g,i}h)
                  \odot W_{u,i}h\right],
 $$
 

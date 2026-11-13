@@ -26,7 +26,7 @@ $$
 The current training path obtains $M$ from `training_clusters(config)`. It splits expert IDs into contiguous, near-equal groups. The cluster count is the explicit positive `cluster_locality_clusters`, or otherwise
 
 $$
- N_c=\operatorname{clip}_{[1,E]}\!\left(\left\lceil\frac{E}{2k}\right\rceil\right).
+ N_c=\mathrm{clip}_{[1,E]}\left(\left\lceil\frac{E}{2k}\right\rceil\right).
 $$
 
 There is no implemented `clusters.partition_json` training field in this snapshot. A cluster manifest used by storage is a separate object. [Partition implementation](../chronos/expert_clusters.py#L28).
@@ -174,7 +174,7 @@ The implementation uses mean total variation from the iteration mean:
 
 $$
  L_{\mathrm{iter}}
- =\operatorname{mean}_{b,t,g,r}
+ =\mathrm{mean}_{b,t,g,r}
     \left[\frac12\sum_c|q_{b,t,g,r,c}-\bar q_{b,t,g,c}|\right],
 $$
 

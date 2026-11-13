@@ -13,8 +13,8 @@ The backbone contains prelude blocks, recurrent physical groups and coda blocks.
 The actual group update conditions the input on iteration and group embeddings:
 
 $$
-h^*=h+e_r+u_g,\qquad
-h'=h+\alpha_g\bigl[F_{P+g}(h^*;\mathcal K)-h\bigr].
+h^{\ast}=h+e_r+u_g,\qquad
+h'=h+\alpha_g\bigl[F_{P+g}(h^{\ast};\mathcal K)-h\bigr].
 $$
 
 The full block $F$ includes attention and an MLP with two internal residual additions. The outer interpolation is a separate controller operation. A small step size can damp an update; it does not by itself prove contraction or convergence.
