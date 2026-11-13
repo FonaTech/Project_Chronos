@@ -12,9 +12,9 @@ A full pre-normalization block is the map $F_\ell$, not merely its residual incr
 
 $$
 \begin{aligned}
-a &= h + A_\ell\!\left(N_{\ell,1}(h);\mathcal K_\ell\right),\\
+a &= h + A_\ell\left(N_{\ell,1}(h);\mathcal K_\ell\right),\\
 F_\ell(h;\mathcal K_\ell)
-  &=a+M_\ell\!\left(N_{\ell,2}(a)\right).
+  &=a+M_\ell\left(N_{\ell,2}(a)\right).
 \end{aligned}
 \tag{T1}
 $$
@@ -81,7 +81,7 @@ The implemented map depends on $e_r$, the group, cached context and sometimes ro
 The helper [recommended_dt_init](../chronos/model/recurrent.py#L17) returns
 
 $$
-\alpha_0(R)=\min\!\left(0.5,\frac{2}{R}\right).
+\alpha_0(R)=\min\left(0.5,\frac{2}{R}\right).
 \tag{T6}
 $$
 
@@ -116,10 +116,10 @@ $$
 \tag{T9}
 $$
 
-For $\mu\ne1$, this requires $\operatorname{Re}\mu<1$ and
+For $\mu\ne1$, this requires $\mathrm{Re}\mu<1$ and
 
 $$
-0<\alpha<\frac{2(1-\operatorname{Re}\mu)}{|\mu-1|^2}.
+0<\alpha<\frac{2(1-\mathrm{Re}\mu)}{|\mu-1|^2}.
 \tag{T10}
 $$
 
@@ -142,7 +142,7 @@ $$
 
 The derivative is positive for finite $\theta_g$ in real arithmetic. It can become very small near saturation, and finite precision can round it to zero. This removes the explicit dead region of a hard clamp; it does not eliminate vanishing gradients.
 
-The clamp option computes $\alpha_g=\operatorname{clip}(\theta_g,\alpha_{\min},\alpha_{\max})$. Parameters outside the interval have zero derivative. The MLX implementation uses an explicit inclusive-boundary rule to match Torch; see [RecurrentControllerMLX.contract](../chronos/mlx/recurrent.py#L54). Monitoring should include raw $\theta_g$, effective $\alpha_g$ and gradients, not only effective step size.
+The clamp option computes $\alpha_g=\mathrm{clip}(\theta_g,\alpha_{\min},\alpha_{\max})$. Parameters outside the interval have zero derivative. The MLX implementation uses an explicit inclusive-boundary rule to match Torch; see [RecurrentControllerMLX.contract](../chronos/mlx/recurrent.py#L54). Monitoring should include raw $\theta_g$, effective $\alpha_g$ and gradients, not only effective step size.
 
 ## 3. Why loop order changes the computation
 
@@ -188,7 +188,7 @@ Their leading difference is $\epsilon^2(J_ba-J_ab)$. This explains why order can
 
 ## 4. Sparse experts and routing-locality objectives
 
-For a normalized MLP input $z$, the router computes $p(z)=\operatorname{softmax}(W_gz)$ in FP32. Let $\mathcal I_k(z)$ be the selected expert IDs. If `norm_topk_prob=True`,
+For a normalized MLP input $z$, the router computes $p(z)=\mathrm{softmax}(W_gz)$ in FP32. Let $\mathcal I_k(z)$ be the selected expert IDs. If `norm_topk_prob=True`,
 
 $$
 \widehat p_i(z)=\frac{p_i(z)}{\sum_{j\in\mathcal I_k(z)}p_j(z)},\qquad
@@ -202,7 +202,7 @@ Equation T14 assumes $S_s>0$; omit the shared branch when no shared experts are 
 Let $A_{ic}$ be the fixed expert-to-cluster membership matrix. Aggregate routing mass across tokens and all dispatches in a window $w$:
 
 $$
-p_w(c)=\operatorname{mean}_{(b,t,v)\in w}\sum_i p_{b,t,v,i}A_{ic}.
+p_w(c)=\mathrm{mean}_{(b,t,v)\in w}\sum_i p_{b,t,v,i}A_{ic}.
 \tag{T15}
 $$
 
@@ -210,8 +210,8 @@ For more than one cluster, the implemented window objective is
 
 $$
 \mathcal L_{\mathrm{cluster}}
-=1-\frac{H(\overline p)-\operatorname{mean}_wH(p_w)}{\log N_c},
-\qquad \overline p=\operatorname{mean}_wp_w.
+=1-\frac{H(\overline p)-\mathrm{mean}_wH(p_w)}{\log N_c},
+\qquad \overline p=\mathrm{mean}_wp_w.
 \tag{T16}
 $$
 
@@ -247,13 +247,13 @@ For a detached teacher distribution $P$, the basic supervision is soft-target cr
 
 $$
 \mathcal L_{\mathrm{LA}}
-=\operatorname{mean}_{j\in\mathcal J}
-\left[-\operatorname{mean}_{b,t,g}
+=\mathrm{mean}_{j\in\mathcal J}
+\left[-\mathrm{mean}_{b,t,g}
 \sum_iP_{b,t+j,g,i}\log Q_{b,t,j,g,i}\right].
 \tag{T18}
 $$
 
-Only horizons $\mathcal J$ with available token pairs contribute. The implementation clamps predicted probabilities below at $10^{-9}$ before taking logs. For fixed detached $P$, soft-target cross-entropy equals $\operatorname{KL}(P\|Q)+H(P)$. The teacher entropy has no gradient through this loss, so its optimization direction matches forward KL.
+Only horizons $\mathcal J$ with available token pairs contribute. The implementation clamps predicted probabilities below at $10^{-9}$ before taking logs. For fixed detached $P$, soft-target cross-entropy equals $\mathrm{KL}(P\|Q)+H(P)$. The teacher entropy has no gradient through this loss, so its optimization direction matches forward KL.
 
 Padding and document-boundary handling depend on the active training path. This loss differs from classifying one cluster ID. Expert-to-page mapping occurs later in the runtime. Code: [lookahead_supervision_loss](../chronos/model/temporal_loss.py#L259).
 
@@ -282,7 +282,7 @@ $$
 D_{\mathrm{used}}=\sum_jjw_j,
 \qquad
 \mathcal L_{\mathrm{ponder}}=
-\operatorname{mean}\max(D_{\mathrm{used}}-1,0).
+\mathrm{mean}\max(D_{\mathrm{used}}-1,0).
 \tag{T20}
 $$
 

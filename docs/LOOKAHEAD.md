@@ -13,8 +13,10 @@ That architectural separation does not make prediction errors harmless. A wrong 
 Use $t$ for token position, $\delta$ for future token offset, $g$ for a recurrent physical group and $r$ for recurrent iteration. The future horizon is
 
 $$
- \delta\in\{1,\ldots,K\},\qquad K=\texttt{lookahead\_steps}.
+\delta\in\{1,\ldots,K\}.
 $$
+
+Here $K$ denotes the `lookahead_steps` configuration value.
 
 The head additionally emits slot zero. Its output is
 
@@ -58,7 +60,7 @@ flowchart TB
 Let $d$ be backbone width and $m=\max(1,\lfloor d/4\rfloor)$. The current head is
 
 $$
- u=\operatorname{SiLU}(W_1h),\qquad z=W_2u,\qquad Q=\operatorname{softmax}_E(\operatorname{reshape}(z)),
+ u=\mathrm{SiLU}(W_1h),\qquad z=W_2u,\qquad Q=\mathrm{softmax}_E(\mathrm{reshape}(z)),
 $$
 
 with bias-free matrices
@@ -111,12 +113,12 @@ The teacher is a **soft future routing distribution**, not just hard expert IDs.
 
 The accepted string is `"iterations"`, not `"all"`. Averaging probabilities across recurrent calls is not taking a union of their hard selected IDs. The separate future-union objective below concerns **token offsets**. [Scope validation](../chronos/model/config.py#L301), [teacher sources](../chronos/trainer/loss_mixin.py#L101).
 
-When predictions lack a group axis, teacher probabilities are averaged across physical layers. With a group axis, the trainer selects physical recurrent layers $P$ through $P+G-1$. In either case, the teacher is stop-gradient. Denote that aligned distribution by $\operatorname{sg}(P_{b,t,g,e})$.
+When predictions lack a group axis, teacher probabilities are averaged across physical layers. With a group axis, the trainer selects physical recurrent layers $P$ through $P+G-1$. In either case, the teacher is stop-gradient. Denote that aligned distribution by $\mathrm{sg}(P_{b,t,g,e})$.
 
 Input detachment is a different decision:
 
 $$
- h_{\mathrm{LA}}=\begin{cases}\operatorname{sg}(h),&\text{input detach enabled},\\h,&\text{otherwise}.\end{cases}
+ h_{\mathrm{LA}}=\begin{cases}\mathrm{sg}(h),&\text{input detach enabled},\\h,&\text{otherwise}.\end{cases}
 $$
 
 `lookahead_input_detach` defaults to false. MLX applies the switch at the head call. In the reviewed Torch call sites, the flag is not consulted: changing it alone does not create a stopped-gradient input there. This is an implementation-parity boundary, not a feature that documentation can assume works identically. [Config](../chronos/model/config.py#L166), [MLX switch](../chronos/mlx/model.py#L269), [Torch call](../chronos/model/model_chronos.py#L492).
@@ -145,14 +147,14 @@ For valid future offset $\delta$, align prediction at $t$ with routing at $t+\de
 
 $$
  \ell_{b,t,g}^{(\delta)}
- =-\sum_e\operatorname{sg}(P_{b,t+\delta,g,e})\log Q_{b,t,\delta,g,e}.
+ =-\sum_e\mathrm{sg}(P_{b,t+\delta,g,e})\log Q_{b,t,\delta,g,e}.
 $$
 
 The loss averages valid token/group examples within each offset, then averages available offsets:
 
 $$
  L_{\mathrm{LA}}=\frac1{|\mathcal D|}\sum_{\delta\in\mathcal D}
-            \operatorname{mean}_{b,t,g:\,t+\delta<T}\ell_{b,t,g}^{(\delta)}.
+            \mathrm{mean}_{b,t,g:\,t+\delta<T}\ell_{b,t,g}^{(\delta)}.
 $$
 
 Offsets with no valid pair are skipped. Expanding cross-entropy gives
@@ -171,7 +173,7 @@ Let $I_{b,t+\delta,g}$ be the teacher's future top-k set. The auxiliary hit-mass
 
 $$
  M_{b,t,g}^{(\delta)}=\sum_{e\in I_{b,t+\delta,g}}Q_{b,t,\delta,g,e},\qquad
- L_{\mathrm{hit}}=\operatorname{mean}\left[-\log\frac{M^{(\delta)}}{k}\right].
+ L_{\mathrm{hit}}=\mathrm{mean}\left[-\log\frac{M^{(\delta)}}{k}\right].
 $$
 
 The division by $k$ is a constant for the selected setting. It gives a uniform predictor the same reference loss $\log E$ across top-k choices. It does not alter the derivative with respect to $Q$. A prediction can place most of its mass on only part of the teacher set, so this is a differentiable **coverage proxy**, not a theorem guaranteeing exact top-k recall. [Hit-mass implementation](../chronos/model/temporal_loss.py#L316).
@@ -188,7 +190,7 @@ $$
 The implemented proxy is
 
 $$
- L_{\mathrm{union}}=\operatorname{mean}\left[
+ L_{\mathrm{union}}=\mathrm{mean}\left[
    -\log\frac{\sum_eU_e\widehat Q_e}{\sum_eU_e}\right].
 $$
 

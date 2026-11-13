@@ -46,7 +46,7 @@ Valid grouped-head shapes require the query heads to map consistently onto KV gr
 For an attention input $z$, the normalized shared KV latent is
 
 $$
-c_t=\operatorname{RMSNorm}_{KV}(W_{DKV}z_t)\in\mathbb R^{d_c}.
+c_t=\mathrm{RMSNorm}_{KV}(W_{DKV}z_t)\in\mathbb R^{d_c}.
 \tag{A1}
 $$
 
@@ -55,9 +55,9 @@ RMSNorm denotes root mean square normalization. The projections for a query head
 $$
 \begin{aligned}
 q^C_{t,h}&=N_Q^C(W_{QC,h}z_t)\in\mathbb R^{d_n},\\
-q^R_{t,h}&=\operatorname{RoPE}_t\!\left(N_Q^R(W_{QR,h}z_t)\right)\in\mathbb R^{d_r},\\
+q^R_{t,h}&=\mathrm{RoPE}_t\left(N_Q^R(W_{QR,h}z_t)\right)\in\mathbb R^{d_r},\\
 k^C_{s,m}&=W_{KC,m}c_s\in\mathbb R^{d_n},\\
-k^R_{s,m}&=\operatorname{RoPE}_s(W_{KR,m}c_s)\in\mathbb R^{d_r},\\
+k^R_{s,m}&=\mathrm{RoPE}_s(W_{KR,m}c_s)\in\mathbb R^{d_r},\\
 v_{s,m}&=W_{V,m}c_s\in\mathbb R^{d_h}.
 \end{aligned}
 \tag{A2}
@@ -96,7 +96,7 @@ $$
 Causal, padding and document masks define the allowed positions. At evaluation, or with attention dropout disabled, softmax and value aggregation are
 
 $$
-a_{t,s,h}=\operatorname{softmax}_{s}(s_{t,s,h}+M_{t,s}),\qquad
+a_{t,s,h}=\mathrm{softmax}_{s}(s_{t,s,h}+M_{t,s}),\qquad
 u_{t,h}=\sum_sa_{t,s,h}v_{s,m(h)}.
 \tag{A4}
 $$

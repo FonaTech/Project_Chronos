@@ -60,9 +60,11 @@ Torch replaces evicted experts with `LazyExpertPlaceholder` modules. Before disc
 `AsyncPrefetcher` owns a `queue.Queue`, not a deadline-priority queue. Each entry is a batch of expert IDs. `CacheManager` sets its capacity to
 
 $$
-Q_{\mathrm{batches}}=\max\!\left(1,\,2\,\mathrm{prefetch\_depth}\right).
+Q_{\mathrm{batches}}=\max\left(1,\;2d\right).
 \tag{3}
 $$
+
+Here $d$ denotes the `prefetch_depth` configuration value.
 
 The default `prefetch_depth=2` therefore gives four request batches through this manager. The standalone prefetcher constructor has its own default of eight batches. Neither value means a fixed number of outstanding SSD system calls. [Manager construction](../chronos/runtime/cache_manager.py#L35), [queue implementation](../chronos/io/async_prefetcher.py#L47)
 
@@ -194,10 +196,12 @@ The code neither zeros missing terms nor renormalizes the surviving experts afte
 
 $$
 K_{\mathrm{RAM}}=\max\left(1,\left\lfloor
-\frac{\mathrm{ram\_budget\_mb}\,2^{20}}{p_{\mathrm{page}}}
+\frac{B\cdot 2^{20}}{p_{\mathrm{page}}}
 \right\rfloor\right).
 \tag{8}
 $$
+
+Here $B$ denotes the `ram_budget_mb` value in megabytes and $p_{\mathrm{page}}$ is the on-disk page size in bytes.
 
 A requested budget smaller than one page cannot create a sub-page cache. These hard counts coexist with backend safety heuristics and dynamic pressure handling. They are not a bound on the entire process, KV cache, activations or transient cluster materialization. [Budget conversion](../chronos/io/expert_store.py#L31)
 
