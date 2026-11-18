@@ -221,7 +221,12 @@ def speculative_generate(model, input_ids: torch.Tensor, *, max_new_tokens: int 
         for i in range(1, len(draft)):
             row, tok = logits[i - 1], draft[i]
             if not do_sample:
-                target = int(torch.argmax(row))
+                # Compare under the same rule the draft used: argmax after the
+                # CTRL penalty on the tokens emitted up to this verify position.
+                # Without this, penalty > 1 would make draft and verify disagree
+                # on every seen token and acceptance would collapse.
+                penalized = _apply_rep_penalty(row, _seen_vec(), penalty) if penalty != 1.0 else row
+                target = int(torch.argmax(penalized))
                 ok = target == tok
                 correction = target
             else:

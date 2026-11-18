@@ -109,11 +109,6 @@ class ChronosConfig(ChronosBaseConfig):
             "recurrent_gradient_checkpoint_groups", False
         )
         self.max_inference_depth = kwargs.pop("max_inference_depth", None)
-        # 0.3.4: at load time the runtime picks ``max_inference_depth`` from the
-        # trained ``dt`` schedule so the iterated map stays inside ``L≤1`` (see
-        # ``chronos.serving.runtime.auto_select_inference_depth``).  Set to
-        # False on a checkpoint whose trained ``dt`` was intended to overshoot.
-        self.auto_inference_depth: bool = bool(kwargs.pop("auto_inference_depth", True))
         # 5-D [B,S,K,L,E] prediction is enabled by v2 presets.  Keeping the
         # switch explicit lets depth=1 legacy checkpoints retain their public
         # 4-D output contract until migrated.
