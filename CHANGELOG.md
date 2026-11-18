@@ -2,65 +2,68 @@
 
 ## [0.3.4] — 2026-11-18 (stable)
 
-Two decoding-side fixes land on the shared_first serving path, measured on the
-shipped 50M en-zh SFT checkpoint and on four matched 30-min 15M arms (base,
-plain depth-1, `per_iteration` KV, aux-losses-off). No kernel code, no
-retraining, no behaviour change for callers that leave `repetition_penalty=1.0`.
+One decoding-side fix lands on the shared_first serving path. Default
+behaviour is unchanged when callers leave `repetition_penalty=1.0`.
 
 ### Fixed
 - `chronos.runtime.speculative.speculative_generate` now accepts
   `repetition_penalty: float = 1.0`, applied CTRL-style on the raw logits
-  before every draft and verify step. Because both distributions see the same
-  penalty on the same `seen` set, speculative rejection sampling still draws
-  exactly from the full-depth target (Leviathan et al. 2023).
+  (divide a positive logit, multiply a negative one) inside both `pick`
+  (draft) and the greedy verify step. The seen set is the full emitted
+  sequence, rebuilt per call because the KV cache is truncated on
+  rejection. With the same penalty on the same seen set, speculative
+  rejection sampling still draws exactly from the full-depth target
+  (Leviathan et al. 2023); greedy draft and greedy verify also stay in
+  agreement, which they did not under 0.3.4 as first published.
 - `chronos.serving.runtime.generate_stream` and
-  `chronos.serving.adapter.ChronosServingAdapter.generate` pick the kwarg up
-  from OpenAI (`repetition_penalty`) and Ollama (`repeat_penalty` under
-  `options`, falling back to `repetition_penalty` at either nesting). The
-  default stays 1.0.
-- On the shipped 50M en-zh SFT checkpoint, greedy decoding with
-  `repetition_penalty=1.15` lifts 60-token `unique_ratio` from 0.129 to 0.553
-  and cuts `max_4gram` from 8.83 to 3.42. Combined with the auto-depth fix
-  below, `unique_ratio` reaches 0.692 and `max_4gram` falls to 2.33.
+  `chronos.serving.adapter.ChronosServingAdapter.generate` pick the kwarg
+  up from OpenAI (`repetition_penalty`) and Ollama (`options.repeat_penalty`
+  or `repetition_penalty` at either nesting). Default 1.0.
 
 ### Added
-- `chronos.serving.runtime.auto_select_inference_depth`. At load time, if the
-  checkpoint carries a trained `dt` schedule and `max_inference_depth` is not
-  set, the runtime picks the largest depth `d` whose cumulative Euler step
-  `sum(dt[:d]) ≤ 1.15`. This keeps the iterated map inside the Lipschitz
-  region `L ≤ 1` where the recurrent core contracts. Measured on the 50M CPT
-  checkpoint (trained `dt_sum = 1.825`), the selector picks `d = 3`
-  (`cum_dt = 1.108`), which was the measured sweet spot in a four-step depth
-  sweep.
-- `chronos.model.config.ChronosConfig.auto_inference_depth` (default `True`)
-  to opt out per checkpoint. Environment variable
-  `CHRONOS_AUTO_INFERENCE_DEPTH=0` is the same opt-out at process scope.
-- `max_inference_depth` added to `INFERENCE_OVERRIDE_KEYS`; an explicit
-  override wins over the auto-pick. The chosen value is logged under
-  `inference_overrides.auto_inference_depth = {chosen, trained_dt_sum,
-  cum_dt_at_chosen, limit}`.
+- `max_inference_depth` added to `INFERENCE_OVERRIDE_KEYS`, so a caller
+  can run the recurrent loop at a shallower depth than the one the model
+  was trained with. This is a manual override: pass
+  `inference_overrides={"max_inference_depth": d}` to `load_model`.
+
+### Measured — 30M bilingual CPT checkpoint (step 3559, `latest.state.pkl`)
+Greedy decoding, 60 new tokens, 12 EN/ZH prompts, averaged.
+
+| config | unique_ratio | max_run | max_4gram |
+|---|---:|---:|---:|
+| as-trained d=4, no penalty | 0.129 | 1.25 | 8.83 |
+| manual `max_inference_depth=3`, no penalty | 0.220 | 6.25 | 9.58 |
+| d=4 with `repetition_penalty=1.15` | 0.553 | 1.58 | 3.42 |
+| d=3 with `repetition_penalty=1.15` | 0.692 | 1.17 | 2.33 |
+
+These figures are from the 30M CPT run described in `run_spec.json` on the
+author's local machine; the shipped 50M en-zh SFT demo model is a
+different checkpoint and is not measured here.
+
+### Known not-fixed
+- Factual recall is not affected by these decoding changes. On the 30M
+  CPT checkpoint at d=4 the model continues "Paris is the capital of"
+  with "the United States"; with `repetition_penalty=1.15` at d=3 it no
+  longer loops but instead produces a different unrelated completion.
+  The remedy is more data and more tokens, not a decoding knob.
+- 0.3.4 first-publish regression: an earlier draft of this release added
+  an `auto_select_inference_depth` helper that read `step_sizes` from
+  `ChronosConfig`, where it is not stored (the trained schedule lives on
+  `recurrent_controller.step_sizes` in the state dict). That helper
+  no-opped on every real load and has been removed in this release.
+  The companion `kernel.auto_inference_depth` flag is likewise removed.
 
 ### Experiments
 - `experiments/loop_depth_15m/results_abc/` — five 30-minute 15M arms
-  (base, A_dtcap, B_plain, C_periter, obj_lm), each with its `.pth`,
-  `metrics.jsonl`, probe JSON, and a final findings file. Headline numbers:
-  base valid_ce 4.735, B_plain 4.528 (depth 1 wins per-second at this budget),
-  C_periter 4.727 with max_4gram 10.7 (cleanest decoding but 4× KV memory
-  and no inference-time depth override), obj_lm 4.533 (every non-structural
-  auxiliary loss zeroed: large CE win but `dt_sum` drifts to 1.858, at the
-  Lipschitz edge, confirming that `stability` and `distill` coefficients
-  anchor the schedule).
-
-### Known not-fixed
-- Factual recall quality on the shipped 50M SFT checkpoint is not changed by
-  these decoding fixes. 60-token greedy with `repetition_penalty=1.15` still
-  produces "Paris is the capital of the United States" and "水的沸点是水中水".
-  The remedy is more data and more tokens, not a kernel knob.
-
-### Internal
-- `/tmp/chronos_scripts/probe_arm.py`, `probe_depth_sweep.py`,
-  `probe_sampling.py`, `probe_repetition.py`, `compare_arms.py` — probes used
-  for the ABC runs; kept out of the shipped package.
+  (base, A_dtcap, B_plain, C_periter, obj_lm) that motivated the fix.
+  Headline numbers from the arms' own `arm_<label>.json`:
+  base valid_ce 4.735, A_dtcap 4.768 (dt_max=0.5 under-steps the
+  recurrence), B_plain 4.528 (depth 1 wins per-second at this budget),
+  C_periter 4.727 with greedy `max_4gram` 10.67 (cleanest decoding, but
+  the per_iteration KV layout costs 4× KV memory and disables both
+  inference-time depth override and speculative decoding), obj_lm 4.533
+  (every non-structural auxiliary loss zeroed: large CE win on this
+  recipe; the measured depth-4 `dt` schedule is higher than base's).
 
 ## [0.3.3] — 2026-11-14 (stable)
 

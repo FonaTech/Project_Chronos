@@ -1,81 +1,80 @@
-"""0.3.4 decoding-side fixes.
-
-Guards two shipped behaviours:
-1. ``repetition_penalty`` threads through speculative_generate / generate_stream
-   and matches the CTRL rule on the raw logits.
-2. ``auto_select_inference_depth`` returns the sweet-spot depth for a trained
-   schedule, and the runtime does nothing when the schedule is unknown or
-   the opt-out is set.
-"""
+"""0.3.4 decoding: repetition_penalty through speculative decoding and serving."""
 from __future__ import annotations
 
-import math
 import os
-import types
+import sys
 
+import pytest
 import torch
 
+sys.path.insert(0, os.path.dirname(__file__))
 
-def test_apply_rep_penalty_is_ctrl_rule():
-    from chronos.runtime.speculative import _apply_rep_penalty
-    logits = torch.tensor([2.0, -1.0, 0.5, -0.5, 3.0])
-    seen = torch.tensor([0, 2, 2])              # unique={0,2}
-    out = _apply_rep_penalty(logits, seen, 2.0)
-    assert torch.allclose(out, torch.tensor([1.0, -1.0, 0.25, -0.5, 3.0]))
-    assert torch.allclose(_apply_rep_penalty(logits, seen, 1.0), logits)   # no-op
-    assert torch.allclose(_apply_rep_penalty(logits, torch.tensor([], dtype=torch.long), 2.0), logits)
+from chronos.model.model_chronos import apply_repetition_penalty  # noqa: E402
+from chronos.runtime.speculative import _apply_rep_penalty, speculative_generate  # noqa: E402
+from test_speculative import model_for  # noqa: E402
 
 
-def test_apply_rep_penalty_negative_rejected():
-    from chronos.runtime.speculative import speculative_generate
-    import pytest
-    # Exercised via speculative_generate's own validation; call directly for speed.
+def penalized_greedy_reference(model, ids, n, penalty):
+    """Plain full-depth greedy decode with the CTRL penalty, token by token."""
+    out = model(ids, use_cache=True)
+    cache, seq = out.past_key_values, ids[0].tolist()
+    for _ in range(n):
+        row = apply_repetition_penalty(out.logits[:, -1], torch.tensor([seq]), penalty)
+        nxt = int(row[0].argmax())
+        seq.append(nxt)
+        out = model(torch.tensor([[nxt]]), past_key_values=cache, use_cache=True)
+        cache = out.past_key_values
+    return seq
+
+
+def test_apply_rep_penalty_matches_kernel_helper():
+    torch.manual_seed(0)
+    logits = torch.randn(96)
+    seen = torch.tensor([3, 7, 7, 40, 95])
+    ours = _apply_rep_penalty(logits, seen, 1.3)
+    ref = apply_repetition_penalty(logits[None], seen[None], 1.3)[0]
+    assert torch.allclose(ours, ref)
+    assert torch.equal(_apply_rep_penalty(logits, seen, 1.0), logits)
+
+
+@pytest.mark.parametrize("gamma,draft_depth", [(1, 1), (4, 1), (3, 2)])
+def test_greedy_speculative_with_penalty_equals_penalized_greedy(gamma, draft_depth):
+    model = model_for("shared_first")
+    ids = torch.tensor([[5, 9, 2, 17]])
+    ref = penalized_greedy_reference(model, ids, 24, 1.3)
+    out, _ = speculative_generate(model, ids, max_new_tokens=24, draft_depth=draft_depth,
+                        gamma=gamma, repetition_penalty=1.3)
+    assert out[0].tolist() == ref
+
+
+def test_penalty_changes_greedy_output():
+    model = model_for("shared_first")
+    ids = torch.tensor([[5, 9, 2, 17]])
+    plain, _ = speculative_generate(model, ids, max_new_tokens=24, draft_depth=1)
+    pen, _ = speculative_generate(model, ids, max_new_tokens=24, draft_depth=1, repetition_penalty=2.0)
+    assert plain[0].tolist() != pen[0].tolist()
+
+
+def test_sampled_speculative_with_penalty_runs_and_respects_budget():
+    model = model_for("shared_first")
+    ids = torch.tensor([[5, 9, 2, 17]])
+    gen = torch.Generator().manual_seed(3)
+    out, stats = speculative_generate(model, ids, max_new_tokens=16, draft_depth=1, do_sample=True,
+                        temperature=0.9, repetition_penalty=1.2, generator=gen)
+    assert out.shape[1] == ids.shape[1] + 16
+    assert stats.generated == 16
+
+
+def test_nonpositive_penalty_rejected():
+    model = model_for("shared_first")
     with pytest.raises(ValueError, match="repetition_penalty must be > 0"):
-        speculative_generate.__wrapped__(   # drop no_grad for a one-shot entry
-            model=types.SimpleNamespace(config=types.SimpleNamespace(recurrent_depth=1)),
-            input_ids=torch.zeros((1, 1), dtype=torch.long), repetition_penalty=0.0,
-        )
+        speculative_generate(model, torch.tensor([[1, 2]]), max_new_tokens=2, repetition_penalty=0.0)
 
 
-def _mk_cfg(sizes, dt_min=0.0, dt_max=1.0, depth=None, mode="sigmoid"):
-    cfg = types.SimpleNamespace()
-    cfg.step_sizes = sizes
-    cfg.recurrent_dt_min = dt_min
-    cfg.recurrent_dt_max = dt_max
-    cfg.recurrent_dt_param = mode
-    cfg.recurrent_depth = depth if depth is not None else len(sizes)
-    cfg.recurrent_enabled = True
-    cfg.auto_inference_depth = True
-    return cfg
-
-
-def _inv(y): return math.log(y / (1 - y))
-
-
-def test_auto_depth_picks_sweet_spot():
-    from chronos.serving.runtime import auto_select_inference_depth
-    # CPT-50M measured dt schedule
-    cfg = _mk_cfg([_inv(d) for d in [0.303, 0.414, 0.391, 0.717]])
-    assert auto_select_inference_depth(cfg) == 3           # cum_dt 1.108 ≤ 1.15
-
-
-def test_auto_depth_leaves_safe_schedule_alone():
-    from chronos.serving.runtime import auto_select_inference_depth
-    cfg = _mk_cfg([_inv(0.14)] * 4)                        # cum_dt 0.56 at depth 4
-    assert auto_select_inference_depth(cfg) == 4
-
-
-def test_auto_depth_handles_depth_one_and_missing_schedule():
-    from chronos.serving.runtime import auto_select_inference_depth
-    assert auto_select_inference_depth(_mk_cfg([0.0], depth=1)) is None
-    bare = types.SimpleNamespace(recurrent_depth=4, recurrent_enabled=True)
-    assert auto_select_inference_depth(bare) is None
-
-
-def test_auto_depth_respects_env_opt_out(monkeypatch):
-    from chronos.serving.runtime import auto_select_inference_depth
-    # Env opt-out doesn't change the selector itself (callers read the env),
-    # but ``auto_inference_depth=False`` on the config must suppress any pick.
-    cfg = _mk_cfg([_inv(d) for d in [0.5, 0.5, 0.5, 0.5]])
-    # Selector itself is pure; integration via load_model is covered by callers.
-    assert auto_select_inference_depth(cfg) == 2
+def test_max_inference_depth_is_an_inference_override():
+    from chronos.serving.runtime import INFERENCE_OVERRIDE_KEYS, apply_inference_overrides
+    assert "max_inference_depth" in INFERENCE_OVERRIDE_KEYS
+    model = model_for("shared_first")
+    applied = apply_inference_overrides(model.config, {"max_inference_depth": 3})
+    assert applied == {"max_inference_depth": 3}
+    assert model.config.max_inference_depth == 3
