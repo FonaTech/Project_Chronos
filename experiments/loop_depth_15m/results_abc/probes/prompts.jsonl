@@ -1,0 +1,12 @@
+{"id":"en_open_1","prompt":"The sky is blue because"}
+{"id":"en_open_2","prompt":"Writing a short essay about trees is useful because"}
+{"id":"en_fact_1","prompt":"Paris is the capital of"}
+{"id":"en_fact_2","prompt":"The Pacific Ocean is the"}
+{"id":"en_fact_3","prompt":"Water boils at"}
+{"id":"en_fact_4","prompt":"The largest planet in the solar system is"}
+{"id":"zh_open_1","prompt":"学习数学的好处是"}
+{"id":"zh_open_2","prompt":"每天早上起来，我做的第一件事情是"}
+{"id":"zh_fact_1","prompt":"中国的首都是"}
+{"id":"zh_fact_2","prompt":"太阳系里最大的行星是"}
+{"id":"zh_fact_3","prompt":"水的沸点是"}
+{"id":"mix_translate","prompt":"English: The meeting was moved to Friday.\n中文:"}

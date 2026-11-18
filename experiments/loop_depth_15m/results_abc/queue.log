@@ -1,0 +1,22 @@
+[exp] base start 13:23:00 load 4.16 4.91 4.99 src /tmp/chronos_release_034
+/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages/transformers/configuration_utils.py:723: FutureWarning: `rope_scaling` is deprecated and will be removed in a future version. Set `rope_parameters` instead, with `rope_type` and `rope_theta` included.
+  warnings.warn(
+{"label": "base", "depth": 4, "steps": 1290, "wall_s": 1804.3, "valid_ce": 4.734924830496311, "peak_gb": 7.43}
+[exp] A_dtcap start 13:53:40 load 6.36 6.10 6.02 src /tmp/chronos_release_034
+/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages/transformers/configuration_utils.py:723: FutureWarning: `rope_scaling` is deprecated and will be removed in a future version. Set `rope_parameters` instead, with `rope_type` and `rope_theta` included.
+  warnings.warn(
+{"label": "A_dtcap", "depth": 4, "steps": 1290, "wall_s": 1801.3, "valid_ce": 4.767537273466587, "peak_gb": 7.43}
+[exp] B_plain start 14:24:19 load 5.17 6.39 7.26 src /tmp/chronos_release_034
+/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages/transformers/configuration_utils.py:723: FutureWarning: `rope_scaling` is deprecated and will be removed in a future version. Set `rope_parameters` instead, with `rope_type` and `rope_theta` included.
+  warnings.warn(
+{"label": "B_plain", "depth": 1, "steps": 2195, "wall_s": 1802.7, "valid_ce": 4.527898997068405, "peak_gb": 5.67}
+[exp] C_periter start 14:54:44 load 5.37 5.75 5.85 src /tmp/chronos_release_034
+/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages/transformers/configuration_utils.py:723: FutureWarning: `rope_scaling` is deprecated and will be removed in a future version. Set `rope_parameters` instead, with `rope_type` and `rope_theta` included.
+  warnings.warn(
+{"label": "C_periter", "depth": 4, "steps": 1235, "wall_s": 1800.0, "valid_ce": 4.726767331361771, "peak_gb": 7.54}
+[exp] QUEUE ABC DONE 15:25:22
+[exp] obj_lm start 15:25:29 load 5.57 5.77 5.81 src /tmp/chronos_release_034
+/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages/transformers/configuration_utils.py:723: FutureWarning: `rope_scaling` is deprecated and will be removed in a future version. Set `rope_parameters` instead, with `rope_type` and `rope_theta` included.
+  warnings.warn(
+{"label": "obj_lm", "depth": 4, "steps": 1335, "wall_s": 1806.4, "valid_ce": 4.53317741304636, "peak_gb": 7.37}
+[exp] QUEUE OBJ DONE 15:56:14

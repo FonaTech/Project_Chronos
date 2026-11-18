@@ -404,7 +404,7 @@
  "field.recompute_policy.label": "Recompute blocks",
  "field.recompute_scope.help": "block: recompute whole blocks (most memory saved). mlp: recompute only each block's MoE/FFN, which keeps the attention results and costs less time.",
  "field.recompute_scope.label": "Recompute scope",
- "field.recurrent_attention_mode.help": "How attention runs inside the loop. shared_first: every iteration attends, K/V from iteration 0 (exact cache, KV does not grow with depth). per_iteration: one KV per iteration (D× KV). first_only: v2 behaviour.",
+ "field.recurrent_attention_mode.help": "How attention runs inside the loop. shared_first (default): every iteration attends, K/V from iteration 0; KV does not grow with depth and both inference-time depth override and recurrent-depth speculative decoding work. per_iteration: one KV per iteration (recurrent layers hold depth× KV); at the 15M ABC setting it matches shared_first on validation CE (4.727 vs 4.735) and produces much cleaner greedy output (max_4gram 10.67 vs 18.58, see docs/LOOP_DEPTH.md §4.3), but max_inference_depth is forced to the trained depth and speculative decoding falls back to plain. first_only: v2 behaviour.",
  "field.recurrent_attention_mode.label": "Recurrent attention",
  "field.recurrent_depth.help": "Iterations of each recurrent group during training. Virtual layers = prelude + groups × depth + coda.",
  "field.recurrent_depth.label": "Training depth",

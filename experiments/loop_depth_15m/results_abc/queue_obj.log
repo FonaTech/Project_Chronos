@@ -1,0 +1,5 @@
+[exp] obj_lm start 15:25:29 load 5.57 5.77 5.81 src /tmp/chronos_release_034
+/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages/transformers/configuration_utils.py:723: FutureWarning: `rope_scaling` is deprecated and will be removed in a future version. Set `rope_parameters` instead, with `rope_type` and `rope_theta` included.
+  warnings.warn(
+{"label": "obj_lm", "depth": 4, "steps": 1335, "wall_s": 1806.4, "valid_ce": 4.53317741304636, "peak_gb": 7.37}
+[exp] QUEUE OBJ DONE 15:56:14

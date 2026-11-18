@@ -1,0 +1,119 @@
+{
+ "pth": "run_obj_lm/arm_obj_lm.pth",
+ "items": [
+  {
+   "id": "en_open_1",
+   "prompt": "The sky is blue because",
+   "gen": " of the darkness of the sky, and the sky is dark, and the sky is dark, and the sky is dark, and the sky is dark, and the sky is dark, and the sky is dark, and the sky is dark, and the sky is dark, and the sky is",
+   "n": 60,
+   "unique_ratio": 0.133,
+   "max_run": 1,
+   "max_4gram": 9
+  },
+  {
+   "id": "en_open_2",
+   "prompt": "Writing a short essay about trees is useful because",
+   "gen": " it is not the first time to understand the world of trees and trees. It is the first time to see the earth’s roots, and it is the first time to see the earth’s roots. It is the first time to see the earth’s roots, and it is the first",
+   "n": 60,
+   "unique_ratio": 0.35,
+   "max_run": 1,
+   "max_4gram": 4
+  },
+  {
+   "id": "en_fact_1",
+   "prompt": "Paris is the capital of",
+   "gen": " the city of Kamamamamamamamamamamamamamamamamamamamamamamamamamamamamamamamamamamamamamamamamamamamamamamamamamamamamamamamam",
+   "n": 60,
+   "unique_ratio": 0.083,
+   "max_run": 56,
+   "max_4gram": 53
+  },
+  {
+   "id": "en_fact_2",
+   "prompt": "The Pacific Ocean is the",
+   "gen": " largest source of the Arctic Ocean, the largest source of the Arctic Ocean, the largest source of the Arctic Ocean, the largest source of the Arctic Ocean, the largest source of the Arctic Ocean, the largest source of the Arctic Ocean, the largest source of the Arctic Ocean, the largest source of the",
+   "n": 60,
+   "unique_ratio": 0.133,
+   "max_run": 1,
+   "max_4gram": 8
+  },
+  {
+   "id": "en_fact_3",
+   "prompt": "Water boils at",
+   "gen": " the end of the day, the water is the most important thing is to do with the water and water. The water is the most important thing is to do with the water and water. The water is the water and water is the water and water is the water and water is the water and water",
+   "n": 60,
+   "unique_ratio": 0.283,
+   "max_run": 1,
+   "max_4gram": 6
+  },
+  {
+   "id": "en_fact_4",
+   "prompt": "The largest planet in the solar system is",
+   "gen": " the largest part of the solar system, the largest part of the solar system, the largest part of the solar system, the largest part of the solar system, the largest part of the solar system, the largest part of the solar system, the largest part of the solar system, the largest part of",
+   "n": 60,
+   "unique_ratio": 0.133,
+   "max_run": 1,
+   "max_4gram": 7
+  },
+  {
+   "id": "zh_open_1",
+   "prompt": "学习数学的好处是",
+   "gen": "：\n1、1、1、1、1、1、1、1、1、1、1、1、1、1、1、1、1、1、1、1、1、1、1、1、1、1、1、1、1、",
+   "n": 60,
+   "unique_ratio": 0.067,
+   "max_run": 1,
+   "max_4gram": 28
+  },
+  {
+   "id": "zh_open_2",
+   "prompt": "每天早上起来，我做的第一件事情是",
+   "gen": "，我做什么事情，我做什么事情，我做什么事情，我做什么事情，我做什么事情，我做什么事情，我做什么事情，我做什么事情，我做什么事情，我做什么事情，我做什么事情，我做什么事情",
+   "n": 60,
+   "unique_ratio": 0.083,
+   "max_run": 1,
+   "max_4gram": 12
+  },
+  {
+   "id": "zh_fact_1",
+   "prompt": "中国的首都是",
+   "gen": "中国历史时期历史时期历史时期,中国历史时期,中国历史时期,中国历史时期,中国历史时期,中国历史时期,中国历史时期,中国历史时期,中国历史时期,中国历史时期,中国历史时期,中国历史时期,中国历史时期,中国历史时期,",
+   "n": 60,
+   "unique_ratio": 0.067,
+   "max_run": 1,
+   "max_4gram": 13
+  },
+  {
+   "id": "zh_fact_2",
+   "prompt": "太阳系里最大的行星是",
+   "gen": "地球地球的行星。\n\n 参考文献 \n\nCategory:小行星带天体",
+   "n": 16,
+   "unique_ratio": 0.812,
+   "max_run": 2,
+   "max_4gram": 1
+  },
+  {
+   "id": "zh_fact_3",
+   "prompt": "水的沸点是",
+   "gen": "水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水",
+   "n": 60,
+   "unique_ratio": 0.017,
+   "max_run": 60,
+   "max_4gram": 57
+  },
+  {
+   "id": "mix_translate",
+   "prompt": "English: The meeting was moved to Friday.\n中文:",
+   "gen": "\n1. I'm a 10-year-old, 1996\n1. I'm a 10-year-old, 1996\n1. I'm a 10-year-old, 1996\n1. ",
+   "n": 60,
+   "unique_ratio": 0.25,
+   "max_run": 2,
+   "max_4gram": 3
+  }
+ ],
+ "avg": {
+  "unique_ratio": 0.201,
+  "max_run": 10.667,
+  "max_4gram": 16.75,
+  "n": 56.333
+ }
+}
