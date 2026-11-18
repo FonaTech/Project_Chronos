@@ -84,6 +84,23 @@ class SpecStats:
                 "tokens_per_s": round(self.generated / self.elapsed_s, 2) if self.elapsed_s else None}
 
 
+def _apply_rep_penalty(logits: torch.Tensor, seen_ids: torch.Tensor, penalty: float) -> torch.Tensor:
+    """CTRL rule, shape-agnostic: ``logits`` is 1D over vocab.
+
+    Applied on the raw logits *before* the draft and verify distributions, so
+    the two match on the same context and speculative rejection sampling
+    stays an exact sample from the full-depth target (Leviathan et al. 2023).
+    """
+    if penalty == 1.0 or seen_ids.numel() == 0:
+        return logits
+    seen = torch.unique(seen_ids)
+    picked = logits[seen]
+    penalized = torch.where(picked < 0, picked * penalty, picked / penalty)
+    out = logits.clone()
+    out[seen] = penalized
+    return out
+
+
 def _probs(logits: torch.Tensor, temperature: float, top_k: int, top_p: float) -> torch.Tensor:
     logits = logits.float() / max(temperature, 1e-6)
     if top_k and top_k > 0:
@@ -118,7 +135,8 @@ def rejection_step(p: torch.Tensor, q: torch.Tensor, token: int, generator=None)
 def speculative_generate(model, input_ids: torch.Tensor, *, max_new_tokens: int = 128,
                          draft_depth: int = 1, gamma: int = 4, adaptive_gamma: bool = True,
                          gamma_max: int = 8, do_sample: bool = False, temperature: float = 1.0,
-                         top_k: int = 0, top_p: float = 1.0, eos_token_id=None,
+                         top_k: int = 0, top_p: float = 1.0, repetition_penalty: float = 1.0,
+                         eos_token_id=None,
                          generator: torch.Generator | None = None, on_token=None,
                          forward_fn=None, should_stop=None):
     """Return (output_ids [1, T], SpecStats).  Batch size 1 (serving path).
@@ -139,6 +157,9 @@ def speculative_generate(model, input_ids: torch.Tensor, *, max_new_tokens: int 
     eos = set([eos_token_id] if isinstance(eos_token_id, int) else (eos_token_id or []))
     gamma_max = max(1, int(gamma_max))
     gamma = max(1, min(int(gamma), gamma_max))
+    penalty = float(repetition_penalty)
+    if penalty <= 0:
+        raise ValueError("repetition_penalty must be > 0")
     set_cache_slack(model, gamma_max + 1)
     device = input_ids.device
     stats, t0 = SpecStats(), time.perf_counter()
@@ -149,11 +170,19 @@ def speculative_generate(model, input_ids: torch.Tensor, *, max_new_tokens: int 
         def forward_fn(ids, cache, depth):
             return model(ids, past_key_values=cache, use_cache=True, recurrent_depth=depth)
 
+    def _seen_vec():
+        # Tokens the model has already committed to the output — the target of
+        # the CTRL penalty. Rebuilt from the Python list on each call because the
+        # cache is truncated on rejection and ``input_ids`` only holds the prompt.
+        return torch.tensor(tokens, device=device, dtype=torch.long)
+
     def dist(row):
-        return _probs(row, temperature, top_k, top_p)
+        return _probs(_apply_rep_penalty(row, _seen_vec(), penalty), temperature, top_k, top_p)
 
     def pick(row):
         if not do_sample:
+            # Argmax under the penalty, so greedy decoding sees the rule too.
+            row = _apply_rep_penalty(row, _seen_vec(), penalty)
             return int(torch.argmax(row))
         return int(torch.multinomial(dist(row), 1, generator=generator))
 
