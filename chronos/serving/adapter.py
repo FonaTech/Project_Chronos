@@ -47,6 +47,7 @@ class ChronosServingAdapter:
     def generate(self, *, messages=None, prompt=None, max_tokens: int = 128,
                  temperature: float = 0.85, top_p: float = 0.95,
                  top_k: int = 50, do_sample: bool = True,
+                 repetition_penalty: float = 1.0,
                  miss_policy: str = "on_demand") -> tuple[str, dict]:
         ids, mask, modalities = self._encode(messages or [], prompt=prompt)
         output = self.engine.generate(
@@ -57,6 +58,7 @@ class ChronosServingAdapter:
             top_p=float(top_p),
             top_k=int(top_k),
             do_sample=bool(do_sample),
+            repetition_penalty=float(repetition_penalty),
             miss_policy=miss_policy,
             modality_inputs=modalities or None,
             modality_mask=(torch.ones(ids.shape[0]) if modalities else None),
@@ -77,6 +79,7 @@ class ChronosServingAdapter:
             top_p=request.get("top_p", 0.95),
             top_k=request.get("top_k", 50),
             do_sample=request.get("do_sample", True),
+            repetition_penalty=request.get("repetition_penalty", 1.0),
             miss_policy=request.get("chronos_miss_policy", "on_demand"),
         )
         return openai_chat_response(
@@ -96,6 +99,9 @@ class ChronosServingAdapter:
             top_p=request.get("top_p", options.get("top_p", 0.95)),
             top_k=request.get("top_k", options.get("top_k", 50)),
             do_sample=bool(request.get("do_sample", True)),
+            repetition_penalty=request.get(
+                "repetition_penalty", options.get("repeat_penalty", 1.0)
+            ),
             miss_policy=request.get("chronos_miss_policy", "on_demand"),
         )
         return ollama_chat_response(
@@ -106,13 +112,17 @@ class ChronosServingAdapter:
         )
 
     def ollama_generate(self, request: Mapping[str, Any]) -> dict:
+        options = request.get("options") or {}
         text, stats = self.generate(
             prompt=request.get("prompt", ""),
-            max_tokens=request.get("options", {}).get("num_predict", 128),
-            temperature=request.get("options", {}).get("temperature", 0.85),
-            top_p=request.get("options", {}).get("top_p", 0.95),
-            top_k=request.get("options", {}).get("top_k", 50),
+            max_tokens=options.get("num_predict", 128),
+            temperature=options.get("temperature", 0.85),
+            top_p=options.get("top_p", 0.95),
+            top_k=options.get("top_k", 50),
             do_sample=bool(request.get("do_sample", True)),
+            repetition_penalty=request.get(
+                "repetition_penalty", options.get("repeat_penalty", 1.0)
+            ),
             miss_policy=request.get("chronos_miss_policy", "on_demand"),
         )
         return ollama_generate_response(

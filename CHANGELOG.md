@@ -1,5 +1,67 @@
 # Changelog
 
+## [0.3.4] — 2026-11-18 (stable)
+
+Two decoding-side fixes land on the shared_first serving path, measured on the
+shipped 50M en-zh SFT checkpoint and on four matched 30-min 15M arms (base,
+plain depth-1, `per_iteration` KV, aux-losses-off). No kernel code, no
+retraining, no behaviour change for callers that leave `repetition_penalty=1.0`.
+
+### Fixed
+- `chronos.runtime.speculative.speculative_generate` now accepts
+  `repetition_penalty: float = 1.0`, applied CTRL-style on the raw logits
+  before every draft and verify step. Because both distributions see the same
+  penalty on the same `seen` set, speculative rejection sampling still draws
+  exactly from the full-depth target (Leviathan et al. 2023).
+- `chronos.serving.runtime.generate_stream` and
+  `chronos.serving.adapter.ChronosServingAdapter.generate` pick the kwarg up
+  from OpenAI (`repetition_penalty`) and Ollama (`repeat_penalty` under
+  `options`, falling back to `repetition_penalty` at either nesting). The
+  default stays 1.0.
+- On the shipped 50M en-zh SFT checkpoint, greedy decoding with
+  `repetition_penalty=1.15` lifts 60-token `unique_ratio` from 0.129 to 0.553
+  and cuts `max_4gram` from 8.83 to 3.42. Combined with the auto-depth fix
+  below, `unique_ratio` reaches 0.692 and `max_4gram` falls to 2.33.
+
+### Added
+- `chronos.serving.runtime.auto_select_inference_depth`. At load time, if the
+  checkpoint carries a trained `dt` schedule and `max_inference_depth` is not
+  set, the runtime picks the largest depth `d` whose cumulative Euler step
+  `sum(dt[:d]) ≤ 1.15`. This keeps the iterated map inside the Lipschitz
+  region `L ≤ 1` where the recurrent core contracts. Measured on the 50M CPT
+  checkpoint (trained `dt_sum = 1.825`), the selector picks `d = 3`
+  (`cum_dt = 1.108`), which was the measured sweet spot in a four-step depth
+  sweep.
+- `chronos.model.config.ChronosConfig.auto_inference_depth` (default `True`)
+  to opt out per checkpoint. Environment variable
+  `CHRONOS_AUTO_INFERENCE_DEPTH=0` is the same opt-out at process scope.
+- `max_inference_depth` added to `INFERENCE_OVERRIDE_KEYS`; an explicit
+  override wins over the auto-pick. The chosen value is logged under
+  `inference_overrides.auto_inference_depth = {chosen, trained_dt_sum,
+  cum_dt_at_chosen, limit}`.
+
+### Experiments
+- `experiments/loop_depth_15m/results_abc/` — five 30-minute 15M arms
+  (base, A_dtcap, B_plain, C_periter, obj_lm), each with its `.pth`,
+  `metrics.jsonl`, probe JSON, and a final findings file. Headline numbers:
+  base valid_ce 4.735, B_plain 4.528 (depth 1 wins per-second at this budget),
+  C_periter 4.727 with max_4gram 10.7 (cleanest decoding but 4× KV memory
+  and no inference-time depth override), obj_lm 4.533 (every non-structural
+  auxiliary loss zeroed: large CE win but `dt_sum` drifts to 1.858, at the
+  Lipschitz edge, confirming that `stability` and `distill` coefficients
+  anchor the schedule).
+
+### Known not-fixed
+- Factual recall quality on the shipped 50M SFT checkpoint is not changed by
+  these decoding fixes. 60-token greedy with `repetition_penalty=1.15` still
+  produces "Paris is the capital of the United States" and "水的沸点是水中水".
+  The remedy is more data and more tokens, not a kernel knob.
+
+### Internal
+- `/tmp/chronos_scripts/probe_arm.py`, `probe_depth_sweep.py`,
+  `probe_sampling.py`, `probe_repetition.py`, `compare_arms.py` — probes used
+  for the ABC runs; kept out of the shipped package.
+
 ## [0.3.3] — 2026-11-14 (stable)
 
 Stable release. No kernel code changes beyond 0.3.3a1; this release bumps the version string and ships the final documentation set.

@@ -55,7 +55,66 @@ def _pick_device(requested: str | None) -> str:
 # Inference-only options a server may override on a loaded checkpoint.
 # None of them changes the trained weights; all are validated by ChronosConfig.
 INFERENCE_OVERRIDE_KEYS = ("kv_cache_dtype", "kv_quant_group_size", "mla_decode", "mla_cache_rope",
-                           "router_scope", "max_resident_experts", "ram_budget_mb")
+                           "router_scope", "max_resident_experts", "ram_budget_mb",
+                           "max_inference_depth")
+
+# Cumulative Euler-step budget for the auto depth selector.
+# Repetition minimises at cum_dt ≈ 1 on both the 15M arms and the live 50M
+# CPT checkpoint; 1.15 is the shoulder — beyond it the iterated map starts to
+# amplify (measured regression at 1.8). See experiments/loop_depth_15m/results_abc.
+AUTO_DEPTH_DT_LIMIT = 1.15
+
+
+def _effective_dt(config) -> list[float] | None:
+    """Return per-group effective ``dt`` after the sigmoid, if the checkpoint
+    exposes a trained schedule. ``None`` means "no data; skip auto-depth".
+    """
+    sizes = getattr(config, "step_sizes", None) or getattr(config, "trained_step_sizes", None)
+    if not sizes:
+        return None
+    try:
+        dt_min = float(getattr(config, "recurrent_dt_min", 0.0) or 0.0)
+        dt_max = float(getattr(config, "recurrent_dt_max", 1.0) or 1.0)
+    except (TypeError, ValueError):
+        return None
+    mode = str(getattr(config, "recurrent_dt_param", "sigmoid") or "sigmoid").lower()
+    out: list[float] = []
+    import math
+    for raw in sizes:
+        try:
+            r = float(raw)
+        except (TypeError, ValueError):
+            return None
+        if mode == "sigmoid":
+            s = 1.0 / (1.0 + math.exp(-r))
+            out.append(dt_min + (dt_max - dt_min) * s)
+        else:                      # ``clamp`` or unknown: treat as already in [dt_min, dt_max]
+            out.append(min(dt_max, max(dt_min, r)))
+    return out
+
+
+def auto_select_inference_depth(config) -> int | None:
+    """Pick the largest ``d`` with cumulative trained ``dt[:d] ≤ AUTO_DEPTH_DT_LIMIT``.
+
+    Returns the chosen depth, or ``None`` if the checkpoint does not carry a
+    usable schedule (unsniffable or not recurrent). The caller writes the
+    choice onto ``config.max_inference_depth`` and records it for logging.
+    """
+    depth = int(getattr(config, "recurrent_depth", 1) or 1)
+    if depth <= 1 or not bool(getattr(config, "recurrent_enabled", True)):
+        return None
+    dts = _effective_dt(config)
+    if not dts or len(dts) < depth:
+        return None
+    cum = 0.0
+    chosen = 1
+    for i in range(depth):
+        cum += float(dts[i])
+        if cum <= AUTO_DEPTH_DT_LIMIT:
+            chosen = i + 1
+        else:
+            break
+    return chosen
 
 
 def apply_inference_overrides(config, overrides: dict | None) -> dict:
@@ -114,6 +173,24 @@ def load_model(path: str, *, name: str | None = None, device: str | None = "auto
         meta_full = json.load(open(cfg_path, encoding="utf-8"))
     config, _sources = chronos_config_from_checkpoint(path)
     applied = apply_inference_overrides(config, inference_overrides)
+    # Auto-pick max_inference_depth from the trained dt schedule if the user
+    # did not force one and the opt-out is not set. Opt-out: ``kernel.auto_
+    # inference_depth=False`` on the checkpoint config, or env
+    # ``CHRONOS_AUTO_INFERENCE_DEPTH=0``.
+    env_off = str(os.environ.get("CHRONOS_AUTO_INFERENCE_DEPTH", "")).lower() in ("0", "false", "no")
+    cfg_on = bool(getattr(config, "auto_inference_depth", True))
+    if ("max_inference_depth" not in applied) and cfg_on and not env_off:
+        chosen = auto_select_inference_depth(config)
+        if chosen is not None and chosen < int(getattr(config, "recurrent_depth", 1)):
+            config.max_inference_depth = chosen
+            dts = _effective_dt(config) or []
+            applied["max_inference_depth"] = chosen
+            applied["auto_inference_depth"] = {
+                "chosen": chosen,
+                "trained_dt_sum": round(sum(dts[: int(config.recurrent_depth)]), 4) if dts else None,
+                "cum_dt_at_chosen": round(sum(dts[:chosen]), 4) if dts else None,
+                "limit": AUTO_DEPTH_DT_LIMIT,
+            }
     tok_dir = _find_tokenizer_dir(path, meta_full)
     tokenizer = PreTrainedTokenizerFast.from_pretrained(tok_dir)
     device = _pick_device(device)
@@ -261,7 +338,8 @@ class ChronosRuntime:
         return self.encode_chat(lm, msgs)
 
     def generate_stream(self, name: str, input_ids: list[int], *, max_new_tokens: int = 256,
-                        temperature: float = 0.0, top_k: int = 0, top_p: float = 1.0, seed: int | None = None,
+                        temperature: float = 0.0, top_k: int = 0, top_p: float = 1.0,
+                        repetition_penalty: float = 1.0, seed: int | None = None,
                         speculative: bool = True, draft_depth: int = 1, gamma: int = 4,
                         miss_policy: str = "on_demand", stop: list[str] | None = None):
         """Yield ``{"text": delta}`` chunks, then a final ``{"done": True, ...stats}``."""
@@ -310,7 +388,9 @@ class ChronosRuntime:
                         lm.model, ids, max_new_tokens=max_new_tokens,
                         draft_depth=draft_depth if use_spec else depth, gamma=gamma,
                         do_sample=do_sample, temperature=max(float(temperature), 1e-6),
-                        top_k=int(top_k or 0), top_p=float(top_p or 1.0), eos_token_id=eos,
+                        top_k=int(top_k or 0), top_p=float(top_p or 1.0),
+                        repetition_penalty=float(repetition_penalty or 1.0),
+                        eos_token_id=eos,
                         generator=gen, on_token=on_token, forward_fn=self._forward_fn(lm, telemetry),
                         should_stop=cancel.is_set)
                     result.update(stats.as_dict())

@@ -73,6 +73,16 @@ def _options(body: dict) -> dict:
         "temperature": float(opts.get("temperature", body.get("temperature", 0.0)) or 0.0),
         "top_k": int(opts.get("top_k", body.get("top_k", 0)) or 0),
         "top_p": float(opts.get("top_p", body.get("top_p", 1.0)) or 1.0),
+        # Ollama spells it ``repeat_penalty``; OpenAI/transformers call it
+        # ``repetition_penalty``. Accept either; default 1.0 keeps existing
+        # scripts byte-identical (speculative decoding is exact at 1.0).
+        "repetition_penalty": float(
+            opts.get(
+                "repeat_penalty",
+                opts.get("repetition_penalty", body.get("repetition_penalty", 1.0)),
+            )
+            or 1.0
+        ),
         "seed": opts.get("seed", body.get("seed")),
         "stop": opts.get("stop", body.get("stop")) or [],
         "speculative": bool(opts.get("chronos_speculative", True)),
@@ -320,6 +330,7 @@ def create_app(runtime, *, api_key: str | None = None, monitor_runs_dir: str | N
         opts = _options({**body, "options": {"num_predict": body.get("max_tokens") or body.get("max_completion_tokens") or 256,
                                              "temperature": body.get("temperature", 0.0), "top_p": body.get("top_p", 1.0),
                                              "seed": body.get("seed"), "stop": body.get("stop"),
+                                             "repetition_penalty": body.get("repetition_penalty", 1.0),
                                              **(body.get("chronos") or {})}})
         cid, created = f"chatcmpl-{uuid.uuid4().hex}", int(time.time())
         with_tools = bool(body.get("tools"))
