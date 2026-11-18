@@ -404,7 +404,7 @@
  "field.recompute_policy.label": "再計算するブロック",
  "field.recompute_scope.help": "block: ブロック全体を再計算（メモリ削減が最大）。mlp: 各ブロックの MoE/FFN のみ再計算し、アテンション結果を保持して時間を抑えます。",
  "field.recompute_scope.label": "再計算の範囲",
- "field.recurrent_attention_mode.help": "ループ内でのアテンションの実行方法。shared_first：毎反復でアテンションし、K/V は反復 0 のもの（キャッシュは厳密で、KV は深さで増えない）。per_iteration：反復ごとに KV を持つ（KV が D 倍）。first_only：v2 の挙動。",
+ "field.recurrent_attention_mode.help": "ループ内でのアテンションの実行方法。shared_first（既定）：毎反復でアテンションし、K/V は反復 0 のもの。KV は深さで増えず、推論時に max_inference_depth を変えられ、再帰深度の自推測デコードも使える。per_iteration：反復ごとに KV を持つ（再帰層は depth 倍 KV）。15M ABC 実験では検証 CE が shared_first と同等（4.727 vs 4.735）で、貪欲生成は明らかにきれいになる（max_4gram 10.67 vs 18.58、docs/LOOP_DEPTH.md §4.3 参照）が、max_inference_depth は学習深度に固定され、自推測デコードは通常デコードに退化する。first_only：v2 の挙動。",
  "field.recurrent_attention_mode.label": "再帰内アテンション",
  "field.recurrent_depth.help": "学習中に各再帰グループを反復する回数。仮想層数 = プレリュード + グループ数 × 深さ + コーダ。",
  "field.recurrent_depth.label": "学習時の深さ",

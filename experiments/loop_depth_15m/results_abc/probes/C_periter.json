@@ -1,0 +1,119 @@
+{
+ "pth": "run_C_periter/arm_C_periter.pth",
+ "items": [
+  {
+   "id": "en_open_1",
+   "prompt": "The sky is blue because",
+   "gen": " of the sun, and the sun is a little bit of the sun. It is a little bit of the sun, but it is a little bit of the sun. It is a little bit of the sun, but it is a little bit of the sun. It is a little bit of the",
+   "n": 60,
+   "unique_ratio": 0.217,
+   "max_run": 1,
+   "max_4gram": 6
+  },
+  {
+   "id": "en_open_2",
+   "prompt": "Writing a short essay about trees is useful because",
+   "gen": " it is a good choice for a lot of time. It is a good choice for a lot of time. It is a good choice for a lot of time. It is a good choice for a lot of time. It is a good choice for a lot of time. It is a good choice",
+   "n": 60,
+   "unique_ratio": 0.183,
+   "max_run": 1,
+   "max_4gram": 6
+  },
+  {
+   "id": "en_fact_1",
+   "prompt": "Paris is the capital of",
+   "gen": " the city of the city of the city of the city of the city of the city of the city of the city of the city of the city of the city of the city of the city of the city of the city of the city of the city of the city of the city of the city of",
+   "n": 60,
+   "unique_ratio": 0.05,
+   "max_run": 1,
+   "max_4gram": 19
+  },
+  {
+   "id": "en_fact_2",
+   "prompt": "The Pacific Ocean is the",
+   "gen": " largest area of the northwest of the northwest of the northwest of the northwest of the northwest of the northwest of the northwest of the northwest of the northwest of the northwest of the northwest of the northwest of the northwest of the northwest of the",
+   "n": 60,
+   "unique_ratio": 0.1,
+   "max_run": 1,
+   "max_4gram": 14
+  },
+  {
+   "id": "en_fact_3",
+   "prompt": "Water boils at",
+   "gen": " the bottom of the water. The water is a little of the water to the water. The water is a little of the water to the water. The water is a little of the water to the water. The water is a little of the water to the water. The water is a little of",
+   "n": 60,
+   "unique_ratio": 0.167,
+   "max_run": 1,
+   "max_4gram": 5
+  },
+  {
+   "id": "en_fact_4",
+   "prompt": "The largest planet in the solar system is",
+   "gen": " a very important part of the world’s solar system. The planet is a very important part of the world’s solar system, which is a very important part of the world’s solar system. The planet is a very important part of the world’s solar system, which is a very",
+   "n": 60,
+   "unique_ratio": 0.283,
+   "max_run": 1,
+   "max_4gram": 4
+  },
+  {
+   "id": "zh_open_1",
+   "prompt": "学习数学的好处是",
+   "gen": "数学的,数学是数学的,数学是数学的数学.数学是数学的数学,数学是数学的数学,数学是数学的数学.数学是数学的数学,数学是数学的数学,数学是数学的数学.数学是数学的数学,数学是数学的",
+   "n": 60,
+   "unique_ratio": 0.083,
+   "max_run": 1,
+   "max_4gram": 10
+  },
+  {
+   "id": "zh_open_2",
+   "prompt": "每天早上起来，我做的第一件事情是",
+   "gen": "你，你是你，你是你是你的事情。\n你是你是你是你的事情，你是你是你的事情。你是你是你是你的事情，你是你是你的事情。你是你是你是你的事情",
+   "n": 60,
+   "unique_ratio": 0.117,
+   "max_run": 1,
+   "max_4gram": 9
+  },
+  {
+   "id": "zh_fact_1",
+   "prompt": "中国的首都是",
+   "gen": "中国中国中国中国中国中国中国中国中国中国中国中国中国中国中国中国中国中国中国中国中国中国中国中国中国中国中国中国中国中国中国国家国家国家国家国家国家国家国家国家国家国家国家国家国家国家国家国家国家国家国家国家国家国家国家国家国家国家国家国家",
+   "n": 60,
+   "unique_ratio": 0.033,
+   "max_run": 31,
+   "max_4gram": 28
+  },
+  {
+   "id": "zh_fact_2",
+   "prompt": "太阳系里最大的行星是",
+   "gen": "位于中国中国大陆的山峰，位于中国大陆的山峰，位于中国大陆的山峰，位于中国大陆的山峰，位于中国大陆的山峰，位于中国大陆的山峰，位于中国大陆的山峰，位于中国大陆的山峰，位于中国大陆",
+   "n": 60,
+   "unique_ratio": 0.117,
+   "max_run": 2,
+   "max_4gram": 8
+  },
+  {
+   "id": "zh_fact_3",
+   "prompt": "水的沸点是",
+   "gen": "“三”的，是“三”的“三”的“三”的“三”的“三”的“三”的“三”的“三”的“三”的“三”的“三”的“三”的“三”的“三",
+   "n": 60,
+   "unique_ratio": 0.1,
+   "max_run": 1,
+   "max_4gram": 14
+  },
+  {
+   "id": "mix_translate",
+   "prompt": "English: The meeting was moved to Friday.\n中文:",
+   "gen": "1983 – The first American school was a member of the University of Chicago. The school was a member of the University of Chicago. The school was a member of the University of Chicago. The school was a member of the University of Chicago. The school was a member of the University of",
+   "n": 60,
+   "unique_ratio": 0.283,
+   "max_run": 1,
+   "max_4gram": 5
+  }
+ ],
+ "avg": {
+  "unique_ratio": 0.144,
+  "max_run": 3.583,
+  "max_4gram": 10.667,
+  "n": 60.0
+ }
+}

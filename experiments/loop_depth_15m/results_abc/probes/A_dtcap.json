@@ -1,0 +1,119 @@
+{
+ "pth": "run_A_dtcap/arm_A_dtcap.pth",
+ "items": [
+  {
+   "id": "en_open_1",
+   "prompt": "The sky is blue because",
+   "gen": " the world is the world of the world. The world is the world of the world. The world is the world of the world. The world is the world of the world. The world is the world of the world. The world is the world of the world. The world is the world of",
+   "n": 60,
+   "unique_ratio": 0.1,
+   "max_run": 1,
+   "max_4gram": 7
+  },
+  {
+   "id": "en_open_2",
+   "prompt": "Writing a short essay about trees is useful because",
+   "gen": " the people are not the same. The most common thing is that the people are not the same. The people who are not the same. The people who are not the same. The people who are not the same. The people who are not the same. The people who are not the same. ",
+   "n": 60,
+   "unique_ratio": 0.217,
+   "max_run": 1,
+   "max_4gram": 7
+  },
+  {
+   "id": "en_fact_1",
+   "prompt": "Paris is the capital of",
+   "gen": " the world. The world is the world of the world. The world is the world of the world. The world is the world of the world. The world is the world of the world. The world is the world of the world. The world is the world of the world. The world is",
+   "n": 60,
+   "unique_ratio": 0.1,
+   "max_run": 1,
+   "max_4gram": 7
+  },
+  {
+   "id": "en_fact_2",
+   "prompt": "The Pacific Ocean is the",
+   "gen": " largest of the world’s largest and the world’s largest, and the world’s largest, and the world’s largest, and the world’s largest, and the world’s largest, and the world’s largest, and the world’s largest, and the world’",
+   "n": 60,
+   "unique_ratio": 0.15,
+   "max_run": 1,
+   "max_4gram": 8
+  },
+  {
+   "id": "en_fact_3",
+   "prompt": "Water boils at",
+   "gen": " the base of the water. The water is a small amount of water to the water. The water is a small amount of water to the water. The water is a small amount of water to the water. The water is a small amount of water to the water. The water is a small amount",
+   "n": 60,
+   "unique_ratio": 0.183,
+   "max_run": 1,
+   "max_4gram": 5
+  },
+  {
+   "id": "en_fact_4",
+   "prompt": "The largest planet in the solar system is",
+   "gen": " a 1000-year-old climate, and is a 100-year-old climate. The 2000s and 2000s, is a 100-year-old climate, and is a 100-",
+   "n": 60,
+   "unique_ratio": 0.283,
+   "max_run": 3,
+   "max_4gram": 4
+  },
+  {
+   "id": "zh_open_1",
+   "prompt": "学习数学的好处是",
+   "gen": "数学数学的数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学",
+   "n": 60,
+   "unique_ratio": 0.033,
+   "max_run": 57,
+   "max_4gram": 54
+  },
+  {
+   "id": "zh_open_2",
+   "prompt": "每天早上起来，我做的第一件事情是",
+   "gen": "我做，我做好，我做好，我做好，我做好，我做好，我做好，我做好，我做好，我做好，我做好，我做好，我做好，我做好，我做好，我",
+   "n": 60,
+   "unique_ratio": 0.067,
+   "max_run": 1,
+   "max_4gram": 14
+  },
+  {
+   "id": "zh_fact_1",
+   "prompt": "中国的首都是",
+   "gen": "中国中国中国中国中国中国中国中国中国中国中国中国中国中国中国中国中国中国中国中国中国中国中国中国中国中国中国中国中国中国中国中国中国中国中国中国中国中国中国中国中国中国中国中国中国中国中国中国中国中国中国中国中国中国中国中国中国中国中国中国",
+   "n": 60,
+   "unique_ratio": 0.017,
+   "max_run": 60,
+   "max_4gram": 57
+  },
+  {
+   "id": "zh_fact_2",
+   "prompt": "太阳系里最大的行星是",
+   "gen": "地球中行星中,是地球中行星中,地球中行星中具有地球中行星中,地球中行星中具有地球中行星中,地球中行星中具有地球中行星中,地球中行星中具有地球中行星中行星中行星中行星中行星中行星中",
+   "n": 60,
+   "unique_ratio": 0.1,
+   "max_run": 1,
+   "max_4gram": 10
+  },
+  {
+   "id": "zh_fact_3",
+   "prompt": "水的沸点是",
+   "gen": "\"水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水",
+   "n": 60,
+   "unique_ratio": 0.033,
+   "max_run": 59,
+   "max_4gram": 56
+  },
+  {
+   "id": "mix_translate",
+   "prompt": "English: The meeting was moved to Friday.\n中文:",
+   "gen": "2006. The first year, the first year, was the first year, and the first year, and the first year, and the first year, and the first year, the first year, and the first year, and the first year, the first year, the first year, ",
+   "n": 60,
+   "unique_ratio": 0.2,
+   "max_run": 2,
+   "max_4gram": 7
+  }
+ ],
+ "avg": {
+  "unique_ratio": 0.124,
+  "max_run": 15.667,
+  "max_4gram": 19.667,
+  "n": 60.0
+ }
+}

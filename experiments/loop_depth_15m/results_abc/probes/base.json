@@ -1,0 +1,119 @@
+{
+ "pth": "run_base/arm_base.pth",
+ "items": [
+  {
+   "id": "en_open_1",
+   "prompt": "The sky is blue because",
+   "gen": " the sun is the sun. The sun is the sun. The sun is the sun. The sun is the sun. The sun is the sun. The sun is the sun. The sun is the sun. The sun is the sun. The sun is the sun. The sun is the sun. ",
+   "n": 60,
+   "unique_ratio": 0.083,
+   "max_run": 1,
+   "max_4gram": 10
+  },
+  {
+   "id": "en_open_2",
+   "prompt": "Writing a short essay about trees is useful because",
+   "gen": " it is a great way to be a great way to be a great way to be a great way to be a great way to be a great way to be a great way to be a great way to be a great way to be a great way to be a great way to be a great way",
+   "n": 60,
+   "unique_ratio": 0.117,
+   "max_run": 1,
+   "max_4gram": 11
+  },
+  {
+   "id": "en_fact_1",
+   "prompt": "Paris is the capital of",
+   "gen": " the United States. The United States is the largest of the United States. The United States is the largest of the United States. The United States is the largest of the United States. The United States is the largest of the United States. The United States is the largest of the United States. The",
+   "n": 60,
+   "unique_ratio": 0.133,
+   "max_run": 1,
+   "max_4gram": 6
+  },
+  {
+   "id": "en_fact_2",
+   "prompt": "The Pacific Ocean is the",
+   "gen": " most common of the world’s largest and industrial, and the world’s largest and industrial, and the world’s largest and industrial, and the world’s largest and industrial, and the world’s largest and industrial, and the world’s largest and industrial, and the world’",
+   "n": 60,
+   "unique_ratio": 0.2,
+   "max_run": 1,
+   "max_4gram": 6
+  },
+  {
+   "id": "en_fact_3",
+   "prompt": "Water boils at",
+   "gen": " the 2000s. The first 2000s, the first 2000s, was the first 2000s, and the second 2000s, was the first 2000s, and the second ",
+   "n": 60,
+   "unique_ratio": 0.217,
+   "max_run": 3,
+   "max_4gram": 6
+  },
+  {
+   "id": "en_fact_4",
+   "prompt": "The largest planet in the solar system is",
+   "gen": " a 200 million in the world. The world is the most common in the world, and the world is the world’s largest, and the world’s largest, and the world’s largest, and the world’s largest, and the world’s largest, and the",
+   "n": 60,
+   "unique_ratio": 0.3,
+   "max_run": 2,
+   "max_4gram": 5
+  },
+  {
+   "id": "zh_open_1",
+   "prompt": "学习数学的好处是",
+   "gen": "数学数学的，是数学数学的数学数学，数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学数学",
+   "n": 60,
+   "unique_ratio": 0.067,
+   "max_run": 49,
+   "max_4gram": 46
+  },
+  {
+   "id": "zh_open_2",
+   "prompt": "每天早上起来，我做的第一件事情是",
+   "gen": "哪里。\n1990年12月10日，我想想想想想想想想想想想想想想想想想想想想想想想想想想想想想想想想想想想，我想想想想想想想",
+   "n": 60,
+   "unique_ratio": 0.217,
+   "max_run": 35,
+   "max_4gram": 36
+  },
+  {
+   "id": "zh_fact_1",
+   "prompt": "中国的首都是",
+   "gen": "\"中国\"的\"中国\"的\"中国\"的\"中国\"的\"中国\"的\"中国\"的\"中国\"中国\"中国\"中国\"中国\"中国\"中国\"中国\"中国\"中国\"中国\"中国\"中国\"中国\"中国\"中国\"中国\"中国",
+   "n": 60,
+   "unique_ratio": 0.05,
+   "max_run": 1,
+   "max_4gram": 17
+  },
+  {
+   "id": "zh_fact_2",
+   "prompt": "太阳系里最大的行星是",
+   "gen": "行星的行星，在行星中，它是行星中唯一的行星。\n\n 行星 \n（）是行星中唯一的行星，它是行星中唯一的行星。\n\n 行星 \n（）是行星中唯一的行星。\n\n 行星 \n（）是行星中唯一",
+   "n": 60,
+   "unique_ratio": 0.217,
+   "max_run": 1,
+   "max_4gram": 5
+  },
+  {
+   "id": "zh_fact_3",
+   "prompt": "水的沸点是",
+   "gen": "水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水水",
+   "n": 60,
+   "unique_ratio": 0.017,
+   "max_run": 60,
+   "max_4gram": 57
+  },
+  {
+   "id": "mix_translate",
+   "prompt": "English: The meeting was moved to Friday.\n中文:",
+   "gen": "1994 edition of the 1990s and 1990s. \n \n \n \n \n \n \n \n \n \n \n \n \n \n \n \n \n \n \n \n",
+   "n": 60,
+   "unique_ratio": 0.2,
+   "max_run": 2,
+   "max_4gram": 18
+  }
+ ],
+ "avg": {
+  "unique_ratio": 0.151,
+  "max_run": 13.083,
+  "max_4gram": 18.583,
+  "n": 60.0
+ }
+}

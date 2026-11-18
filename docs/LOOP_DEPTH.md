@@ -171,6 +171,30 @@ For the sigmoid pair, the signed difference `b4sig − d4sig` is positive at ste
 
 *Figure L7. Recorded order-comparison trajectories and an exact common-step sigmoid gap. The image plots `CE(layer) − CE(block)`, so its sign is opposite to the `b4sig − d4sig` convention in the preceding paragraph. A positive plotted gap means lower block-order CE. CE, cross-entropy. Common-step pairing does not control all possible differences in code revision or optimization state.*
 
+### 4.3 Attention-mode comparison at matched recipe
+
+The `base` and `C_periter` arms in the ABC experiment set differ only in `recurrent_attention_mode`. Both use $P=1$, $G=4$, $C=1$, $R=4$, block order, sigmoid dt with range [0.05, 1], seed 1234, context 512, and a 1,800-second wall budget. The arm JSONs are [arm_base.json](../experiments/loop_depth_15m/results_abc/arm_base.json) and [arm_C_periter.json](../experiments/loop_depth_15m/results_abc/arm_C_periter.json); greedy-probe outputs are [probes/base.json](../experiments/loop_depth_15m/results_abc/probes/base.json) and [probes/C_periter.json](../experiments/loop_depth_15m/results_abc/probes/C_periter.json).
+
+| Arm | Final step | `train_wall_s` | Tokens (M) | `final.valid_ce_64` | `peak_gb` |
+|---|---:|---:|---:|---:|---:|
+| `base` (`shared_first`) | 1,290 | 1,804.3 | 84.5 | 4.735 | 7.43 |
+| `C_periter` (`per_iteration`) | 1,235 | 1,800.0 | 80.9 | 4.727 | 7.54 |
+
+*Table L5. Final recorded fields for the attention-mode pair, from each arm's `final` block.*
+
+At the latest shared step 1,000, recorded `valid_ce` is 4.920 (`base`) and 4.867 (`C_periter`); the signed gap is −0.053. The per-corpus gap at the final stopping point `C_periter − base` is +0.021 on Cosmopedia, −0.038 on Edu-ZH, +0.019 on FineWeb-Edu, +0.032 on Wiki EN, and −0.078 on Wiki ZH. Steps per logged minute are 42.9 (`base`) and 41.2 (`C_periter`). Peak memory is approximately tied at 512 context, so cache-slot growth does not dominate here.
+
+The greedy-probe averages over the twelve EN/ZH prompts in [probes/prompts.jsonl](../experiments/loop_depth_15m/results_abc/probes/prompts.jsonl) are:
+
+| Arm | `unique_ratio` | `max_run` | `max_4gram` |
+|---|---:|---:|---:|
+| `base` | 0.151 | 13.08 | 18.58 |
+| `C_periter` | 0.144 | 3.58 | 10.67 |
+
+*Table L6. Per-prompt averages written by [probes/probe_arm.py](../experiments/loop_depth_15m/results_abc/probes/probe_arm.py) at `--max-tokens 60`. `max_run` is the longest contiguous same-token stretch. `max_4gram` is the maximum 4-gram repetition count across the continuation.*
+
+KV accounting under this skeleton: `shared_first` maintains one cache slot per physical block, so the model stores six slots. `per_iteration` maintains one slot per repeat on the recurrent blocks, so the model stores $P+RG+C=1+4\cdot 4+1=18$ slots: four times as many on the recurrent blocks and three times as many across the whole six-block model. The two inference-side consequences, both enforced at serving time, are that `max_inference_depth` cannot differ from `recurrent_depth` because the cache binds to a specific repeat, and that recurrent-depth self-speculative decoding falls back to the plain path because the draft depth cannot be shortened.
+
 ## 5. Step-size trajectories and what they establish
 
 The effective sigmoid step is

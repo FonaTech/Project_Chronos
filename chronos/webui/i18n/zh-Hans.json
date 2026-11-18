@@ -404,7 +404,7 @@
  "field.recompute_policy.label": "重算的块",
  "field.recompute_scope.help": "block：重算整个块（最省内存）。mlp：只重算每块的 MoE/FFN，保留注意力结果，耗时更少。",
  "field.recompute_scope.label": "重算范围",
- "field.recurrent_attention_mode.help": "循环内注意力的运行方式。shared_first：每轮都做注意力，K/V 取第 0 轮（缓存精确，KV 不随深度增长）。per_iteration：每轮一份 KV（D 倍 KV）。first_only：v2 行为。",
+ "field.recurrent_attention_mode.help": "循环内注意力的运行方式。shared_first（默认）：每轮都做注意力，K/V 取第 0 轮；KV 不随深度增长，推理时可改 max_inference_depth，也支持循环深度自推测解码。per_iteration：每轮一份 KV（循环层 depth 倍 KV）；15M ABC 实验中验证 CE 与 shared_first 持平（4.727 vs 4.735），而贪心输出显著更干净（max_4gram 10.67 vs 18.58，见 docs/LOOP_DEPTH.md §4.3），但 max_inference_depth 必须等于训练深度，自推测解码会退化为普通解码。first_only：v2 行为。",
  "field.recurrent_attention_mode.label": "循环注意力",
  "field.recurrent_depth.help": "训练时每个循环组的迭代次数。虚拟层数 = 前置 + 组数 × 深度 + 收尾。",
  "field.recurrent_depth.label": "训练深度",

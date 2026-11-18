@@ -1,0 +1,119 @@
+{
+ "pth": "run_B_plain/arm_B_plain.pth",
+ "items": [
+  {
+   "id": "en_open_1",
+   "prompt": "The sky is blue because",
+   "gen": " it is blue. The sky is blue and blue and blue and blue. The sky is blue and blue and blue and blue and blue and blue. The sky is blue and blue and blue and blue and blue and blue. The sky is blue and blue and blue and blue and blue and blue. ",
+   "n": 60,
+   "unique_ratio": 0.117,
+   "max_run": 1,
+   "max_4gram": 14
+  },
+  {
+   "id": "en_open_2",
+   "prompt": "Writing a short essay about trees is useful because",
+   "gen": " they are not familiar with the same. It is a great way to be a great way to the world. It is a great way to be a great way to the world. It is a great way to the world, and it is a great way to the world. It is a great way",
+   "n": 60,
+   "unique_ratio": 0.317,
+   "max_run": 1,
+   "max_4gram": 6
+  },
+  {
+   "id": "en_fact_1",
+   "prompt": "Paris is the capital of",
+   "gen": " the city of the city of the city of the city of the city of the city of the city of the city of the city of the city of the city of the city of the city of the city of the city of the city of the city of the city of the city of the city of",
+   "n": 60,
+   "unique_ratio": 0.05,
+   "max_run": 1,
+   "max_4gram": 19
+  },
+  {
+   "id": "en_fact_2",
+   "prompt": "The Pacific Ocean is the",
+   "gen": " first of the most common and most of the most common and most of the most common and most of the most common and endangered species. The most common and endangered species of the Pacific Ocean is the most common species of the Pacific Ocean. The most common species of the Pacific Ocean is the most common species",
+   "n": 60,
+   "unique_ratio": 0.217,
+   "max_run": 1,
+   "max_4gram": 4
+  },
+  {
+   "id": "en_fact_3",
+   "prompt": "Water boils at",
+   "gen": " the water temperature temperature temperature temperature temperature temperature temperature temperature temperature temperature temperature temperature temperature temperature temperature temperature temperature temperature temperature temperature temperature temperature temperature temperature temperature temperature temperature temperature temperature temperature temperature temperature temperature temperature temperature temperature temperature temperature temperature temperature temperature temperature temperature temperature temperature temperature temperature temperature temperature temperature temperature temperature temperature temperature temperature temperature temperature temperature",
+   "n": 60,
+   "unique_ratio": 0.05,
+   "max_run": 58,
+   "max_4gram": 55
+  },
+  {
+   "id": "en_fact_4",
+   "prompt": "The largest planet in the solar system is",
+   "gen": " a 1.5-million-million-million-million-million-million-million-million-million-million-million-million-million-million-million-million-million-million-",
+   "n": 60,
+   "unique_ratio": 0.133,
+   "max_run": 1,
+   "max_4gram": 18
+  },
+  {
+   "id": "zh_open_1",
+   "prompt": "学习数学的好处是",
+   "gen": ":\n1.1 \n2.2 \n2.2 \n2.2 \n2.2 \n2.2 \n2.2 \n2.2 \n2.2 \n2.2 \n2.2 \n2.2",
+   "n": 60,
+   "unique_ratio": 0.1,
+   "max_run": 1,
+   "max_4gram": 11
+  },
+  {
+   "id": "zh_open_2",
+   "prompt": "每天早上起来，我做的第一件事情是",
+   "gen": "我想，我想想想想想想想，我想想想想想，我想想想想想想，我想想想想想想想想，我想想想想想想想，我想想想想想想想想，我想想想",
+   "n": 60,
+   "unique_ratio": 0.05,
+   "max_run": 8,
+   "max_4gram": 23
+  },
+  {
+   "id": "zh_fact_1",
+   "prompt": "中国的首都是",
+   "gen": "中国中国,中国是中国,中国是中国.中国是中国,中国是中国.中国是中国,中国是中国.中国是中国,中国是中国.中国是中国,中国是中国.中国是中国,中国是中国.中国是中国,中国是中国.中国",
+   "n": 60,
+   "unique_ratio": 0.067,
+   "max_run": 2,
+   "max_4gram": 8
+  },
+  {
+   "id": "zh_fact_2",
+   "prompt": "太阳系里最大的行星是",
+   "gen": "太阳系上的行星。\n 小行星带天体\n 小行星带天体\n 1982年10月10日，该小行星带小行星。\n\n 参考文献 \n\n 外部链接 \n \n \n \n \n \n \n \n \n ",
+   "n": 60,
+   "unique_ratio": 0.383,
+   "max_run": 1,
+   "max_4gram": 8
+  },
+  {
+   "id": "zh_fact_3",
+   "prompt": "水的沸点是",
+   "gen": "水水的沸点，水水的沸点是水水的沸点，水水的沸点是水水的沸点，水水的沸点是水水的沸点，水水的沸点是水水的沸点，水水的沸点是水水的沸点，水水的沸点是",
+   "n": 60,
+   "unique_ratio": 0.1,
+   "max_run": 1,
+   "max_4gram": 12
+  },
+  {
+   "id": "mix_translate",
+   "prompt": "English: The meeting was moved to Friday.\n中文:",
+   "gen": "\n“The House of Representatives is the first president of the House of Representatives, and the House of Representatives is the first president of the House of Representatives, and the House of Representatives is the first president of the House of Representatives. The House of Representatives is the first president of the House of Representatives, ",
+   "n": 60,
+   "unique_ratio": 0.217,
+   "max_run": 1,
+   "max_4gram": 6
+  }
+ ],
+ "avg": {
+  "unique_ratio": 0.15,
+  "max_run": 6.417,
+  "max_4gram": 15.333,
+  "n": 60.0
+ }
+}
