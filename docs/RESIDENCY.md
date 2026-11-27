@@ -25,7 +25,7 @@ flowchart TB
 ```
 *Figure 2. Layout, loading and residency are separate mechanisms. Training-aligned and offline graph-derived partitions are alternative layout routes. Reader granularity differs between Torch and MLX, as detailed in [LAZY_EXPERTS.md](LAZY_EXPERTS.md).* 
 
-For automatic lazy paging, `inference_clusters` uses the fixed training partition when `lambda_cluster_locality>0`. Otherwise it returns singleton expert groups. Explicit `paging="cluster"` or `paging="expert"` overrides that choice. Offline repacking can also be attached through a manifest; it does not imply that the training loss used the new partition. [Layout selection](../chronos/expert_clusters.py#L64), [manifest override](../chronos/runtime/cache_manager.py#L47)
+For automatic lazy paging, `inference_clusters` uses the fixed training partition when `lambda_cluster_locality>0`. Otherwise it returns singleton expert groups. Explicit `paging="cluster"` or `paging="expert"` overrides that choice. Offline repacking can also be attached through a manifest; it does not imply that the training loss used the new partition. [Layout selection](../chronos/expert_clusters.py#L75), [manifest override](../chronos/runtime/cache_manager.py#L47)
 
 The `.ctsr` extension denotes a safetensors container. The actual sidecar is `cluster_manifest.json`, with cluster membership and filenames. [Storage schema](../chronos/io/storage.py#L38)
 

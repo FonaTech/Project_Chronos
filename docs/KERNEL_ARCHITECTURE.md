@@ -100,9 +100,9 @@ M(h)=\sum_{i\in I}a_iE_i(h)+\bar S(h),\qquad
 \tag{K.4}
 $$
 
-With `norm_topk_prob=True`, $a_i=p_i/\sum_{j\in I}p_j$. Otherwise the selected probabilities retain their original mass. Equation (K.4) assumes $S_s>0$; a configuration without shared experts has no shared term. See [MoE dispatch and shared averaging](../chronos/model/moe_chronos.py#L114).
+With `norm_topk_prob=True`, $a_i=p_i/\sum_{j\in I}p_j$. Otherwise the selected probabilities retain their original mass. Equation (K.4) assumes $S_s>0$; a configuration without shared experts has no shared term. See [MoE dispatch and shared averaging](../chronos/model/moe_chronos.py#L119).
 
-The Torch selected-row path and supported MLX grouped sparse path reduce routed expert matrix work. For width $d_e$, the routed parameter pool contains $3d d_eE$ weights, while ideal selected matrix work scales with $k$. The MLX masked-dense reference path evaluates all $E$ experts before masking. Sparse dispatch is configurable and capability-dependent; see [MLX dispatch branches](../chronos/mlx/moe.py#L272). These counts exclude the router, shared experts, attention, activations and optimizer state.
+The Torch selected-row path and supported MLX grouped sparse path reduce routed expert matrix work. For width $d_e$, the routed parameter pool contains $3d d_eE$ weights, while ideal selected matrix work scales with $k$. The MLX masked-dense reference path evaluates all $E$ experts before masking. Sparse dispatch is configurable and capability-dependent; see [MLX dispatch branches](../chronos/mlx/moe.py#L291). These counts exclude the router, shared experts, attention, activations and optimizer state.
 
 ## 3. Recurrence is applied around each physical block
 

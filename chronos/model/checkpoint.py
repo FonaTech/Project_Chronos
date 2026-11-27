@@ -236,6 +236,12 @@ def read_checkpoint_config(checkpoint_path: str) -> tuple[dict, str | None]:
         # Saved before the cluster-locality field existed: those weights were
         # trained without the constraint (the field defaults on since 0.3.1).
         cfg["lambda_cluster_locality"] = 0.0
+    if "cluster_locality_objective" not in cfg:
+        # Saved before 0.3.5: the cluster term was the attached mutual-information objective on the soft
+        # router mass.  Continued training keeps it unless the caller overrides these fields.
+        cfg["cluster_locality_objective"] = "mutual_info"
+        cfg.setdefault("cluster_locality_mass", "soft")
+        cfg.setdefault("cluster_input_detach", False)
     return cfg, path
 
 
@@ -402,7 +408,8 @@ def config_dict_for_checkpoint(
 
     # How the weights were trained is a property of the checkpoint: a project
     # config must not fill it in (0.0 would otherwise count as "missing").
-    trained_lambda = cfg.get("lambda_cluster_locality")
+    trained = {k: cfg[k] for k in ("lambda_cluster_locality", "cluster_input_detach", "cluster_locality_budget")
+               if cfg.get(k) is not None}
     project_cfg, project_path = read_project_config(project_config_path)
     if project_cfg:
         for key, value in project_cfg.items():
@@ -411,8 +418,7 @@ def config_dict_for_checkpoint(
             if key not in cfg or cfg.get(key) in (None, "", 0):
                 cfg[key] = value
         sources.append(project_path or project_config_path or "chronos_config.json")
-        if trained_lambda is not None:
-            cfg["lambda_cluster_locality"] = trained_lambda
+        cfg.update(trained)
 
     if overrides:
         for key, value in overrides.items():

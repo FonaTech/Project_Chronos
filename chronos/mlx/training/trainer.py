@@ -240,9 +240,44 @@ def _cluster_membership(config) -> mx.array:
     return hit
 
 
+def _moe_probs(layers, attr: str) -> mx.array | None:
+    """``[B, S, V, E]`` stack of one per-dispatch record (``attr``) over the MoE ``layers``, in the order of
+    ``_collect_router_probs``."""
+    probs = []
+    for layer in layers:
+        moe = getattr(layer, "mlp", None)
+        if isinstance(moe, ChronosMLXMOE):
+            probs.extend(getattr(moe, attr, None) or [])
+    return mx.stack(probs, axis=2) if probs else None
+
+
+def _dispatch_mass(router_4d: mx.array, top_k: int) -> mx.array:
+    """Router probabilities kept on each dispatch's top-k experts and renormalized; the gradient reaches those k
+    entries.  Torch twin: ``chronos.model.temporal_loss.dispatch_mass``."""
+    E = int(router_4d.shape[-1])
+    k = max(1, min(int(top_k or 1), E))
+    idx = mx.stop_gradient(mx.argpartition(-router_4d, kth=k - 1, axis=-1)[..., :k])
+    keep = (idx[..., None] == mx.arange(E)).astype(router_4d.dtype).sum(axis=-2)
+    sel = router_4d * keep
+    return sel / mx.maximum(sel.sum(axis=-1, keepdims=True), 1e-9)
+
+
+def _cluster_spill(p: mx.array, budget: int) -> mx.array:
+    """Per unit, the cluster mass outside its ``budget`` heaviest clusters (``[..., C]`` -> ``[...]``).  The ranking
+    is held fixed, so the gradient moves mass into the unit's top clusters and leaves the split among them free;
+    ``budget >= C`` gives 0.  Torch twin: ``chronos.model.temporal_loss.cluster_spill``."""
+    C = int(p.shape[-1])
+    if budget >= C:
+        return mx.zeros(p.shape[:-1], p.dtype)
+    idx = mx.stop_gradient(mx.argpartition(-p, kth=budget - 1, axis=-1)[..., :budget])
+    outside = 1.0 - (idx[..., None] == mx.arange(C)).astype(p.dtype).sum(axis=-2)
+    return (p * outside).sum(axis=-1)
+
+
 def _cluster_locality_loss(router_4d: mx.array, membership: mx.array, window: int = 0,
-                           token_mask: mx.array | None = None) -> mx.array:
-    """MLX twin of ``chronos.model.temporal_loss.cluster_locality_loss``: ``1 − I(window; cluster)/log C``.
+                           token_mask: mx.array | None = None, budget: int = 0) -> mx.array:
+    """MLX twin of ``chronos.model.temporal_loss.cluster_locality_loss``: ``1 − I(window; cluster)/log C``, or with
+    ``budget`` = B > 0 the budget objective ``1 − H(marginal)/log C`` + the mass outside each window's B heaviest clusters.
 
     ``token_mask`` ``[B, S]`` (1 = real token) drops right-padding: a window's
     cluster distribution averages its real tokens only, and windows count in
@@ -264,6 +299,8 @@ def _cluster_locality_loss(router_4d: mx.array, membership: mx.array, window: in
 
     if token_mask is None:
         pw = mass.mean(axis=(2, 3)).reshape(B * n, C)
+        if budget > 0:
+            return 1.0 - entropy(pw.mean(axis=0)) / math.log(C) + _cluster_spill(pw, budget).mean()
         mutual = entropy(pw.mean(axis=0)) - entropy(pw).mean()
         return 1.0 - mutual / math.log(C)
     m = token_mask[:, : n * w].astype(mx.float32).reshape(B, n, w)
@@ -272,12 +309,14 @@ def _cluster_locality_loss(router_4d: mx.array, membership: mx.array, window: in
           / mx.maximum(count, 1.0)[..., None]).reshape(B * n, C)
     weight = (count / mx.maximum(count.sum(), 1.0)).reshape(B * n)      # windows ∝ real tokens
     marginal = (pw * weight[:, None]).sum(axis=0)
+    if budget > 0:
+        return 1.0 - entropy(marginal) / math.log(C) + (_cluster_spill(pw, budget) * weight).sum()
     mutual = entropy(marginal) - (entropy(pw) * weight).sum()
     return 1.0 - mutual / math.log(C)
 
 
 def _segment_cluster_loss(router_4d: mx.array, membership: mx.array, segments,
-     token_mask: mx.array | None = None) -> mx.array:
+     token_mask: mx.array | None = None, budget: int = 0) -> mx.array:
     """``1 − I(segment; cluster)/log C`` with documents as the unit (MLX twin of
     ``chronos.model.temporal_loss.segment_cluster_loss``), written with static shapes so it traces
     under ``mx.compile``.
@@ -308,20 +347,35 @@ def _segment_cluster_loss(router_4d: mx.array, membership: mx.array, segments,
         return -(p * mx.log(p)).sum(axis=-1)
 
     marginal = (ps * weight[:, None]).sum(axis=0)
+    if budget > 0:      # budget objective (see _cluster_locality_loss)
+        loss = 1.0 - entropy(marginal) / math.log(C) + (_cluster_spill(ps, budget) * weight).sum()
+        return mx.where((present > 0).sum() > 1, loss, mx.zeros(()))
     mutual = entropy(marginal) - (entropy(ps) * weight).sum()
     loss = 1.0 - mutual / math.log(C)
     return mx.where((present > 0).sum() > 1, loss, mx.zeros(()))
 
 
-def _cluster_objective(router_4d: mx.array, config, token_mask=None, input_ids=None) -> mx.array:
+def _cluster_objective(router_4d: mx.array, config, token_mask=None, input_ids=None, model=None) -> mx.array:
     """The configured cluster-locality term: ``window`` (fixed token windows)
-    or ``segment`` (documents found from ``input_ids``; window form without them)."""
-    from chronos.expert_clusters import cluster_locality_mode, segment_ids_mx
+    or ``segment`` (documents found from ``input_ids``; window form without them).
+
+    ``cluster_input_detach`` reads the gate-only record of ``model``'s MoE layers, so the term trains the gate weights
+    only; ``cluster_locality_mass="dispatch"`` keeps each dispatch's top-k experts, renormalized;
+    ``chronos.expert_clusters.cluster_budget`` selects the budget or the mutual-information objective."""
+    from chronos.expert_clusters import cluster_budget, cluster_locality_mode, segment_ids_mx
     window = int(getattr(config, "cluster_locality_window", 0) or 0)
     membership = _cluster_membership(config)
+    if bool(getattr(config, "cluster_input_detach", False)) and model is not None:
+        detached = _moe_probs(getattr(model, "layers", []), "iteration_cluster_probs")
+        if detached is not None and tuple(detached.shape) == tuple(router_4d.shape):
+            router_4d = detached.astype(mx.float32)
+    if str(getattr(config, "cluster_locality_mass", "soft") or "soft") == "dispatch":
+        router_4d = _dispatch_mass(router_4d.astype(mx.float32), int(config.num_experts_per_tok))
+    budget = cluster_budget(config)
     if cluster_locality_mode(config) == "segment" and input_ids is not None:
-        return _segment_cluster_loss(router_4d, membership, segment_ids_mx(input_ids, chunk=window), token_mask)
-    return _cluster_locality_loss(router_4d, membership, window, token_mask)
+        segments = segment_ids_mx(input_ids, chunk=window)
+        return _segment_cluster_loss(router_4d, membership, segments, token_mask, budget=budget)
+    return _cluster_locality_loss(router_4d, membership, window, token_mask, budget=budget)
 
 
 def _recurrent_iteration_probs(model, config) -> mx.array | None:
@@ -695,7 +749,7 @@ def _regularized_terms(model, base_loss, lookahead_probs, config, router_ref, me
         add("balance_loss", config.lambda_balance, _load_balance_loss(router, top_k, token_mask))
         if float(getattr(config, "lambda_cluster_locality", 0.0) or 0.0) > 0.0:
             add("cluster_locality_loss", config.lambda_cluster_locality,
-                _cluster_objective(router, config, token_mask, input_ids))
+                _cluster_objective(router, config, token_mask, input_ids, model))
         if float(getattr(config, "lambda_iteration_cluster", 0.0) or 0.0) > 0.0:
             iteration_probs = _recurrent_iteration_probs(model, config)
             if iteration_probs is not None:

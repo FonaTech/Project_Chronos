@@ -87,6 +87,10 @@ class ChronosMOEFeedForward(nn.Module):
         # load-balance term must cover all of them (reset per model forward).
         self.iteration_router_probs: list[torch.Tensor] = []
         self.iteration_router_probs_grad: list[torch.Tensor] = []
+        # cluster_input_detach: the gate applied to x.detach(), recorded per training dispatch.  Only the cluster term
+        # reads it, so that term trains the gate weights and never the hidden states (MLX twin: iteration_cluster_probs).
+        self.cluster_input_detach = bool(getattr(config, "cluster_input_detach", False))
+        self.iteration_cluster_probs_grad: list[torch.Tensor] = []
         self._iteration_aux_raw: list[torch.Tensor] = []
         # router_scope="shared": iterations after the first reuse the first
         # iteration's expert ids (weights are re-gathered from the current
@@ -103,6 +107,7 @@ class ChronosMOEFeedForward(nn.Module):
         self.last_fallback_weight_mass = 0.0
 
     def reset_iteration_routing(self) -> None:
+        self.iteration_cluster_probs_grad = []
         self.iteration_router_probs = []
         self.iteration_router_probs_grad = []
         self._iteration_aux_raw = []
@@ -151,6 +156,9 @@ class ChronosMOEFeedForward(nn.Module):
         self.last_router_probs = scores_bse.detach()
         self.iteration_router_probs.append(self.last_router_probs)
         self.iteration_router_probs_grad.append(scores_bse)
+        if self.cluster_input_detach and self.training:
+            self.iteration_cluster_probs_grad.append(
+                F.softmax(self.gate(x_flat.detach()).float(), dim=-1).view(B, S, self.num_experts))
 
         # Graded top-k: a later loop iteration may route to fewer experts (top_k < num_experts_per_tok).
         k = self.num_experts_per_tok if not top_k else max(1, min(int(top_k), self.num_experts_per_tok))

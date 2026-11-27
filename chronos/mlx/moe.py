@@ -67,6 +67,11 @@ class ChronosMLXMOE(nn.Module):
         object.__setattr__(self, "_last_router_probs", None)  # [B, S, E]
         # One entry per call: a recurrent block dispatches once per iteration.
         object.__setattr__(self, "_iteration_router_probs", [])
+        # cluster_input_detach: one more record per training dispatch, the gate applied to stop_gradient(x).  Only the
+        # cluster-locality term reads it, so that term trains the gate weights and never the hidden states.  The loss
+        # reads it inside the (compiled) step, so it is not a compile side output.
+        object.__setattr__(self, "cluster_input_detach", bool(getattr(config, "cluster_input_detach", False)))
+        object.__setattr__(self, "_iteration_cluster_probs", [])
         # router_scope="shared": later iterations reuse iteration zero's ids.
         object.__setattr__(self, "router_scope", str(getattr(config, "router_scope", "per_iteration") or "per_iteration"))
         object.__setattr__(self, "_shared_topk_idx", None)
@@ -91,14 +96,22 @@ class ChronosMLXMOE(nn.Module):
     def iteration_router_probs(self):
         return self._iteration_router_probs
 
+    @property
+    def iteration_cluster_probs(self):
+        return self._iteration_cluster_probs
+
     def accept_side_output(self, kind, value):
         """Record one dispatch's router probabilities ``[B, S, E]``."""
+        if kind == "cluster_probs":
+            self._iteration_cluster_probs.append(value)
+            return
         if kind != "probs":
             raise ValueError(f"unknown MoE side output {kind!r}")
         object.__setattr__(self, "_last_router_probs", value)
         self._iteration_router_probs.append(value)
 
     def reset_iteration_routing(self):
+        object.__setattr__(self, "_iteration_cluster_probs", [])
         object.__setattr__(self, "_iteration_router_probs", [])
         object.__setattr__(self, "_shared_topk_idx", None)
 
@@ -263,6 +276,12 @@ class ChronosMLXMOE(nn.Module):
             sink.append((self, "probs", probs))
         else:
             self.accept_side_output("probs", probs)
+        if self.cluster_input_detach and self.training:
+            cprobs = mx.softmax(self.gate(mx.stop_gradient(x_flat)).astype(mx.float32), axis=-1).reshape(B, S, self.num_experts)
+            if sink is not None:
+                sink.append((self, "cluster_probs", cprobs))
+            else:
+                self.accept_side_output("cluster_probs", cprobs)
         topk_weight = mx.take_along_axis(scores, topk_idx, axis=-1)   # [N, K]
         if self.norm_topk_prob:
             topk_weight = topk_weight / (topk_weight.sum(axis=-1, keepdims=True) + 1e-20)

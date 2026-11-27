@@ -28,6 +28,7 @@ import torch
 from chronos.model.moe_chronos import ChronosMOEFeedForward
 from chronos.model.temporal_loss import (
     cluster_locality_loss,
+    dispatch_mass,
     iteration_cluster_spread,
     temporal_locality_loss,
     lookahead_supervision_loss,
@@ -96,6 +97,26 @@ def collect_iteration_router_probs(model, *, with_grad: bool = False) -> Optiona
     if not probs:
         return None
     return torch.stack(probs, dim=2)
+
+
+def cluster_source_probs(model, config, router_4d: torch.Tensor) -> torch.Tensor:
+    """The ``[B, S, V, E]`` probabilities the cluster term reads (MLX twin: ``_cluster_objective``).  With
+    ``cluster_input_detach`` they are the gate applied to ``x.detach()`` (the term trains the gate weights only);
+    ``cluster_locality_mass="dispatch"`` keeps each dispatch's top-k experts, renormalized."""
+    source = router_4d
+    if bool(getattr(config, "cluster_input_detach", False)):
+        probs: List[torch.Tensor] = []
+        for layer in model.model.layers:
+            mlp = getattr(layer, "mlp", None)
+            if isinstance(mlp, ChronosMOEFeedForward):
+                probs.extend(getattr(mlp, "iteration_cluster_probs_grad", None) or [])
+        if probs:
+            stacked = torch.stack(probs, dim=2)
+            if stacked.shape == router_4d.shape:
+                source = stacked
+    if str(getattr(config, "cluster_locality_mass", "soft") or "soft") == "dispatch":
+        source = dispatch_mass(source.float(), int(getattr(config, "num_experts_per_tok", 1) or 1))
+    return source
 
 
 def first_iteration_router_probs(model) -> Optional[torch.Tensor]:
@@ -210,15 +231,17 @@ def chronos_loss_term(
             )
         lambda_cluster = float(getattr(config, "lambda_cluster_locality", 0.0) or 0.0)
         if lambda_cluster > 0.0:
-            from chronos.expert_clusters import cluster_locality_mode, segment_ids
+            from chronos.expert_clusters import cluster_budget, cluster_locality_mode, segment_ids
             membership = cluster_membership_tensor(config, router_4d.device)
             window = int(getattr(config, "cluster_locality_window", 0) or 0)
+            source = cluster_source_probs(model, config, router_4d)
+            budget = cluster_budget(config)
             if cluster_locality_mode(config) == "segment" and input_ids is not None:
                 ids = input_ids.detach().cpu().numpy()
                 mask = None if labels is None else real_token_mask_torch(labels)
-                cluster_term = segment_cluster_loss(router_4d, membership, segment_ids(ids, window), mask)
+                cluster_term = segment_cluster_loss(source, membership, segment_ids(ids, window), mask, budget=budget)
             else:
-                cluster_term = cluster_locality_loss(router_4d, membership, window)
+                cluster_term = cluster_locality_loss(source, membership, window, budget=budget)
             loss = loss + lambda_cluster * cluster_term
 
         lambda_iteration = float(getattr(config, "lambda_iteration_cluster", 0.0) or 0.0)

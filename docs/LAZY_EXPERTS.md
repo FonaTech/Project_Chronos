@@ -169,7 +169,7 @@ The Torch inference API supports three policy strings. Their behavior concerns *
 | `sync_on_demand` | Execute the real expert after dependencies are satisfied. | Load and wait for the real expert; raise if it cannot be loaded. | Preserves the intended expert computation, subject to ordinary numerical effects. |
 | `fallback_diagnostic` | Use available experts. | No demand-loader hook; use shared fallback for unavailable selections. | Diagnostic approximation. |
 
-The distinction follows [the installed runtime hooks](../chronos/runtime/inference_engine.py#L121) and [the MoE execution branch](../chronos/model/moe_chronos.py#L312). The MLX engine installs `sync_on_demand` hooks; these Torch policy names should not be presented as an interchangeable MLX generation argument. [MLX hooks](../chronos/mlx/inference.py#L87)
+The distinction follows [the installed runtime hooks](../chronos/runtime/inference_engine.py#L121) and [the MoE execution branch](../chronos/model/moe_chronos.py#L320). The MLX engine installs `sync_on_demand` hooks; these Torch policy names should not be presented as an interchangeable MLX generation argument. [MLX hooks](../chronos/mlx/inference.py#L87)
 
 Let $S(h)$ be the mean shared output, $I$ the selected experts, $M\subseteq I$ the missing subset, and $w_i$ the already computed routing weights. The exact and fallback outputs are
 
