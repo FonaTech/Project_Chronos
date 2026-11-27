@@ -109,11 +109,16 @@ def add_topology_args(parser, *, defaults: bool = False):
         "recurrent_dt_init": (float, .25),
         "recurrent_dt_min": (float, .05),
         "recurrent_dt_max": (float, 1.),
+        # Cluster objective (0.3.5): see ChronosConfig and docs/CLUSTER_LOCALITY.md section 9.
+        "cluster_locality_objective": (str, "budget"),
+        "cluster_locality_budget": (int, 0),
+        "cluster_locality_mass": (str, "dispatch"),
     }
     for name, (kind, value) in fields.items():
         parser.add_argument("--"+name, type=kind, default=value if defaults else None)
     for name, value in (("recurrent_enabled", True), ("layer_aware_lookahead", True),
-                        ("layer_aware_cache", True), ("activation_checkpointing", False)):
+                        ("layer_aware_cache", True), ("activation_checkpointing", False),
+                        ("cluster_input_detach", True)):
         parser.add_argument("--"+name, action=argparse.BooleanOptionalAction, default=value if defaults else None)
 
 

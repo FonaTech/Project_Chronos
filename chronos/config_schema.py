@@ -39,6 +39,7 @@ MODEL_FIELDS = (
     "lambda_balance", "lambda_temporal", "lambda_lookahead",
     "lambda_lookahead_topk", "lambda_lookahead_union", "lambda_router_locality",
     "lambda_cluster_locality", "lambda_iteration_cluster", "lookahead_teacher_scope", "cluster_locality_clusters", "cluster_locality_window", "cluster_locality_mode",
+    "cluster_locality_objective", "cluster_locality_budget", "cluster_locality_mass", "cluster_input_detach",
     "lambda_router_anchor", "fallback_mask_prob", "offload_miss_policy_default",
     "use_hybrid_attention", "kv_latent_dim", "rope_dim", "rope_layout", "sliding_window_size",
     "kv_cache_dtype", "kv_quant_group_size", "mla_decode", "mla_cache_rope", "router_scope",

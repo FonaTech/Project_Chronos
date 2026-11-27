@@ -294,6 +294,28 @@ class ChronosConfig(ChronosBaseConfig):
         # document longer than the window is cut into window-sized parts).
         # Neither consults labels or task tokens.
         self.cluster_locality_mode: str = str(kwargs.pop("cluster_locality_mode", "window") or "window")
+        # Cluster objective (0.3.5; measured in experiments/cluster_15m, see docs/CLUSTER_LOCALITY.md section 9).
+        # "budget": each stream may spread over the ``cluster_locality_budget`` clusters it uses most and pays for the
+        # routing mass outside them, plus a balance term over clusters; its tokens keep the choice among every expert
+        # of those clusters.  "mutual_info" (0.3.4 and earlier): 1 - I(stream; cluster) / log C, which also asks every
+        # stream for a single cluster.  A config that predates these fields keeps the 0.3.4 objective (checkpoint.py).
+        self.cluster_locality_objective: str = str(kwargs.pop("cluster_locality_objective", "budget") or "budget")
+        if self.cluster_locality_objective not in ("budget", "mutual_info"):
+            raise ValueError("cluster_locality_objective must be 'budget' or 'mutual_info'")
+        # Clusters per stream under "budget"; 0 = half the clusters, rounded up (3 of 6, 2 of 4: the measured setting).
+        self.cluster_locality_budget: int = int(kwargs.pop("cluster_locality_budget", 0) or 0)
+        if self.cluster_locality_budget < 0:
+            raise ValueError("cluster_locality_budget must be >= 0 (0 = half the clusters)")
+        # Router mass the objective reads: "dispatch" = the top-k experts each token runs, renormalized; "soft" = the
+        # whole router softmax (0.3.4 and earlier).
+        self.cluster_locality_mass: str = str(kwargs.pop("cluster_locality_mass", "dispatch") or "dispatch")
+        if self.cluster_locality_mass not in ("dispatch", "soft"):
+            raise ValueError("cluster_locality_mass must be 'dispatch' or 'soft'")
+        # cluster_input_detach: the cluster term reads the gate applied to the detached hidden states, so it trains the
+        # gate weights only.  Attached (0.3.4 and earlier) its gradient also reached the trunk, pulled the hidden states
+        # toward document identity and lowered the number of distinct experts a token used.
+        _detach = kwargs.pop("cluster_input_detach", None)
+        self.cluster_input_detach: bool = True if _detach is None else bool(_detach)
         # Iteration-axis cluster locality (0 = off): weight on the total variation between the cluster
         # distribution of each loop iteration of a token and the mean over its iterations, so every iteration
         # of a recurrent layer reads the same expert clusters.  Experts inside a cluster stay free to differ.

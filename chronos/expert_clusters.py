@@ -37,6 +37,17 @@ def resolve_cluster_count(config) -> int:
     return max(1, min(n, e))
 
 
+def cluster_budget(config) -> int:
+    """Clusters one stream may use under ``cluster_locality_objective="budget"``; 0 selects the mutual-information
+    objective.  ``cluster_locality_budget`` > 0 is used as given (at most the cluster count); 0 means half the clusters,
+    rounded up.  A config without the field predates 0.3.5 and keeps the mutual-information objective."""
+    if str(getattr(config, "cluster_locality_objective", "mutual_info") or "mutual_info") != "budget":
+        return 0
+    c = resolve_cluster_count(config)
+    b = int(getattr(config, "cluster_locality_budget", 0) or 0)
+    return min(b, c) if b > 0 else max(1, -(-c // 2))
+
+
 def contiguous_clusters(num_experts: int, num_clusters: int) -> List[List[int]]:
     """Split ``0..E-1`` into ``num_clusters`` contiguous, near-equal groups."""
     e, c = int(num_experts), max(1, min(int(num_clusters), int(num_experts)))

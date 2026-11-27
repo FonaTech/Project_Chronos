@@ -84,10 +84,30 @@ def _entropy(p: torch.Tensor) -> torch.Tensor:
     return -(p * p.log()).sum(dim=-1)
 
 
+def cluster_spill(p: torch.Tensor, budget: int) -> torch.Tensor:
+    """Per unit, the cluster mass outside its ``budget`` heaviest clusters (``[..., C]`` -> ``[...]``).  The ranking
+    is held fixed, so the gradient moves mass into the unit's top clusters and leaves the split among them free;
+    ``budget >= C`` gives 0.  MLX twin: ``chronos.mlx.training.trainer._cluster_spill``."""
+    if budget >= int(p.shape[-1]):
+        return p.new_zeros(p.shape[:-1])
+    outside = torch.ones_like(p).scatter(-1, p.detach().topk(budget, dim=-1).indices, 0.0)
+    return (p * outside).sum(dim=-1)
+
+
+def dispatch_mass(router_4d: torch.Tensor, top_k: int) -> torch.Tensor:
+    """Router probabilities kept on each dispatch's top-k experts and renormalized; the gradient reaches those k
+    entries.  MLX twin: ``chronos.mlx.training.trainer._dispatch_mass``."""
+    k = max(1, min(int(top_k or 1), int(router_4d.shape[-1])))
+    idx = router_4d.detach().topk(k, dim=-1).indices
+    sel = router_4d * torch.zeros_like(router_4d).scatter(-1, idx, 1.0)
+    return sel / sel.sum(dim=-1, keepdim=True).clamp_min(1e-9)
+
+
 def cluster_locality_loss(
     router_4d: torch.Tensor,
     membership: torch.Tensor,
     window: int = 0,
+    budget: int = 0,
 ) -> torch.Tensor:
     """Cluster-locality constraint over a stream and its recurrent iterations.
 
@@ -112,12 +132,14 @@ def cluster_locality_loss(
     if pw is None:
         return router_4d.new_zeros(())
     log_c = math.log(int(membership.shape[1]))
+    if budget > 0:      # budget objective: balance over clusters + mass outside each window's top clusters
+        return 1.0 - _entropy(pw.mean(dim=0)) / log_c + cluster_spill(pw, budget).mean()
     mutual = _entropy(pw.mean(dim=0)) - _entropy(pw).mean()
     return 1.0 - mutual / log_c
 
 
 def segment_cluster_loss(router_4d: torch.Tensor, membership: torch.Tensor, segments,
-                         token_mask: torch.Tensor | None = None) -> torch.Tensor:
+                         token_mask: torch.Tensor | None = None, budget: int = 0) -> torch.Tensor:
     """``1 − I(segment; cluster)/log C`` with the batch's documents as streams.
 
     ``segments`` ``[B, S]`` is ``chronos.expert_clusters.segment_ids(input_ids,
@@ -148,6 +170,8 @@ def segment_cluster_loss(router_4d: torch.Tensor, membership: torch.Tensor, segm
     ps = total / count.clamp_min(1.0)[:, None]
     weight = count / count.sum().clamp_min(1.0)
     marginal = (ps * weight[:, None]).sum(dim=0)
+    if budget > 0:      # budget objective (see cluster_locality_loss)
+        return 1.0 - _entropy(marginal) / math.log(C) + (cluster_spill(ps, budget) * weight).sum()
     mutual = _entropy(marginal) - (_entropy(ps) * weight).sum()
     return 1.0 - mutual / math.log(C)
 

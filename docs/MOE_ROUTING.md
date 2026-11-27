@@ -23,7 +23,7 @@ z=W_rh,\quad W_r\in\mathbb R^{E\times d},\qquad
  g_i=\frac{\exp z_i}{\sum_{j=1}^{E}\exp z_j}.
 $$
 
-The router linear layer has **no bias**. Both Torch and MLX cast the router scores to FP32 before softmax; this is a numerical policy, not evidence of a measured latency benefit. Torch uses `torch.topk`; MLX uses `argpartition` and gathers the selected scores. The separate sorting of dispatch rows groups tokens by expert; it should not be confused with the top-k selection algorithm. [Torch selection](../chronos/model/moe_chronos.py#L138), [MLX selection](../chronos/mlx/moe.py#L233).
+The router linear layer has **no bias**. Both Torch and MLX cast the router scores to FP32 before softmax; this is a numerical policy, not evidence of a measured latency benefit. Torch uses `torch.topk`; MLX uses `argpartition` and gathers the selected scores. The separate sorting of dispatch rows groups tokens by expert; it should not be confused with the top-k selection algorithm. [Torch selection](../chronos/model/moe_chronos.py#L143), [MLX selection](../chronos/mlx/moe.py#L246).
 
 Write $I(h)=\mathrm{TopK}(g,k)$. If `norm_topk_prob=True`,
 
@@ -67,7 +67,7 @@ $$
  y(h)=r(h)+s(h).
 $$
 
-The implementation takes the **mean** of shared experts, not their sum. This branch runs during normal training and full-resident inference as well as during offloaded inference. When no shared expert is configured, the corresponding contribution is omitted. [Shared mean and standard path](../chronos/model/moe_chronos.py#L117).
+The implementation takes the **mean** of shared experts, not their sum. This branch runs during normal training and full-resident inference as well as during offloaded inference. When no shared expert is configured, the corresponding contribution is omitted. [Shared mean and standard path](../chronos/model/moe_chronos.py#L122).
 
 For the bias-free matrices above, the per-layer parameter count is the algebraic count
 
@@ -75,7 +75,7 @@ $$
  P_{\mathrm{MoE}}=dE+3dd_e(E+S).
 $$
 
-A sparse token dispatch performs approximately $3dd_e(k+S)$ matrix FMAs, plus router, activation, normalization and dispatch work. Under a convention of two arithmetic operations per FMA, the corresponding matrix FLOPs are approximately $6dd_e(k+S)$. These are operation counts, **not measured execution times**. In particular, MLX's masked-dense reference path can evaluate every expert before masking; the sparse active-set count does not describe that path's realized cost. [Sparse and reference branches](../chronos/mlx/moe.py#L272).
+A sparse token dispatch performs approximately $3dd_e(k+S)$ matrix FMAs, plus router, activation, normalization and dispatch work. Under a convention of two arithmetic operations per FMA, the corresponding matrix FLOPs are approximately $6dd_e(k+S)$. These are operation counts, **not measured execution times**. In particular, MLX's masked-dense reference path can evaluate every expert before masking; the sparse active-set count does not describe that path's realized cost. [Sparse and reference branches](../chronos/mlx/moe.py#L291).
 
 ### A named configuration is not a library default
 
@@ -124,9 +124,9 @@ $$
  L_{\mathrm{bal}}=E\sum_{i=1}^{E}f_iP_i.
 $$
 
-Here $\sum_i f_i=k$, while $\sum_iP_i=1$. Uniform selection and uniform importance therefore give $L_{\mathrm{bal}}=k$, **not one**, under this normalization. This reference value is not a general lower-bound theorem. The Torch implementation averages one-hot selections over token rows, retains the selected-position axis and sums that axis in the loss. [Dispatch loss](../chronos/model/moe_chronos.py#L230), [MLX counterpart](../chronos/mlx/training/trainer.py#L366).
+Here $\sum_i f_i=k$, while $\sum_iP_i=1$. Uniform selection and uniform importance therefore give $L_{\mathrm{bal}}=k$, **not one**, under this normalization. This reference value is not a general lower-bound theorem. The Torch implementation averages one-hot selections over token rows, retains the selected-position axis and sums that axis in the loss. [Dispatch loss](../chronos/model/moe_chronos.py#L238), [MLX counterpart](../chronos/mlx/training/trainer.py#L420).
 
-Repeated calls of one recurrent MoE average their raw balance terms. The Torch trainer sums raw terms across physical MoE layers, then multiplies by `lambda_balance`. It does not multiply the already scaled `router_aux_loss_coef` again. [Raw iteration mean](../chronos/model/moe_chronos.py#L111), [trainer assembly](../chronos/trainer/loss_mixin.py#L178).
+Repeated calls of one recurrent MoE average their raw balance terms. The Torch trainer sums raw terms across physical MoE layers, then multiplies by `lambda_balance`. It does not multiply the already scaled `router_aux_loss_coef` again. [Raw iteration mean](../chronos/model/moe_chronos.py#L116), [trainer assembly](../chronos/trainer/loss_mixin.py#L199).
 
 The implemented regularized objective is usefully written as a sum of **conditional** terms:
 
@@ -144,7 +144,7 @@ $$
 \end{aligned}
 $$
 
-A term contributes only when its coefficient is positive and the required tensors exist. The table lists the implemented objectives and configuration fields. [Torch assembly](../chronos/trainer/loss_mixin.py#L197), [MLX assembly](../chronos/mlx/training/trainer.py#L675).
+A term contributes only when its coefficient is positive and the required tensors exist. The table lists the implemented objectives and configuration fields. [Torch assembly](../chronos/trainer/loss_mixin.py#L218), [MLX assembly](../chronos/mlx/training/trainer.py#L729).
 
 [CLUSTER_LOCALITY.md](CLUSTER_LOCALITY.md) derives the partition objective. [LOOKAHEAD.md](LOOKAHEAD.md) derives the three prediction losses. Their roles differ from global expert-load balancing: uniform global use does not ensure a small per-stream working set.
 
@@ -169,7 +169,7 @@ flowchart TB
 - `router_scope="per_iteration"` reselects IDs. With `"shared"`, later calls reuse the first selected IDs, gather current weights, and, when a smaller top-k is requested, retain the best of that first set.
 - `lambda_iteration_cluster` penalizes differences from the **mean cluster-mass distribution across iterations**. It is not specifically a distance to iteration zero. See the derivation in [CLUSTER_LOCALITY.md](CLUSTER_LOCALITY.md).
 
-These meanings are enforced by [configuration validation](../chronos/model/config.py#L81), [executor](../chronos/model/model_chronos.py#L277) and [MoE selection](../chronos/model/moe_chronos.py#L155). The KV cache stores attention state, not expert weights. An iteration can reuse KV while requesting a different expert-page set.
+These meanings are enforced by [configuration validation](../chronos/model/config.py#L81), [executor](../chronos/model/model_chronos.py#L277) and [MoE selection](../chronos/model/moe_chronos.py#L163). The KV cache stores attention state, not expert weights. An iteration can reuse KV while requesting a different expert-page set.
 
 ## 6. Missing routed experts: the shared branch is still present
 
@@ -186,7 +186,7 @@ $$
  y_{\mathrm{fallback}}=(1+m)s(h)+\sum_{i\in I:A_i=1}a_iE_i(h).
 $$
 
-The shared residual is not removed when it also substitutes for missing routed mass. Training-time miss simulation, controlled by `fallback_mask_prob`, exposes the model to this form. Strict `sync_on_demand` instead loads the exact expert or raises on failure. Expert computation follows the model/store dtype; it is not unconditionally forced to bf16. [Fallback implementation](../chronos/model/moe_chronos.py#L303).
+The shared residual is not removed when it also substitutes for missing routed mass. Training-time miss simulation, controlled by `fallback_mask_prob`, exposes the model to this form. Strict `sync_on_demand` instead loads the exact expert or raises on failure. Expert computation follows the model/store dtype; it is not unconditionally forced to bf16. [Fallback implementation](../chronos/model/moe_chronos.py#L311).
 
 ```mermaid
 flowchart TD
@@ -239,7 +239,7 @@ The following are **class defaults in this source snapshot**, not a promise that
 | `recurrent_later_groups` | `0` | Zero retains all recurrent blocks |
 | `lambda_iteration_cluster` | `0` | Iteration cluster-spread weight |
 
-Sources: [base fields](../chronos/model/kernel.py#L75), [Chronos fields](../chronos/model/config.py#L201), [later-iteration controls](../chronos/model/config.py#L81), [runtime/training controls](../chronos/model/config.py#L297). Planner and preset choices must be reported with the selected recipe, rather than substituted into this table.
+Sources: [base fields](../chronos/model/kernel.py#L75), [Chronos fields](../chronos/model/config.py#L201), [later-iteration controls](../chronos/model/config.py#L81), [runtime/training controls](../chronos/model/config.py#L319). Planner and preset choices must be reported with the selected recipe, rather than substituted into this table.
 
 Routing evaluations should report expert-load statistics, entropy, task, seed and dispatch timing. The repository does not include `moe_balance.json` or `router_entropy.json`, so no standalone before/after trajectory is reported here. Generalization to larger models and different serving workloads requires additional measurements.
 

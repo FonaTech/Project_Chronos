@@ -1,5 +1,50 @@
 # Changelog
 
+## [0.3.5] — 2026-11-27 (stable)
+
+The cluster-locality term gets a new default objective. In the 0.3.4 form it
+cost language-model loss; in the 0.3.5 form it matches free routing at full
+memory and improves CE under a resident-expert limit. The measurements and
+the derivation are in `docs/CLUSTER_LOCALITY.md` section 9, with the numbers
+in `reports/cluster_budget_20261127/summary.json`.
+
+### Changed
+- `cluster_locality_objective="budget"` is the new default: a balance term
+  over clusters plus, per stream, the mass outside its B heaviest clusters
+  (`cluster_locality_budget`, 0 = half the clusters, rounded up). The split
+  among those B clusters is free. `"mutual_info"` keeps the 0.3.1–0.3.4
+  objective.
+- `cluster_locality_mass="dispatch"` is the new default: the term counts each
+  dispatch's top-k experts, renormalized. `"soft"` keeps the full softmax.
+- `cluster_input_detach=True` is the new default: the term reads the gate
+  applied to a gradient-free copy of the MoE input, so it trains the gate
+  weights only. The cost is one extra gate projection per training dispatch.
+
+### Compatibility
+- A checkpoint saved before 0.3.5 has no `cluster_locality_objective` field;
+  loading it sets `"mutual_info"`, `"soft"` and `cluster_input_detach=False`,
+  so continued training keeps its objective unless the fields are overridden.
+- The four fields are in the config schema, the training CLIs
+  (`--cluster_locality_objective`, `--cluster_locality_budget`,
+  `--cluster_locality_mass`, `--[no-]cluster_input_detach`) and the WebUI
+  (Objectives, advanced), with help text in all four languages.
+- Torch and MLX compute the same values; the MLX record is read inside the
+  compiled and the recomputed step.
+
+### Measured — MLX, one Apple M5, 0.3.5 defaults, segment mode, window 256
+- 15M shape (24 experts), 0.3.4 default vs λ=0 at step 600: +0.290 CE, with
+  3.89 distinct experts per token against 7.45. With the 0.3.5 defaults:
+  −0.009 and 6.98.
+- Cosine schedule over 2,000 steps, three seeds, valid CE clustered minus
+  free: 15M −0.0145, +0.0057, −0.0026; 30M −0.0190, −0.0104, +0.0517. This is
+  parity. In the 30M setup, two runs that matched the free runs' loss for the
+  first 300 steps already differed from them by +0.065 and −0.052 at step 200.
+- Under a resident-memory limit the clustered model wins on every seed: at
+  15M with 12 experts resident it beats a free 12-expert model by
+  0.014–0.022 tail CE; at 30M with 8 of 16 experts resident it beats the
+  paged free model by 0.014–0.100.
+- Cluster-level lookahead hit rate: 0.57–0.63 clustered vs 0.42–0.46 free.
+
 ## [0.3.4] — 2026-11-18 (stable)
 
 One decoding-side fix lands on the shared_first serving path. Default

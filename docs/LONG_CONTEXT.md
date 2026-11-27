@@ -165,7 +165,7 @@ flowchart TB
 
 `activation_checkpointing=True` enables the outer recomputation mechanism during training without incoming cache. `recompute_scope="block"` applies `recompute_policy` to selected blocks; its policies are `all`, `mla`, `swa` and `alternate`. MLX also supports `recompute_scope="mlp"` for only the feed-forward region. These are fields, rather than separate `recompute_block` and `recompute_mlp` booleans. [Scope implementation](../chronos/mlx/model.py#L126), [block selection](../chronos/mlx/model.py#L238)
 
-Sparse expert dispatch can also chunk flattened tokens with `moe_chunk_tokens`. In the MLX training path, each dispatch chunk is checkpointed, reducing the lifetime of gate/up activations of approximate shape $[ck,d_e]$, where $k$ is routed top-$k$ and $d_e$ expert intermediate width. Router outputs and final sequence tensors still exist outside this working set. [MoE chunking](../chronos/mlx/moe.py#L130)
+Sparse expert dispatch can also chunk flattened tokens with `moe_chunk_tokens`. In the MLX training path, each dispatch chunk is checkpointed, reducing the lifetime of gate/up activations of approximate shape $[ck,d_e]$, where $k$ is routed top-$k$ and $d_e$ expert intermediate width. Router outputs and final sequence tensors still exist outside this working set. [MoE chunking](../chronos/mlx/moe.py#L143)
 
 ## 6. What the recorded experiment establishes
 

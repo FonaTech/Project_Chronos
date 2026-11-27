@@ -197,7 +197,7 @@ M(z)=\sum_{i\in\mathcal I_k(z)}\widehat p_i(z)E_i(z)
 \tag{T14}
 $$
 
-Equation T14 assumes $S_s>0$; omit the shared branch when no shared experts are configured. When top-k normalization is disabled, selected probabilities retain their original softmax mass. The shared branch is an **average** and runs independently of routed selection. Cache-miss substitution is an additional runtime policy. Its formula and quality boundary are covered in [MOE_ROUTING.md](MOE_ROUTING.md) and [LAZY_EXPERTS.md](LAZY_EXPERTS.md). Code: [router and top-k weights](../chronos/model/moe_chronos.py#L138), [shared average](../chronos/model/moe_chronos.py#L117).
+Equation T14 assumes $S_s>0$; omit the shared branch when no shared experts are configured. When top-k normalization is disabled, selected probabilities retain their original softmax mass. The shared branch is an **average** and runs independently of routed selection. Cache-miss substitution is an additional runtime policy. Its formula and quality boundary are covered in [MOE_ROUTING.md](MOE_ROUTING.md) and [LAZY_EXPERTS.md](LAZY_EXPERTS.md). Code: [router and top-k weights](../chronos/model/moe_chronos.py#L143), [shared average](../chronos/model/moe_chronos.py#L122).
 
 Let $A_{ic}$ be the fixed expert-to-cluster membership matrix. Aggregate routing mass across tokens and all dispatches in a window $w$:
 
@@ -215,7 +215,7 @@ $$
 \tag{T16}
 $$
 
-Low within-window entropy concentrates a stream. High marginal entropy preserves diversity across streams. The segment variant weights document segments by valid-token count. These are [normalized mutual-information objectives](../chronos/model/temporal_loss.py#L87), not a rolling dot-product loss.
+Low within-window entropy concentrates a stream. High marginal entropy preserves diversity across streams. The segment variant weights document segments by valid-token count. These are [normalized mutual-information objectives](../chronos/model/temporal_loss.py#L106), not a rolling dot-product loss.
 
 ```mermaid
 flowchart TB
@@ -255,7 +255,7 @@ $$
 
 Only horizons $\mathcal J$ with available token pairs contribute. The implementation clamps predicted probabilities below at $10^{-9}$ before taking logs. For fixed detached $P$, soft-target cross-entropy equals $\mathrm{KL}(P\|Q)+H(P)$. The teacher entropy has no gradient through this loss, so its optimization direction matches forward KL.
 
-Padding and document-boundary handling depend on the active training path. This loss differs from classifying one cluster ID. Expert-to-page mapping occurs later in the runtime. Code: [lookahead_supervision_loss](../chronos/model/temporal_loss.py#L259).
+Padding and document-boundary handling depend on the active training path. This loss differs from classifying one cluster ID. Expert-to-page mapping occurs later in the runtime. Code: [lookahead_supervision_loss](../chronos/model/temporal_loss.py#L283).
 
 The teacher can use first-iteration routing or an iteration mean. The recurrent path reads the post-prelude state. The depth-one path reads physical block zero. [LOOKAHEAD.md](LOOKAHEAD.md) details those contracts and separates prediction quality from page readiness.
 
@@ -329,7 +329,7 @@ $$
 | Relative-step penalty | `recurrent_contraction_coef` | Penalizes a diagnostic above its budget; no Lipschitz guarantee. |
 | Draft-exit KL | `draft_exit_kl_coef` | Aligns shallow-exit logits with detached full-depth logits. |
 
-The coefficient application is in [chronos_loss_term](../chronos/trainer/loss_mixin.py#L152). Each term also requires its source tensors and the caller's activation conditions. In that helper, top-k and union lookahead terms are nested under the enabled soft-target lookahead path. Stage-specific anchoring and masking also depend on the caller. The retained name `recurrent_distill_coef` refers to symmetric depth-state consistency in this implementation. It should not be confused with the detached teacher in draft-exit Kullback–Leibler (KL) divergence.
+The coefficient application is in [chronos_loss_term](../chronos/trainer/loss_mixin.py#L173). Each term also requires its source tensors and the caller's activation conditions. In that helper, top-k and union lookahead terms are nested under the enabled soft-target lookahead path. Stage-specific anchoring and masking also depend on the caller. The retained name `recurrent_distill_coef` refers to symmetric depth-state consistency in this implementation. It should not be confused with the detached teacher in draft-exit Kullback–Leibler (KL) divergence.
 
 ## 8. What is established and what remains conditional
 

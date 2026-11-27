@@ -30,7 +30,7 @@ $$
  Q\in\mathbb R^{B\times T\times(K+1)\times G\times E}
 $$
 
-when that flag is true. Softmax is over the final expert axis. Group $g$ is aligned to physical layer $P+g$ in the layer-aware teacher path. It does not mean a separate head for every prelude and coda layer. [Head implementation](../chronos/model/lookahead_router.py#L22), [teacher alignment](../chronos/trainer/loss_mixin.py#L140).
+when that flag is true. Softmax is over the final expert axis. Group $g$ is aligned to physical layer $P+g$ in the layer-aware teacher path. It does not mean a separate head for every prelude and coda layer. [Head implementation](../chronos/model/lookahead_router.py#L22), [teacher alignment](../chronos/trainer/loss_mixin.py#L161).
 
 | Axis | Meaning | What it is not |
 |---|---|---|
@@ -111,7 +111,7 @@ The teacher is a **soft future routing distribution**, not just hard expert IDs.
 - `lookahead_teacher_scope="first"`: use the first recorded dispatch distribution.
 - `lookahead_teacher_scope="iterations"`: average the recorded distributions across that physical layer's iterations.
 
-The accepted string is `"iterations"`, not `"all"`. Averaging probabilities across recurrent calls is not taking a union of their hard selected IDs. The separate future-union objective below concerns **token offsets**. [Scope validation](../chronos/model/config.py#L301), [teacher sources](../chronos/trainer/loss_mixin.py#L101).
+The accepted string is `"iterations"`, not `"all"`. Averaging probabilities across recurrent calls is not taking a union of their hard selected IDs. The separate future-union objective below concerns **token offsets**. [Scope validation](../chronos/model/config.py#L323), [teacher sources](../chronos/trainer/loss_mixin.py#L122).
 
 When predictions lack a group axis, teacher probabilities are averaged across physical layers. With a group axis, the trainer selects physical recurrent layers $P$ through $P+G-1$. In either case, the teacher is stop-gradient. Denote that aligned distribution by $\mathrm{sg}(P_{b,t,g,e})$.
 
@@ -163,7 +163,7 @@ $$
  \ell=H(P)+D_{\mathrm{KL}}(P\|Q).
 $$
 
-Because $P$ is detached, its entropy is constant with respect to the prediction branch. Minimizing this term therefore fits the teacher distribution without encouraging the teacher to chase its own prediction. For a prediction logit vector, the local derivative is $Q-P$. [Torch loss](../chronos/model/temporal_loss.py#L259), [MLX masked loss](../chronos/mlx/training/trainer.py#L415).
+Because $P$ is detached, its entropy is constant with respect to the prediction branch. Minimizing this term therefore fits the teacher distribution without encouraging the teacher to chase its own prediction. For a prediction logit vector, the local derivative is $Q-P$. [Torch loss](../chronos/model/temporal_loss.py#L283), [MLX masked loss](../chronos/mlx/training/trainer.py#L469).
 
 The displayed formula assumes unmasked pairs. Document boundaries and valid-token masks determine which pairs may enter the mean on the relevant trainer path. Their switches must be recorded with a packed-document experiment; a temporal offset crossing unrelated documents is not a valid continuation target.
 
@@ -176,7 +176,7 @@ $$
  L_{\mathrm{hit}}=\mathrm{mean}\left[-\log\frac{M^{(\delta)}}{k}\right].
 $$
 
-The division by $k$ is a constant for the selected setting. It gives a uniform predictor the same reference loss $\log E$ across top-k choices. It does not alter the derivative with respect to $Q$. A prediction can place most of its mass on only part of the teacher set, so this is a differentiable **coverage proxy**, not a theorem guaranteeing exact top-k recall. [Hit-mass implementation](../chronos/model/temporal_loss.py#L316).
+The division by $k$ is a constant for the selected setting. It gives a uniform predictor the same reference loss $\log E$ across top-k choices. It does not alter the derivative with respect to $Q$. A prediction can place most of its mass on only part of the teacher set, so this is a differentiable **coverage proxy**, not a theorem guaranteeing exact top-k recall. [Hit-mass implementation](../chronos/model/temporal_loss.py#L340).
 
 ### 4.3 A union across future token offsets
 
@@ -194,7 +194,7 @@ $$
    -\log\frac{\sum_eU_e\widehat Q_e}{\sum_eU_e}\right].
 $$
 
-The maximum across offsets is **not** a normalized categorical distribution or a probabilistic union formula. It summarizes each expert's largest forecast probability over the prefetch window. This term rewards coverage of distinct future needs, while soft cross-entropy preserves offset-specific structure. [Union implementation](../chronos/model/temporal_loss.py#L362).
+The maximum across offsets is **not** a normalized categorical distribution or a probabilistic union formula. It summarizes each expert's largest forecast probability over the prefetch window. This term rewards coverage of distinct future needs, while soft cross-entropy preserves offset-specific structure. [Union implementation](../chronos/model/temporal_loss.py#L386).
 
 The trainer combines the available terms as
 
@@ -205,7 +205,7 @@ $$
  +\lambda_{\mathrm{union}}L_{\mathrm{union}}.
 $$
 
-It adds them only when prediction/teacher tensors and future offsets are available. [Assembly](../chronos/trainer/loss_mixin.py#L231).
+It adds them only when prediction/teacher tensors and future offsets are available. [Assembly](../chronos/trainer/loss_mixin.py#L254).
 
 ## 5. From probabilities to bounded runtime requests
 
